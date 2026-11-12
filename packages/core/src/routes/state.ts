@@ -12,9 +12,12 @@ import { getRunningVersion, isNewerVersion } from '../update/version.js';
 import { parseStoredNotes, readLocalReleaseNote } from '../update/notes.js';
 import { revealClientFrom } from '../files/reveal.js';
 import { clientMessage } from '../http/client-message.js';
+import { PATH_REFUSALS, type PathPolicy } from '../files/path-policy.js';
+import { pathPolicyFor } from '../files/path-policy-default.js';
 
-export function createStateRouter(db: Database.Database): Router {
+export function createStateRouter(db: Database.Database, opts: { policy?: PathPolicy } = {}): Router {
   const router = policyRouter();
+  const policy = opts.policy ?? pathPolicyFor(db);
 
   // GET /api/state/last-directory — return last used working directory
   router.get('/last-directory', (_req, res) => {
@@ -43,6 +46,9 @@ export function createStateRouter(db: Database.Database): Router {
       let dirPath = (req.query.path as string) || '~';
       dirPath = dirPath.replace(/^~/, os.homedir());
       dirPath = path.resolve(dirPath);
+      // The person's folders only (files/path-policy.ts): never the system's own trees; on a hosted box the home and project folders.
+      const why = policy.problem(dirPath, { project: os.homedir(), use: 'read' });
+      if (why) return res.status(403).json({ error: PATH_REFUSALS[why], code: 'path_refused', reason: why });
 
       if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
         return res.status(400).json({ error: 'Not a directory' });
@@ -69,6 +75,8 @@ export function createStateRouter(db: Database.Database): Router {
       if (!dirPath) return res.status(400).json({ error: 'path required' });
       dirPath = dirPath.replace(/^~/, os.homedir());
       dirPath = path.resolve(dirPath);
+      const why = policy.problem(dirPath, { project: os.homedir(), use: 'write' });
+      if (why) return res.status(403).json({ error: PATH_REFUSALS[why], code: 'path_refused', reason: why });
       fs.mkdirSync(dirPath, { recursive: true });
       res.json({ ok: true, path: dirPath });
     } catch (err: any) {

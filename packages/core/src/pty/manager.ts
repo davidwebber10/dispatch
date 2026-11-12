@@ -1,7 +1,7 @@
 import * as pty from 'node-pty';
 import { RingBuffer } from './buffer.js';
 import { EventEmitter } from 'events';
-import { inheritedEnv } from '../platform/inherited-env.js';
+import { childEnv as daemonChildEnv } from '../platform/inherited-env.js';
 import { KILL_GRACE_MS } from '../platform/kill-grace.js';
 
 interface ManagedPty {
@@ -31,13 +31,10 @@ export class PTYManager extends EventEmitter {
       throw new Error(`PTY already exists for session ${sessionId}`);
     }
 
-    const childEnv: Record<string, string> = {
-      ...inheritedEnv(),
-      ...this.defaultEnv,
-      ...env,
+    const childEnv: Record<string, string> = daemonChildEnv(this.defaultEnv, env, {
       TERM: 'xterm-256color',
       COLORTERM: env?.COLORTERM || this.defaultEnv.COLORTERM || process.env.COLORTERM || 'truecolor',
-    } as Record<string, string>;
+    });
 
     delete childEnv.NO_COLOR;
 

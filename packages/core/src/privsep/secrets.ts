@@ -1,25 +1,24 @@
 // packages/core/src/privsep/secrets.ts
-// The two tokens of a hosted box, held in the daemon's memory only (design section 5).
+// How the two box secrets reach the daemon on a box with privilege separation (design section 5).
 //
-//   inbound   DISPATCH_BOX_TOKEN   the router and the control plane send it; the box verifies it
-//   outbound  OS_BOX_TOKEN         the daemon sends it to the platform
+// The holder is platform/box-secrets.ts: `takeBoxSecrets` moves DISPATCH_BOX_TOKEN and OS_BOX_TOKEN
+// out of `process.env` into memory, and every reader asks it. This file is the step BEFORE that. The
+// entrypoint does not put the two values in the daemon's environment at all: it writes them into a
+// pipe and passes the descriptor number in DISPATCH_SECRETS_FD. `loadBoxSecrets` reads the pipe once
+// and sets the two variables in `process.env` for `takeBoxSecrets` to take. Setting a variable in a
+// running process does not change the block /proc/<pid>/environ shows (the one the process was
+// started with), so the values are never in any environment another process can read.
 //
-// On a box with privilege separation the entrypoint passes them through a pipe (the descriptor
-// number is in DISPATCH_SECRETS_FD) and removes them from the daemon's environment; `loadBoxSecrets`
-// (privsep/install.ts) reads the pipe once and scrubs what is left. Every reader asks `boxSecret`.
-// Without privilege separation nothing is loaded and `boxSecret` reads the environment as before.
+// It also removes what locates the task's cloud credentials and metadata: the daemon does not use
+// them, and no process it starts may inherit them.
 import fs from 'node:fs';
 
 export const SECRET_NAMES = ['DISPATCH_BOX_TOKEN', 'OS_BOX_TOKEN'] as const;
 export type SecretName = (typeof SECRET_NAMES)[number];
 
-/**
- * Variables that must never be in the daemon's environment after the start, nor in a child's: the
- * tokens, the descriptor variable, and what locates the task's cloud credentials and metadata.
- */
+/** Variables that no process the daemon starts may see (the spawn guard removes them from every child). */
 export const NEVER_INHERITED = [
   ...SECRET_NAMES,
-  'DISPATCH_BOX_TOKEN_SHA256',
   'DISPATCH_SECRETS_FD',
   'AWS_CONTAINER_CREDENTIALS_RELATIVE_URI',
   'AWS_CONTAINER_CREDENTIALS_FULL_URI',
@@ -30,8 +29,8 @@ export const NEVER_INHERITED = [
   'ECS_AGENT_URI',
 ] as const;
 
-const held = new Map<SecretName, string>();
-let loaded = false;
+/** What `loadBoxSecrets` deletes from the daemon's own environment: everything above but the two tokens it just set. */
+const SCRUBBED_AT_LOAD = NEVER_INHERITED.filter((n) => !(SECRET_NAMES as readonly string[]).includes(n));
 
 const MAX_BYTES = 16 * 1024;
 
@@ -68,43 +67,20 @@ function readFd(fd: number): string {
 }
 
 /**
- * Load the secrets once and scrub the environment. Idempotent. `env` is the process environment in
- * the daemon; tests pass their own object and a reader.
+ * Read the secrets from the descriptor into `env` (for `takeBoxSecrets`), and remove the descriptor
+ * variable and the credential locators from it. Without a descriptor variable only the removal
+ * happens. Returns the names that came through the descriptor. Never logs a value.
  */
-export function loadBoxSecrets(env: NodeJS.ProcessEnv = process.env, read: (fd: number) => string = readFd): void {
-  if (loaded && env === process.env) return;
+export function loadBoxSecrets(env: NodeJS.ProcessEnv = process.env, read: (fd: number) => string = readFd): SecretName[] {
+  const loaded: SecretName[] = [];
   const fdText = env.DISPATCH_SECRETS_FD?.trim();
   if (fdText) {
     if (!/^\d{1,4}$/.test(fdText) || Number(fdText) < 3) throw new Error('DISPATCH_SECRETS_FD is not a descriptor number.');
-    const fd = Number(fdText);
-    const text = read(fd);
-    for (const [name, value] of Object.entries(parseSecrets(text))) held.set(name as SecretName, value!);
+    for (const [name, value] of Object.entries(parseSecrets(read(Number(fdText))))) {
+      env[name] = value;
+      loaded.push(name as SecretName);
+    }
   }
-  for (const name of SECRET_NAMES) {
-    const v = env[name]?.trim();
-    if (v && !held.has(name)) held.set(name, v);
-  }
-  for (const name of NEVER_INHERITED) delete env[name];
-  if (env === process.env) loaded = true;
-}
-
-/**
- * A secret by name. After `loadBoxSecrets()` ran on the process environment (a box with privilege
- * separation): the held value. Before that, or with any other environment object (a local trial,
- * tests, a build with an injected env): that environment's own value, read live as before.
- */
-export function boxSecret(name: SecretName, env: NodeJS.ProcessEnv = process.env): string | undefined {
-  if (env === process.env && loaded) return held.get(name);
-  return env[name]?.trim() || undefined;
-}
-
-/** True once the secrets were moved out of the process environment. */
-export function boxSecretsLoaded(): boolean {
+  for (const name of SCRUBBED_AT_LOAD) delete env[name];
   return loaded;
-}
-
-/** Tests only: forget everything. */
-export function resetBoxSecretsForTest(): void {
-  held.clear();
-  loaded = false;
 }

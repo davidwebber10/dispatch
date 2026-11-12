@@ -1,5 +1,5 @@
 import { boxCapabilities } from './capabilities.js';
-import { boxSecret } from '../privsep/secrets.js';
+import { osBoxToken } from './box-secrets.js';
 import { currentProfile } from '../os/profile.js';
 import type Database from 'better-sqlite3';
 import { getRunningVersion } from '../update/version.js';
@@ -137,7 +137,7 @@ export class HeartbeatService {
     opts: HeartbeatOptions = {},
   ) {
     this.baseUrl = (opts.baseUrl ?? process.env.OS_BASE_URL)?.replace(/\/+$/, '') || undefined;
-    this.boxToken = opts.boxToken ?? boxSecret('OS_BOX_TOKEN');
+    this.boxToken = opts.boxToken ?? osBoxToken();
     this.ownerEmail = opts.ownerEmail ?? process.env.DISPATCH_OWNER_EMAIL;
     this.boxId = opts.boxId ?? process.env.DISPATCH_BOX_ID;
     this.intervalMs = opts.intervalMs ?? 30_000;

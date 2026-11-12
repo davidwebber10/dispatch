@@ -135,10 +135,40 @@ export function approvalTitle(toolName: string, input?: any): string {
   return `Wants to use ${toolName}`;
 }
 
-/** The user message that names and approves a blocked action (Claude: a retry then goes through, measured). */
-export function approvalMessage(b: { toolName: string; detail?: string | null }): string {
+// ── "Allow this": the person allows ONE blocked call ──────────────────────────────────────────────
+// The allowance is a fact the DAEMON holds, set only by the owner's authenticated request
+// (POST /api/terminals/:id/blocked/:blockId). It is never a sentence: no text in the conversation
+// (the model's, a tool result's, a web page's) can allow a blocked call through the daemon.
+// How each harness takes it:
+//   Claude Code   the daemon puts the CLI in its asking mode (a control request), tells the model to
+//                 run the call again, and answers `allow` to the request for exactly that call
+//                 (structured/manager.ts allowOnce). Anything else asked in that window waits for the person.
+//   Codex         its own override request for a reviewer denial. If Codex refuses it, nothing is
+//                 allowed: the person asks again and is asked first.
+// The limit, said plainly: while a thread runs in the harness's own smart mode, the harness's risk
+// judgement reads the conversation, and Dispatch does not control what that judgement makes of text
+// in it. Dispatch adds no approval sentence to the conversation and lets no key write one.
+
+/** How long the daemon holds one allowed call before it goes back to the smart mode. */
+export const ALLOW_ONCE_MS = 120_000;
+
+/** The line that asks the model to run the allowed call again. It allows nothing by itself. */
+export function allowedOnceMessage(b: { toolName: string; detail?: string | null }): string {
   const what = b.detail ? `${b.toolName}: ${b.detail}` : b.toolName;
-  return `I approve the action that was just blocked (${what}). Please go ahead and run it now.`;
+  return `[Dispatch] The action that was blocked (${what}) may run once. Run it again now, exactly as it was. Any other action will be checked as usual.`;
+}
+
+/** Keys in order, so two inputs with the same content compare equal. */
+function stable(v: unknown): string {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v) ?? 'undefined';
+  if (Array.isArray(v)) return `[${v.map(stable).join(',')}]`;
+  const o = v as Record<string, unknown>;
+  return `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${stable(o[k])}`).join(',')}}`;
+}
+
+/** True when two tool calls are the same call: the same tool and the same input, value for value. */
+export function sameToolCall(a: { toolName: string; input: unknown }, b: { toolName: string; input: unknown }): boolean {
+  return a.toolName === b.toolName && a.input !== undefined && stable(a.input) === stable(b.input);
 }
 
 /** A short detail of a tool input for a card or a message: the command, the path or the URL. */

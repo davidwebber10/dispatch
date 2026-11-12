@@ -38,7 +38,6 @@ export const FEATURES = {
   previews: show(), // Previews / Inbox
   'needs-you': show(), // The "Needs you" list
   automations: show(), // Automations and schedules
-  endless: show(), // Chat ("Endless"): it runs without a terminal
   accounts: show(), // Settings > Accounts: sign in to Claude and Codex
   approvals: show(), // The approvals UI
   attachments: show(), // Attachments and voice input in the composer
@@ -49,6 +48,7 @@ export const FEATURES = {
   'settings.about': show(), // Settings > About & updates
 
   // ── Hidden from a business person ───────────────────────────────────────────
+  endless: hide(), // Chat ("Endless"): its turns run with every tool allowed (no approvals), so the daemon refuses it too
   'threads.cli': hide(), // CLI/terminal mode, the Pretty <-> CLI switch, the CLI sign-in shell
   'threads.shell': hide(), // Shell threads
   'threads.browser': hide(), // Browser threads

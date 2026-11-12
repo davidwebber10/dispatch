@@ -1,6 +1,7 @@
 import { describe, test, expect, afterEach } from 'vitest';
 import { readPrivsep } from '../../src/privsep/config.js';
-import { NEVER_INHERITED, boxSecret, loadBoxSecrets, parseSecrets, resetBoxSecretsForTest } from '../../src/privsep/secrets.js';
+import { NEVER_INHERITED, loadBoxSecrets, parseSecrets } from '../../src/privsep/secrets.js';
+import { resetBoxSecretsForTests, takeBoxSecrets } from '../../src/platform/box-secrets.js';
 
 const base = { DISPATCH_PRIVSEP: '1', DISPATCH_AGENT_UID: '1000', DISPATCH_AGENT_GID: '1000', HOME: '/home/person', DISPATCH_STATE_DIR: '/var/lib/dispatch/state', DISPATCH_AGENT_RUN_DIR: '/run/dispatch/agent' };
 
@@ -30,8 +31,8 @@ describe('the privilege separation switch', () => {
   });
 });
 
-describe('the box secrets', () => {
-  afterEach(() => resetBoxSecretsForTest());
+describe('the box secrets on their way in', () => {
+  afterEach(() => resetBoxSecretsForTests());
 
   test('the pipe content is one JSON object; unknown names and empty values are dropped', () => {
     expect(parseSecrets('{"DISPATCH_BOX_TOKEN":"in","OS_BOX_TOKEN":"","X":"y"}')).toEqual({ DISPATCH_BOX_TOKEN: 'in' });
@@ -39,38 +40,32 @@ describe('the box secrets', () => {
     expect(() => parseSecrets('[]')).toThrow();
   });
 
-  test('loading reads the descriptor once and leaves nothing in the environment', () => {
+  test('loading reads the descriptor once, hands the two values to the holder, and removes the locators', () => {
     const env: NodeJS.ProcessEnv = {
-      DISPATCH_SECRETS_FD: '3', OS_BOX_TOKEN: 'stale-env-value', AWS_CONTAINER_CREDENTIALS_RELATIVE_URI: '/v2/credentials/x',
+      DISPATCH_SECRETS_FD: '3', OS_BASE_URL: 'http://platform.test', AWS_CONTAINER_CREDENTIALS_RELATIVE_URI: '/v2/credentials/x',
       ECS_CONTAINER_METADATA_URI_V4: 'http://169.254.170.2/v4/x', PATH: '/usr/bin',
     };
     let reads = 0;
-    loadBoxSecrets(env, (fd) => { reads++; expect(fd).toBe(3); return '{"DISPATCH_BOX_TOKEN":"inbound","OS_BOX_TOKEN":"outbound"}'; });
+    const loaded = loadBoxSecrets(env, (fd) => { reads++; expect(fd).toBe(3); return '{"DISPATCH_BOX_TOKEN":"inbound","OS_BOX_TOKEN":"outbound"}'; });
     expect(reads).toBe(1);
-    for (const name of NEVER_INHERITED) expect(env[name]).toBeUndefined();
+    expect(loaded.sort()).toEqual(['DISPATCH_BOX_TOKEN', 'OS_BOX_TOKEN']);
+    expect(env.DISPATCH_SECRETS_FD).toBeUndefined();
+    expect(env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI).toBeUndefined();
+    expect(env.ECS_CONTAINER_METADATA_URI_V4).toBeUndefined();
     expect(env.PATH).toBe('/usr/bin');
+    // The holder (platform/box-secrets.ts) then takes them: nothing is left for a child to inherit.
+    expect(takeBoxSecrets(env)).toBe('split');
+    for (const name of NEVER_INHERITED) expect(env[name]).toBeUndefined();
+  });
+
+  test('without a descriptor only the locators are removed', () => {
+    const env: NodeJS.ProcessEnv = { OS_BOX_TOKEN: 'from-env', ECS_AGENT_URI: 'x' };
+    expect(loadBoxSecrets(env, () => { throw new Error('must not read'); })).toEqual([]);
+    expect(env).toEqual({ OS_BOX_TOKEN: 'from-env' });
   });
 
   test('a descriptor below 3 or not a number is refused', () => {
     expect(() => loadBoxSecrets({ DISPATCH_SECRETS_FD: '1' }, () => '{}')).toThrow(/descriptor/);
     expect(() => loadBoxSecrets({ DISPATCH_SECRETS_FD: '/etc/passwd' }, () => '{}')).toThrow(/descriptor/);
-  });
-
-  test('without a load, a reader gets the environment it was given, live', () => {
-    const env: NodeJS.ProcessEnv = { OS_BOX_TOKEN: ' abc ' };
-    expect(boxSecret('OS_BOX_TOKEN', env)).toBe('abc');
-    env.OS_BOX_TOKEN = 'changed';
-    expect(boxSecret('OS_BOX_TOKEN', env)).toBe('changed');
-    expect(boxSecret('DISPATCH_BOX_TOKEN', env)).toBeUndefined();
-  });
-
-  test('the process environment is read live until the secrets are loaded (a local trial, the test suite)', () => {
-    const before = process.env.OS_BOX_TOKEN;
-    try {
-      process.env.OS_BOX_TOKEN = 'from-env';
-      expect(boxSecret('OS_BOX_TOKEN')).toBe('from-env');
-    } finally {
-      if (before === undefined) delete process.env.OS_BOX_TOKEN; else process.env.OS_BOX_TOKEN = before;
-    }
   });
 });

@@ -2,7 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import express from 'express';
-import { publicRoute } from '../auth/route-policy.js';
+import { policyRouter, publicRoute } from '../auth/route-policy.js';
+import { mountRouter } from '../http/route-registry.js';
 import { compressedAssets, createIndexProvider, IMMUTABLE } from '../web-assets.js';
 import { pluginAssetHandler } from '../routes/plugins.js';
 import { customIconHandler } from '../routes/appearance.js';
@@ -21,7 +22,10 @@ export function defaultWebDist(env: NodeJS.ProcessEnv): string {
  */
 export function mountWeb(app: express.Express, i: { webDist: string | null; basePath: string; dataDir: string; plugins: PluginRegistry; hostContext?: HostContext | (() => HostContext) }): boolean {
   // Plugin files, with or without a web build (the dev server proxies /plugins here).
-  app.get('/plugins/:id/*', ...pluginAssetHandler(i.plugins));
+  // Routes go through a policyRouter, like every route of the daemon (the profile guard first).
+  const assets = policyRouter();
+  assets.get('/plugins/:id/*', ...pluginAssetHandler(i.plugins));
+  mountRouter(app, '', assets);
   const webDist = i.webDist;
   if (!webDist || !fs.existsSync(path.join(webDist, 'index.html'))) return false;
   // index.html is transformed (not sent as a file) so <base href> matches the mount
@@ -36,13 +40,17 @@ export function mountWeb(app: express.Express, i: { webDist: string | null; base
     const ctx = typeof given === 'function' ? given() : given;
     res.type('html').send(ctx ? indexHtmlWithHostContext(indexHtml(), ctx) : indexHtml());
   };
-  app.get('/icons/:name', publicRoute, customIconHandler(i.dataDir));
+  const icons = policyRouter();
+  icons.get('/icons/:name', publicRoute, customIconHandler(i.dataDir));
+  mountRouter(app, '', icons);
   // Build files: content-hashed, so compressed once and cached forever (web-assets.ts).
   app.use('/assets', compressedAssets(path.join(webDist, 'assets')));
   app.use(express.static(webDist, {
     index: false,
     setHeaders: (res, file) => { if (file.includes(`${path.sep}assets${path.sep}`)) res.setHeader('Cache-Control', IMMUTABLE); },
   }));
-  app.get(/^\/(?!api\/).*/, publicRoute, sendIndex);
+  const page = policyRouter();
+  page.get(/^\/(?!api\/).*/, publicRoute, sendIndex);
+  mountRouter(app, '', page);
   return true;
 }

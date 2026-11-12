@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { initSchema } from '../../src/db/schema.js';
 import { createApp } from '../../src/server.js';
-import { policyKindOf, type PolicyKind } from '../../src/auth/route-policy.js';
+import { policyHandlerOf, policyKindOf, type PolicyKind } from '../../src/auth/route-policy.js';
 import type { EndlessService } from '../../src/endless/service.js';
 import { LimitSnapshots } from '../../src/limits/snapshot.js';
 
@@ -100,6 +100,7 @@ const EXPECTED_KEY_ROUTES: string[] = [
 
 /** Routes under `/api` that any principal may call (`publicRoute`). */
 const EXPECTED_PUBLIC_API_ROUTES: string[] = ['GET /api/whoami'];
+// (`POST /api/access/login` is public too; it exists only with the access gate, which `createApp` does not build.)
 
 interface Found { id: string; kind: PolicyKind | undefined }
 
@@ -117,7 +118,7 @@ function walk(stack: any[], prefix: string, out: Found[]): void {
   for (const layer of stack) {
     if (layer.route) {
       const p = typeof layer.route.path === 'string' ? layer.route.path : String(layer.route.path);
-      const kind = policyKindOf(layer.route.stack[0]?.handle);
+      const kind = policyKindOf(policyHandlerOf(layer.route));
       for (const method of Object.keys(layer.route.methods)) {
         out.push({ id: `${method.toUpperCase()} ${(prefix + p).replace(/(.)\/$/, '$1')}`, kind });
       }
@@ -238,9 +239,11 @@ describe('one mount list', () => {
     expect(server.match(/buildDaemon\(\{/g)).toHaveLength(2);
   });
 
-  test('the daemon files mount no /api route of their own except the login route', () => {
+  test('the daemon files mount no /api route on the app itself', () => {
     const own = ['server.ts', ...daemonFiles.map((f) => `daemon/${f}`)]
       .flatMap((f) => read(f).match(/app\.(use|get|post|put|patch|delete|all)\(\s*'\/api[^']*'/g) ?? []);
-    expect(own).toEqual(["app.post('/api/access/login'"]);
+    // None: the login route is in a policyRouter too (daemon/wire-auth.ts), like every route.
+    expect(own).toEqual([]);
+    expect(read('daemon/wire-auth.ts')).toContain("login.post('/api/access/login', publicRoute,");
   });
 });

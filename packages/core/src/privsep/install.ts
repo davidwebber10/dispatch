@@ -11,8 +11,8 @@ const cfg = privsep();
 if (cfg) {
   loadBoxSecrets();
   // Uploads wait in a folder no workload can reach (the default is a predictable name in the shared
-  // temp folder): beside the state root, on the box's own disk, where the owner check of the file
-  // routes holds. Set here because the file routes read it when they are imported.
-  if (!process.env.DISPATCH_UPLOAD_DIR) process.env.DISPATCH_UPLOAD_DIR = path.join(path.dirname(cfg.stateDir), 'tmp', 'uploads');
+  // temp folder): the daemon's own scratch space on the box's disk, beside the agent run dir. Set
+  // here because the file routes read the variable when they are imported.
+  if (!process.env.DISPATCH_UPLOAD_DIR) process.env.DISPATCH_UPLOAD_DIR = path.join(path.dirname(cfg.agentRunDir), 'private', 'uploads');
   installSpawnGuard(cfg);
 }

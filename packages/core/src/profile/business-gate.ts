@@ -1,14 +1,20 @@
 // packages/core/src/profile/business-gate.ts
-// What a person on the BUSINESS profile may not do, enforced by the daemon.
+// What a person on the BUSINESS profile may do, enforced by the daemon.
 //
-// The web page hides these features for a business person (packages/web/src/lib/profile.ts). Hiding
-// is not enforcement: a person (or a page from an older build) can still call the route. So the
-// daemon refuses them too, here, in ONE list, so the list can be read and audited in one place:
-// BUSINESS_RULES below, and BUSINESS_UPGRADE_DENY for the WebSockets.
+// The web page hides features for a business person (packages/web/src/lib/profile.ts). Hiding is not
+// enforcement, so the daemon decides too. How it decides (2026-11-12):
 //
-// The rules are about the features, not about reading: every GET stays allowed, so a business person
-// still sees the threads, files and data that exist. A refusal is a 403 with a plain message the page
-// can show as it is. In the developer profile this file does nothing.
+//   1. DEFAULT DENY. Every HTTP route and every WebSocket of the daemon has one row in the table of
+//      profile/business-routes.ts: `allow`, `refuse`, or a check of the body. A route with no row is
+//      refused for a business person at run time, and fails a unit test.
+//   2. THE MATCHED ROUTE decides, never the text of the URL. The guard is the first handler of each
+//      route (auth/route-policy.ts puts it there), so it runs only when the router has matched that
+//      route, and it looks its row up by the route object. No spelling of a path can reach a handler
+//      without passing the guard of that very handler.
+//   3. A KEY held by a thread, a shell, Chat or a plugin is not the person. Under the business profile
+//      a key may use only the rows marked for it (`keys`): what an agent needs to do its work.
+//
+// In the developer profile this file does nothing.
 import type { Request, RequestHandler } from 'express';
 import { harnessCapabilities } from '../providers/capabilities.js';
 import { isPtyType } from '../db/terminals.js';
@@ -19,41 +25,50 @@ export const BUSINESS_DENIED_ERROR = 'not_available_in_profile';
 /** A refusal: the plain sentence for the page. */
 export interface Denial { message: string }
 
-export interface BusinessRule {
-  /** A short name, for the audit list and the tests. */
-  id: string;
-  method: 'POST' | 'PUT' | 'PATCH' | 'DELETE';
-  /** Matched against the path with no mount prefix and no query (`/api/...`). */
-  path: RegExp;
-  /**
-   * Decide one request. Null: allowed. A rule may also correct the body of an allowed request (the
-   * thread-create rule makes a new chat thread structured and supervised), so the route after it
-   * creates what a business person is allowed to have.
-   */
-  check: (req: Request) => Denial | null;
+/** What a check may ask about the request's thread and project (the daemon's own records). */
+export interface GateFacts {
+  /** The saved type and config of a thread, or null when there is no such thread. */
+  thread(id: string): { type: string; config: Record<string, unknown> } | null;
+  /** The folder that holds a business person's projects (`~/projects`), as a real path. */
+  projectsRoot(): string;
 }
 
-const deny = (message: string) => (): Denial => ({ message });
+export type BusinessCheck = (req: Request, facts: GateFacts) => Denial | null;
 
-const NO_TERMINAL = 'Terminal threads are not available in your workspace. Start a chat thread instead.';
-const NO_BROWSER = 'Browser threads are not available in your workspace.';
-const NO_WORKTREE = 'Separate working copies are not available in your workspace.';
-const NO_PLUGINS = 'Adding or turning on plugins is not available in your workspace.';
-const NO_SKILLS = 'Adding skills is not available in your workspace.';
-const NO_INTEGRATIONS = 'Changing tool connections is not available in your workspace. Ask your administrator.';
-const ALWAYS_SMART = 'In your workspace, risky actions always ask first.';
-const NO_AUTOMATIONS = 'Automations and agents that run on their own are not available in your workspace yet. Ask in a chat thread instead.';
+/** Who, besides the person, may use a row under the business profile. */
+export type KeyKind = 'thread' | 'plugin';
+
+export interface BusinessRow {
+  /** A short name, for the answer's `rule`, the audit list and the tests. */
+  rule: string;
+  business: 'allow' | 'refuse' | BusinessCheck;
+  /** The sentence of a plain `refuse`. */
+  message?: string;
+  /** Keys that may use the row under the business profile. Absent: the person only. */
+  keys?: readonly KeyKind[];
+}
+
+export const NOT_AVAILABLE = 'This is not available in your workspace.';
+export const NO_TERMINAL = 'Terminal threads are not available in your workspace. Start a chat thread instead.';
+export const NO_BROWSER = 'Browser threads are not available in your workspace.';
+export const ALWAYS_SMART = 'In your workspace, risky actions always ask first.';
+export const NO_AUTOMATIONS = 'Automations and agents that run on their own are not available in your workspace yet. Ask in a chat thread instead.';
+export const NOT_A_CHAT = 'This thread is not a chat thread. Start a new chat thread instead.';
+export const AGENT_REFUSED = 'An agent cannot do this in this workspace. Ask the person to do it.';
 
 /**
  * A thread config that would run a harness with approvals skipped or by itself: an agent or runner
- * thread (the runner command skips every approval: providers/claude-code.ts buildRunnerCommand, Codex's
- * bypass flag), a role, a coordinator, the autonomous dial, approvals other than `smart`, or the CLI.
+ * thread (the runner command skips every approval), a role, a coordinator, the autonomous dial,
+ * approvals other than `smart`, the CLI, or a sign-in shell.
  */
-function unsafeConfig(config: Record<string, unknown>): boolean {
-  return !!(config.role || config.runner || config.runnerPrompt || config.agentType || config.roleAuthority)
+export function unsafeConfig(config: Record<string, unknown>): boolean {
+  return !!(config.role || config.runner || config.runnerPrompt || config.agentType || config.roleAuthority || config.roleRun)
     || config.autonomy === 'autonomous'
     || (config.approvals !== undefined && config.approvals !== 'smart')
-    || config.transport === 'pty';
+    || config.transport === 'pty'
+    || config.signIn !== undefined
+    || config.queued === true || config.queuedTask !== undefined
+    || config.branchFrom !== undefined;
 }
 
 /** True when the harness has a structured (chat) transport on this daemon. */
@@ -63,105 +78,53 @@ function hasChatTransport(type: string): boolean {
 }
 
 /**
- * POST /api/sessions/:id/terminals. A business person gets chat threads and notes/file tabs only:
- *   • `shell` (including the CLI sign-in shell) and `browser`: refused;
- *   • a harness with no structured transport, or one asked for as a CLI (transport 'pty'): refused;
- *   • a harness with no transport named: made structured, the chat form.
- * A new PLAIN chat thread (no role, runner or role authority) is saved with `approvals: 'smart'`
- * (os/approvals.ts): a business person's threads are always smart. A thread with a role keeps its
- * own membrane.
+ * True when a saved thread is one a business person may drive: a notes or file tab, or a harness on
+ * the chat transport with no role and no skipped approvals. A shell, a browser tab, a CLI thread, an
+ * agent, a runner or a coordinator (made while the person was a developer) is not.
  */
-function threadCreate(req: Request): Denial | null {
+export function businessMayDrive(thread: { type: string; config: Record<string, unknown> }): boolean {
+  if (thread.type === 'notes' || thread.type === 'file') return true;
+  if (thread.type === 'shell' || thread.type === 'browser') return false;
+  if (!isPtyType(thread.type)) return false;
+  return thread.config.transport === 'structured' && !unsafeConfig(thread.config);
+}
+
+/**
+ * POST /api/sessions/:id/terminals. A business person gets chat threads and notes/file tabs only:
+ *   - `shell` (including the CLI sign-in shell) and `browser`: refused;
+ *   - a harness with no structured transport, or one asked for as a CLI (transport 'pty'): refused;
+ *   - a harness with no transport named: made structured, the chat form.
+ * A new chat thread is saved with `approvals: 'smart'` (os/approvals.ts).
+ */
+export const threadCreate: BusinessCheck = (req) => {
   const body = (req.body ?? {}) as { type?: unknown; config?: Record<string, unknown> | null };
   const type = typeof body.type === 'string' ? body.type : '';
   if (type === 'shell') return { message: NO_TERMINAL };
   if (type === 'browser') return { message: NO_BROWSER };
   if (!isPtyType(type)) return null; // notes, file, or an invalid type (the route answers 400 for that)
-  const config = body.config && typeof body.config === 'object' ? body.config : {};
+  const config = body.config && typeof body.config === 'object' && !Array.isArray(body.config) ? body.config : {};
   if (config.transport === 'pty' || !hasChatTransport(type)) return { message: NO_TERMINAL };
   // An agent, runner, role or autonomous thread, or a queued agent: it would run with approvals off.
   if ((body as { queued?: unknown }).queued || unsafeConfig(config)) return { message: NO_AUTOMATIONS };
   config.transport = 'structured';
-  const plain = !config.role && !config.runner && !config.roleAuthority;
-  if (plain) config.approvals = 'smart';
+  config.approvals = 'smart';
   body.config = config;
   req.body = body;
   return null;
-}
+};
 
-/**
- * EXTEND HERE: one row per refused route. Keep the paths anchored. A GET never goes here.
- */
-export const BUSINESS_RULES: readonly BusinessRule[] = [
-  // Threads: no terminal, no browser, no CLI.
-  { id: 'thread.create', method: 'POST', path: /^\/api\/sessions\/[^/]+\/terminals\/?$/, check: threadCreate },
-  {
-    id: 'thread.transport.cli', method: 'POST', path: /^\/api\/terminals\/[^/]+\/transport\/?$/,
-    check: (req) => ((req.body as { transport?: unknown } | undefined)?.transport === 'structured' ? null : { message: NO_TERMINAL }),
-  },
-  // Raw keystrokes into a PTY (the CLI form of a thread).
-  { id: 'thread.pty-input', method: 'POST', path: /^\/api\/terminals\/[^/]+\/input\/?$/, check: deny(NO_TERMINAL) },
-  // Approvals: a business person's chat threads stay `smart` (os/approvals-routes.ts).
-  {
-    id: 'thread.approvals', method: 'POST', path: /^\/api\/terminals\/[^/]+\/approvals\/?$/,
-    check: (req) => ((req.body as { mode?: unknown } | undefined)?.mode === 'smart' ? null : { message: ALWAYS_SMART }),
-  },
-  // Automations and agents (2026-11-11 audit): every route that creates, changes, enables or runs one,
-  // or that turns a thread autonomous. A run starts its harness with every approval skipped, so a
-  // business person may list, cancel and delete them, but never start one.
-  { id: 'automation.create', method: 'POST', path: /^\/api\/agents\/schedules\/?$/, check: deny(NO_AUTOMATIONS) },
-  { id: 'automation.update', method: 'PATCH', path: /^\/api\/agents\/schedules\/[^/]+\/?$/, check: deny(NO_AUTOMATIONS) },
-  { id: 'automation.run', method: 'POST', path: /^\/api\/agents\/schedules\/[^/]+\/run-now\/?$/, check: deny(NO_AUTOMATIONS) },
-  { id: 'role.enable', method: 'POST', path: /^\/api\/roles\/[^/]+\/enable\/?$/, check: deny(NO_AUTOMATIONS) },
-  { id: 'coordinator.create', method: 'POST', path: /^\/api\/sessions\/[^/]+\/overseer\/coordinator\/?$/, check: deny(NO_AUTOMATIONS) },
-  { id: 'thread.start-queued', method: 'POST', path: /^\/api\/terminals\/[^/]+\/start\/?$/, check: deny(NO_AUTOMATIONS) },
-  {
-    id: 'thread.autonomy', method: 'POST', path: /^\/api\/terminals\/[^/]+\/autonomy\/?$/,
-    check: (req) => ((req.body as { mode?: unknown } | undefined)?.mode === 'supervised' ? null : { message: ALWAYS_SMART }),
-  },
-  {
-    id: 'thread.config', method: 'PATCH', path: /^\/api\/terminals\/[^/]+\/?$/,
-    check: (req) => {
-      const config = (req.body as { config?: unknown } | undefined)?.config;
-      return config && typeof config === 'object' && unsafeConfig(config as Record<string, unknown>) ? { message: NO_AUTOMATIONS } : null;
-    },
-  },
-  // Worktrees: making one. Listing them and removing one stay allowed.
-  { id: 'worktree.create', method: 'POST', path: /^\/api\/sessions\/[^/]+\/worktrees\/?$/, check: deny(NO_WORKTREE) },
-  // Plugins: install, enable, create, import, copy, update, roll back, add a marketplace.
-  // Disable and remove stay allowed: they take power away, they do not add it.
-  { id: 'plugin.install', method: 'POST', path: /^\/api\/plugins\/install\/?$/, check: deny(NO_PLUGINS) },
-  { id: 'plugin.scaffold', method: 'POST', path: /^\/api\/plugins\/scaffold\/?$/, check: deny(NO_PLUGINS) },
-  { id: 'plugin.enable', method: 'POST', path: /^\/api\/plugins\/[^/]+\/enable\/?$/, check: deny(NO_PLUGINS) },
-  { id: 'plugin.import', method: 'POST', path: /^\/api\/plugins\/[^/]+\/import\/?$/, check: deny(NO_PLUGINS) },
-  { id: 'plugin.copy', method: 'POST', path: /^\/api\/plugins\/[^/]+\/copy\/?$/, check: deny(NO_PLUGINS) },
-  { id: 'plugin.update', method: 'POST', path: /^\/api\/plugins\/[^/]+\/(update|rollback)\/?$/, check: deny(NO_PLUGINS) },
-  { id: 'plugin.marketplace.add', method: 'POST', path: /^\/api\/plugins\/marketplaces\/?$/, check: deny(NO_PLUGINS) },
-  { id: 'skill.install', method: 'POST', path: /^\/api\/skills(\/install)?\/?$/, check: deny(NO_SKILLS) },
-  // Integrations (MCP servers): create, change, delete, import.
-  { id: 'integration.create', method: 'POST', path: /^\/api\/integrations\/?$/, check: deny(NO_INTEGRATIONS) },
-  { id: 'integration.import', method: 'POST', path: /^\/api\/integrations\/import\/?$/, check: deny(NO_INTEGRATIONS) },
-  { id: 'integration.update', method: 'PATCH', path: /^\/api\/integrations\/[^/]+\/?$/, check: deny(NO_INTEGRATIONS) },
-  { id: 'integration.delete', method: 'DELETE', path: /^\/api\/integrations\/[^/]+\/?$/, check: deny(NO_INTEGRATIONS) },
-];
+/** A row whose thread (`:terminalId` or `:id`) must be one a business person may drive. An unknown id goes on: the route answers 404. */
+export const drivable: BusinessCheck = (req, facts) => {
+  const id = String(req.params.terminalId ?? req.params.id ?? '');
+  const thread = id ? facts.thread(id) : null;
+  return thread && !businessMayDrive(thread) ? { message: NOT_A_CHAT } : null;
+};
 
-/** WebSockets a business person may not open: the PTY terminal sockets (daemon/sockets.ts). */
-export const BUSINESS_UPGRADE_DENY: readonly RegExp[] = [
-  /^\/api\/terminals\/[^/]+\/ws(\?|$)/,
-  /^\/api\/sessions\/[^/]+\/terminal(\?|\/|$)/,
-];
-
-/** The rule that refuses this request, or null. Exported for the tests and for audits. */
-export function businessDecision(req: Request): { rule: BusinessRule; denial: Denial } | null {
-  const method = req.method.toUpperCase();
-  const path = req.path;
-  for (const rule of BUSINESS_RULES) {
-    if (rule.method !== method || !rule.path.test(path)) continue;
-    const denial = rule.check(req);
-    if (denial) return { rule, denial };
-  }
+/** Both checks: the first refusal wins. */
+export const both = (...checks: BusinessCheck[]): BusinessCheck => (req, facts) => {
+  for (const c of checks) { const d = c(req, facts); if (d) return d; }
   return null;
-}
+};
 
 /** A profile, or a function that reads the live one (os/profile.ts). */
 export type ProfileSource = Profile | (() => Profile);
@@ -170,22 +133,102 @@ function read(profile: ProfileSource): Profile {
   return typeof profile === 'function' ? profile() : profile;
 }
 
-/**
- * The middleware, mounted once in front of every /api route (server-routes.ts). It reads the profile
- * on EVERY request, so a change from OS applies at once. Developer: passes everything.
- */
-export function businessProfileGate(profile: ProfileSource): RequestHandler {
-  return (req, res, next) => {
-    if (read(profile) !== 'business') return next();
-    const hit = businessDecision(req);
-    if (!hit) return next();
-    // `error` is the sentence the page shows (api/client.ts shows a body's `error`); `code` is for programs.
-    res.status(403).json({ error: hit.denial.message, code: BUSINESS_DENIED_ERROR, rule: hit.rule.id });
-  };
+// ── the route guard ──────────────────────────────────────────────────────────────────────────────────
+
+/** What the guard reads from `app.locals` (set by `installBusinessGate`). */
+export interface BusinessGateState {
+  profile: ProfileSource;
+  /** `METHOD /pattern` → row. */
+  table: Readonly<Record<string, BusinessRow>>;
+  /** The route pattern of each registered route (filled by `sealRoutes`). */
+  ids: WeakMap<object, string>;
+  facts: GateFacts;
+  /** The kind of key the request carries, or null for the person (and for a caller with no key). */
+  keyKind: (req: Request) => 'thread' | 'plugin' | 'chat' | 'shell' | null;
 }
 
-/** For the upgrade handler: may this profile open a WebSocket at `url` (mount prefix already stripped)? */
-export function upgradeAllowedForProfile(profile: ProfileSource, url: string): boolean {
+export const GATE_LOCAL = 'businessGate';
+const GUARD = Symbol('dispatch.businessGuard');
+
+export const isBusinessGuard = (handler: unknown): boolean =>
+  typeof handler === 'function' && (handler as unknown as Record<symbol, unknown>)[GUARD] === true;
+
+/** The decision for one matched route. Exported for the tests and for audits. */
+export function businessVerdict(
+  state: BusinessGateState, method: string, routeId: string | undefined, req: Request,
+): { rule: string; message: string } | null {
+  const m = method === 'HEAD' ? 'GET' : method;
+  const row = routeId === undefined ? undefined : state.table[`${m} ${routeId}`] ?? state.table[`ALL ${routeId}`];
+  if (!row) return { rule: 'unclassified', message: NOT_AVAILABLE };
+  const key = state.keyKind(req);
+  if (key !== null) {
+    // Chat and shell keys have no row of their own: neither exists for a business person.
+    const kind: KeyKind | null = key === 'thread' ? 'thread' : key === 'plugin' ? 'plugin' : null;
+    if (kind === null || !row.keys?.includes(kind)) return { rule: 'agent-key', message: AGENT_REFUSED };
+  }
+  if (row.business === 'allow') return null;
+  if (row.business === 'refuse') return { rule: row.rule, message: row.message ?? NOT_AVAILABLE };
+  const denial = row.business(req, state.facts);
+  return denial ? { rule: row.rule, message: denial.message } : null;
+}
+
+/**
+ * The first handler of every route (auth/route-policy.ts adds it at registration). `method` is the
+ * method the route was registered for. With no gate on the app (a unit test that mounts one router
+ * on a bare Express app) or in the developer profile it passes.
+ */
+export function businessGuard(method: string): RequestHandler {
+  const guard: RequestHandler = (req, res, next) => {
+    const state = (req.app?.locals as Record<string, unknown> | undefined)?.[GATE_LOCAL] as BusinessGateState | undefined;
+    if (!state || read(state.profile) !== 'business') return next();
+    const route = (req as unknown as { route?: object }).route;
+    const hit = businessVerdict(state, method === 'ALL' ? req.method.toUpperCase() : method, route ? state.ids.get(route) : undefined, req);
+    if (!hit) return next();
+    // `error` is the sentence the page shows (api/client.ts shows a body's `error`); `code` is for programs.
+    res.status(403).json({ error: hit.message, code: BUSINESS_DENIED_ERROR, rule: hit.rule });
+  };
+  (guard as unknown as Record<symbol, unknown>)[GUARD] = true;
+  return guard;
+}
+
+// ── WebSockets ───────────────────────────────────────────────────────────────────────────────────────
+
+export interface SocketRoute {
+  id: 'events' | 'structured' | 'terminal' | 'terminal-legacy';
+  /** Matched against the PATH (no query, mount prefix stripped), anchored at both ends. */
+  path: RegExp;
+  business: 'allow' | 'refuse';
+}
+
+/**
+ * EVERY WebSocket of the daemon (daemon/sockets.ts routes by this table and by nothing else). The PTY
+ * terminal sockets are refused for a business person. A path that matches no row opens no socket.
+ */
+export const SOCKET_ROUTES: readonly SocketRoute[] = [
+  { id: 'events', path: /^\/api\/events$/, business: 'allow' },
+  { id: 'structured', path: /^\/api\/terminals\/([^/]+)\/structured-ws$/, business: 'allow' },
+  { id: 'terminal', path: /^\/api\/terminals\/([^/]+)\/ws$/, business: 'refuse' },
+  { id: 'terminal-legacy', path: /^\/api\/sessions\/([^/]+)\/terminal$/, business: 'refuse' },
+];
+
+/** The socket a path names, with its id parameter; null when it names none. */
+export function socketRouteOf(url: string): { route: SocketRoute; param: string | null } | null {
+  const q = url.indexOf('?');
+  const p = q === -1 ? url : url.slice(0, q);
+  for (const route of SOCKET_ROUTES) {
+    const m = route.path.exec(p);
+    if (m) return { route, param: m[1] ?? null };
+  }
+  return null;
+}
+
+/** For the upgrade handler: may this profile open the socket of `route`? Null (no such socket): no. */
+export function socketAllowedForProfile(profile: ProfileSource, route: SocketRoute | null, thread?: { type: string; config: Record<string, unknown> } | null): boolean {
+  if (!route) return false;
   if (read(profile) !== 'business') return true;
-  return !BUSINESS_UPGRADE_DENY.some((re) => re.test(url));
+  if (route.business !== 'allow') return false;
+  // The chat stream of a thread a business person may not drive (an agent, a CLI thread) stays closed:
+  // opening it would start that thread's process again.
+  if (route.id === 'structured' && thread && !businessMayDrive(thread)) return false;
+  return true;
 }

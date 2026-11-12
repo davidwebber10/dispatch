@@ -14,9 +14,16 @@ stub OS, a scripted `claude`). Ids, times and paths are from that run; long valu
   sends no token. Every HTTP route and every WebSocket below needs it; a socket without it gets
   `HTTP 401 {"error":"unauthorized"}`. All paths below are relative to `/dispatch`.
 - **Capability check.** `GET /api/host-context` lists `headless-v1` in `capabilities` when this
-  contract holds. Do not drive a box without it.
+  contract holds. Do not drive a box without it. For a business person also require `gate-v2`
+  (section 9): an image without it has the older gate.
+- **One spelling per path.** Send every path exactly as this page writes it: lower case, single
+  slashes, no trailing slash, no `.` or `..` segment, and escape only what must be escaped
+  (`encodeURIComponent` of a parameter is right). Any other spelling gets
+  `400 {"error":"bad_path", ...}` before anything else reads the request; a different case of a
+  route word gets `404`. A router in front of the box must pass the path on unchanged.
 - **Errors.** A refusal is JSON `{ "error": "<plain sentence>", ... }`. The business gate adds
-  `code: "not_available_in_profile"` and `rule` (section 9).
+  `code: "not_available_in_profile"` and `rule` (section 9). A file route that refuses a path adds
+  `code: "path_refused"` and `reason` (`system`, `outside`, `daemon`, `harness`, `hardlink`).
 - **Writes that start work** (`POST .../terminals`, `POST .../message`, `POST .../permission`) accept a
   request from the owner (box token) or a browser; a credential-free program is refused.
 
@@ -26,7 +33,7 @@ stub OS, a scripted `claude`). Ids, times and paths are from that run; long valu
 
 ```json
 {"profile":"business","hosted":true,"osBaseUrl":"http://127.0.0.1:48812","ownerEmail":"person@example.com",
- "capabilities":["base-path","os-tools-proxy","profile","headless-v1","idle-info"]}
+ "capabilities":["base-path","os-tools-proxy","profile","headless-v1","idle-info","gate-v2"]}
 ```
 
 | Capability | Meaning |
@@ -36,6 +43,7 @@ stub OS, a scripted `claude`). Ids, times and paths are from that run; long valu
 | `profile` | The business gate (section 9) follows OS's live profile. |
 | `headless-v1` | This document, including `GET /api/chats`. |
 | `idle-info` | The heartbeat reports `automations` and a real `lastActivityAt` (`docs/hosted.md`). |
+| `gate-v2` | The business gate decides from the route that matched, with default deny (section 9); a path has one spelling; the file routes serve the person's own folders only. |
 
 `automations-safe` is NOT advertised: a business person may not start automations (section 9).
 
@@ -155,8 +163,12 @@ byte for byte in the tool result and in the assistant text.
   `GET /api/terminals/:id/permission` reads the pending one (or `null`).
 - A blocked action (the harness refused it by itself): `{"type":"system","subtype":"permission_blocked","block":{"id":"toolu_block","toolName":"Bash","title":"Wants to run a command","detail":"git push --force origin main","reason":"[Git Destructive] force push to main","at":…}}`.
   "Allow this": `POST /api/terminals/:id/blocked/<block.id>` `{"decision":"allow"}` (or `"keep"`) → `204`;
-  the stream then shows `{"type":"system","subtype":"permission_blocked_resolved","id":"toolu_block","decision":"allow"}` and a user
-  message that approves it. `GET /api/terminals/:id/approvals` → `{"mode":"smart","blocked":[…],"pending":{…}|null}`.
+  the stream then shows `{"type":"system","subtype":"permission_blocked_resolved","id":"toolu_block","decision":"allow"}` and a
+  line from Dispatch that asks the model to run the action again (`[Dispatch] The action that was blocked (…) may run once. …`).
+  The allowance is held by the daemon, for that one call: it answers the retry of exactly that call itself, and
+  anything else the model asks for in the meantime arrives as an ordinary approval request. No sentence in the
+  conversation allows anything, and only this request (the person's, through the router) sets the allowance.
+  If it could not be set, a `dispatch_notice` says so. `GET /api/terminals/:id/approvals` → `{"mode":"smart","blocked":[…],"pending":{…}|null}`.
 - `control_request` / `control_response` frames are the harness's own protocol: ignore them.
 
 **Ordering, reconnect, restart.** Frames arrive in order on one socket. Each finished item has a
@@ -206,26 +218,44 @@ Usage and limits: `GET /api/usage-limits/summary` →
   The built-in `data` and `display` systems need no connection. The gateway's instructions ride the
   `data` server (tool names written `data.guide`, `display.chart`).
 
-## 9. What the business profile refuses
+## 9. What the business profile allows and refuses (capability `gate-v2`)
 
 `403 {"error":"<plain sentence>","code":"not_available_in_profile","rule":"<id>"}`. Hide these controls
-for a business person. Every GET stays allowed.
+for a business person.
 
-| Rule | Request |
+**Default deny.** Every route and every WebSocket of the daemon has one row in one table
+(`packages/core/src/profile/business-routes.ts`): allowed, refused, or allowed for some bodies. The
+decision is made by the route that matched the request, not by the text of the URL, so no spelling of
+a path changes it. A route with no row answers `rule: "unclassified"`. A `GET` is not allowed just
+because it is a `GET`: a read of a secret or of the machine is refused too.
+
+What this contract needs is allowed: sections 1 to 8, and the file routes inside the person's project.
+
+| Rule | Refused request |
 | --- | --- |
 | `thread.create` | a `shell` or `browser` thread; a CLI thread (`transport:"pty"`); a thread with `role`, `runner`, `agentType`, `roleAuthority`, `autonomy:"autonomous"`, approvals other than `smart`; `queued:true` |
-| `thread.transport.cli`, `thread.pty-input` | switching to the CLI; typing into a terminal; the terminal WebSockets |
-| `thread.approvals` | approvals other than `smart` |
-| `thread.autonomy` | the autonomous dial |
-| `thread.config` | `PATCH /api/terminals/:id` with a config of the forms above |
-| `automation.create`, `automation.update`, `automation.run` | `POST /api/agents/schedules`, `PATCH /api/agents/schedules/:id`, `POST …/run-now` |
-| `role.enable`, `coordinator.create`, `thread.start-queued` | a role, a coordinator, a queued agent |
-| `worktree.create`, `plugin.*`, `skill.install`, `integration.*` | machine features |
+| `thread.not-chat` | a message, an approval answer, "Allow this", restart, restore, continue, model, effort, account or compact for a thread that is not a chat thread (a shell, a CLI thread, an agent, a runner made earlier). Stop, interrupt and archive stay allowed. Its `structured-ws` socket answers `403` |
+| `thread.transport.cli`, `thread.pty-input`, `thread.pty-output` | switching to the CLI; typing into a terminal; reading a terminal's scrollback; the terminal WebSockets |
+| `thread.approvals`, `thread.autonomy` | approvals other than `smart`; the autonomous dial |
+| `thread.config`, `thread.branch`, `thread.start-queued` | `PATCH /api/terminals/:id` with a config of the forms above; branching a thread; starting a queued agent |
+| `project.folder`, `project.relaunch` | `POST /api/sessions` with a `workingDir` outside `~/projects` (send a name alone); `POST /api/sessions/:id/relaunch` |
+| `automation.create`, `automation.update`, `automation.run`, `role.enable`, `coordinator.create`, `watch.create` | everything that creates, changes, enables or runs an automation, a role, a coordinator or a watch |
+| `chat` | the "Chat" (Endless) routes, except reading its state: its turns run with every tool allowed |
+| `worktree.create`, `review.diff`, `files.browse`, `files.reveal` | worktrees; the diff review routes; the folder browser of the machine |
+| `plugin.*`, `skill.install`, `skill.enable`, `integration.*`, `setup.install` | adding, enabling, updating or exporting a plugin, a skill or a tool connection; installing a CLI |
+| `secrets`, `settings`, `devices`, `analytics`, `control-plane` | Doppler secrets (also reading a value); the machine's settings (`PUT`); device sign-in; analytics; the decision ledger (`POST`) |
+| `agent-key` | any request that carries a thread's or a plugin's own key, except the few an agent needs: its company tools (`/api/os/mcp/:system`), its own status and hook events, who it is, the project and thread lists, and its Inbox files. A key cannot start or message a thread, answer an approval, change approvals or add a tool |
+| `unclassified` | a route that has no row in the table |
+
+Files: every file route checks its path against the person's folders (`code: "path_refused"`). A business
+person gets the project the request names, which must be a folder of `~/projects`; never a folder that
+configures an agent program (`.claude`, `.codex`, `.git`, `.mcp.json`, …) and never `/proc` and the like.
 
 Automations for a business person: list (`GET /api/agents/schedules`, `GET /api/agents/runs`),
 cancel a run and delete a schedule; never create, change, enable or run one. A run starts its
 harness with every approval skipped, so this stays refused until a run can use `smart` approvals and
-end itself on a blocked action (no capability `automations-safe` yet).
+end itself on a blocked action (no capability `automations-safe` yet). Under the business profile the
+daemon also refuses to START anything but a chat thread, whatever asked for it.
 
 ## 10. Idle information (capability `idle-info`, for OS, not the view)
 

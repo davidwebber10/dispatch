@@ -5,7 +5,7 @@ import Database from 'better-sqlite3';
 import { initSchema } from '../db/schema.js';
 import { DeliveryOutbox } from '../delivery/outbox.js';
 import { createOutboxRouter } from './outbox.js';
-import { policyKindOf } from '../auth/route-policy.js';
+import { policyHandlerOf, policyKindOf } from '../auth/route-policy.js';
 
 function app() {
   const db = new Database(':memory:');
@@ -19,7 +19,7 @@ function app() {
   const handlers = (router as any).stack[0].route.stack.map((l: any) => l.handle);
   const e = express();
   e.get('/api/outbox', handlers[handlers.length - 1]);
-  return { e, policy: policyKindOf(handlers[0]) };
+  return { e, policy: policyKindOf(policyHandlerOf((router as any).stack[0].route)) };
 }
 
 describe('GET /api/outbox', () => {

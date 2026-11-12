@@ -1,0 +1,8 @@
+{
+  "forceLoginMethod": "claudeai",
+  "permissions": {
+    "disableBypassPermissionsMode": "disable"
+  },
+  "allowManagedHooksOnly": true,
+  "allowManagedPermissionRulesOnly": true
+}

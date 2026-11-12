@@ -22,7 +22,15 @@
 #   --repo <name>               ECR repository (default $DISPATCH_ECR_REPO or dispatch-box)
 #   --platform <p>              default linux/arm64 (Fargate Graviton); linux/amd64 for a local x86 test
 #   --local-tag <name>          with --no-push: the local image name (default dispatch-box), no registry
-#   --claude <v> --codex <v> --opencode <v>   agent CLI versions (default: the Dockerfile's pins)
+#   --tag <tag>                 the image tag (default: the version in package.json)
+#   --no-latest                 do not tag or push `latest` (a build for one environment to try first)
+#   --target <stage>            the Dockerfile stage: `runtime` (default, the standard image) or
+#                               `runtime-dev` (the developer image: toolchain, approvals may be skipped).
+#                               Give the developer image its own --tag; it never becomes `latest`.
+#
+# The agent CLIs are pinned in the Dockerfile (Claude Code: version and SHA-256 of the binary) and in
+# docker/hosted/agent-clis/package-lock.json (Codex, OpenCode, mcp-remote: every package by integrity
+# hash). To move one, change the pin there; there is no version option here any more.
 #
 # Requires: docker, and (to push) an AWS profile that can push to the ECR repository.
 set -euo pipefail
@@ -35,6 +43,9 @@ PLATFORM="linux/arm64"
 LOCAL_TAG="dispatch-box"
 BUILD_ARGS=()
 PUSH=1
+TAG=""
+LATEST=1
+TARGET="runtime"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-push) PUSH=0 ;;
@@ -44,17 +55,20 @@ while [[ $# -gt 0 ]]; do
     --repo) REPO="$2"; shift ;;
     --platform) PLATFORM="$2"; shift ;;
     --local-tag) LOCAL_TAG="$2"; shift ;;
-    --claude) BUILD_ARGS+=(--build-arg "CLAUDE_VERSION=$2"); shift ;;
-    --codex) BUILD_ARGS+=(--build-arg "CODEX_VERSION=$2"); shift ;;
-    --opencode) BUILD_ARGS+=(--build-arg "OPENCODE_VERSION=$2"); shift ;;
-    -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
+    --tag) TAG="$2"; shift ;;
+    --no-latest) LATEST=0 ;;
+    --target) TARGET="$2"; shift ;;
+    --claude|--codex|--opencode) echo "$1 is gone: the agent CLIs are pinned by hash (see the header of this script)." >&2; exit 2 ;;
+    -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
   shift
 done
 
 cd "$(dirname "$0")/.."
-VERSION="$(node -p "require('./package.json').version")"
+VERSION="${TAG:-$(node -p "require('./package.json').version")}"
+# The developer image is never `latest`: `latest` is what a new box gets.
+[[ "$TARGET" == "runtime" ]] || LATEST=0
 
 if [[ "$PUSH" == "0" && -z "$ACCOUNT" ]]; then
   # A true local-only build: no AWS call at all.
@@ -69,12 +83,14 @@ echo "Building ${IMAGE}:${VERSION} for ${PLATFORM}…"
 
 # --platform is not optional: the fleet runs ARM64, and an amd64 image fails at
 # task start with an exec-format error that reads like a corrupt image.
+TAGS=(-t "${IMAGE}:${VERSION}")
+[[ "$LATEST" == "1" ]] && TAGS+=(-t "${IMAGE}:latest")
 docker build \
   --platform "${PLATFORM}" \
+  --target "${TARGET}" \
   -f docker/hosted/Dockerfile \
   ${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"} \
-  -t "${IMAGE}:${VERSION}" \
-  -t "${IMAGE}:latest" \
+  "${TAGS[@]}" \
   .
 
 if [[ "$PUSH" == "0" ]]; then
@@ -86,7 +102,7 @@ aws --profile "$PROFILE" ecr get-login-password --region "$REGION" \
   | docker login --username AWS --password-stdin "$REGISTRY"
 
 docker push "${IMAGE}:${VERSION}"
-docker push "${IMAGE}:latest"
+[[ "$LATEST" == "1" ]] && docker push "${IMAGE}:latest"
 
 DIGEST="$(aws --profile "$PROFILE" ecr describe-images \
   --repository-name "$REPO" --image-ids imageTag="$VERSION" \

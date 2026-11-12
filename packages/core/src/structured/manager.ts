@@ -5,7 +5,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import * as readline from 'readline';
 import { looksLikeQuestion } from '../status/question.js';
 import { broadKillDenial } from './broad-kill-guard.js';
-import { inheritedEnv } from '../platform/inherited-env.js';
+import { childEnv } from '../platform/inherited-env.js';
 import { redactKeys } from '../auth/redact-keys.js';
 import { detectClaudeLimit, pauseLabel, type UsageLimit } from '../limits/detect.js';
 import { killWithGrace } from '../platform/kill-grace.js';
@@ -14,7 +14,7 @@ import { EventRing } from './shared/event-ring.js';
 import type { JournalRecorder, ThreadRecorder } from '../journal/recorder.js';
 import { ClaudeStreamCompactor } from './shared/stream-compaction.js';
 import { settleTurn, type SettleDeps } from './shared/settle-turn.js';
-import { blockedEvent, blockedResolvedEvent, approvalTitle, approvalMessage, inputDetail, SMART_FALLBACK_NOTICE, type BlockedAction, type Approvals } from '../os/approvals.js';
+import { blockedEvent, blockedResolvedEvent, approvalTitle, allowedOnceMessage, sameToolCall, inputDetail, SMART_FALLBACK_NOTICE, ALLOW_ONCE_MS, type BlockedAction, type Approvals } from '../os/approvals.js';
 import { StructuredEmitter, type AnyStructuredListener, type StructuredListener, type StructuredManagerEventName, type StructuredManagerEvents } from './shared/events.js';
 
 /**
@@ -121,6 +121,15 @@ interface Session {
   smartSwitching?: boolean;
   /** Actions the classifier blocked this session, newest last, for the in-thread cards. */
   blocked?: BlockedAction[];
+  /** The full input of each blocked call, by block id (the card shows a short detail only). Never sent to a client. */
+  blockedInputs?: Map<string, unknown>;
+  /**
+   * "Allow this" (os/approvals.ts): the one call the person allowed, held by the daemon. While it is set the
+   * CLI runs in its asking mode, so the retry comes to the daemon as a request, and only a request for this
+   * very call is answered `allow`. `input` undefined: the blocked call's input is not known, so nothing is
+   * answered for the person and the retry shows as an ordinary approval card.
+   */
+  allowOnce?: { toolName: string; input: unknown; known: boolean; timer: NodeJS.Timeout; /** Turn ends to let pass: the turn that was open when the person allowed the call. */ skipResults: number } | null;
   /** Our own control requests awaiting the CLI's control_response (set_model). */
   controls?: Map<string, { resolve: (r: any) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>;
 }
@@ -441,7 +450,7 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
     if (this.sessions.has(terminalId)) this.kill(terminalId);
     const child = spawn(opts.command, opts.args, {
       cwd: opts.workDir,
-      env: { ...inheritedEnv(), ...this.defaultEnv, ...opts.env },
+      env: childEnv(this.defaultEnv, opts.env),
       stdio: ['pipe', 'pipe', 'pipe'],
     }) as ChildProcessWithoutNullStreams;
     child.stdin.on('error', () => {}); // Fix 2: suppress EPIPE if child closes stdin while alive
@@ -526,7 +535,14 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
             type: 'control_response',
             response: { subtype: 'success', request_id: event.request_id, response: { behavior: 'deny', message: denied.message } },
           });
-        } else if (session.escalate || isAsk || session.smart) {
+        } else if (!isAsk && session.allowOnce?.known && sameToolCall(session.allowOnce, { toolName, input: r?.input })) {
+          // The ONE call the person allowed ("Allow this", see allowOnce()): answered by the daemon, once.
+          this.write(terminalId, {
+            type: 'control_response',
+            response: { subtype: 'success', request_id: event.request_id, response: { behavior: 'allow', updatedInput: r?.input } },
+          });
+          void this.endAllowOnce(terminalId, session);
+        } else if (session.escalate || isAsk || session.smart || session.allowOnce) {
           // Smart approvals: auto mode let the routine calls run without asking, so EVERY request
           // that still arrives is one the classifier or an `ask` rule wants a person for.
           // Do NOT auto-allow. Capture the pending decision and surface it so it can be
@@ -590,6 +606,12 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
       if (event?.parent_tool_use_id == null && event?.type !== 'result') {
         const hit = detectClaudeLimit(event, Date.now());
         if (hit) session.limit = hit;
+      }
+      // The turn ended with the allowed call still unused, and nothing waits for the person: the window closes.
+      // (The turn that was already running when the person allowed it ends first: that end does not count.)
+      if (event?.type === 'result' && session.allowOnce && !session.pending) {
+        if (session.allowOnce.skipResults > 0) session.allowOnce.skipResults--;
+        else void this.endAllowOnce(terminalId, session);
       }
       if (event?.type === 'result') {
         session.turnOpen = false;
@@ -894,10 +916,13 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
         at: Date.now(),
       };
       session.blocked = [...(session.blocked ?? []).filter((x) => x.id !== b.id), b].slice(-20);
+      (session.blockedInputs ??= new Map()).set(b.id, input);
+      for (const id of session.blockedInputs.keys()) if (!session.blocked.some((x) => x.id === id)) session.blockedInputs.delete(id);
       this.postEvent(terminalId, blockedEvent(b));
       return;
     }
-    const counts = !session.smartSwitching && (event.subtype === 'status' || (event.subtype === 'init' && !session.smartLive));
+    // While one allowed call is awaited the CLI is in its asking mode on purpose: that is not a fallback.
+    const counts = !session.smartSwitching && !session.allowOnce && (event.subtype === 'status' || (event.subtype === 'init' && !session.smartLive));
     const mode = counts ? event.permissionMode ?? event.permission_mode : undefined;
     if (typeof mode === 'string' && mode && mode !== 'auto' && !session.smartFallback) this.fallBackFromSmart(terminalId, session);
   }
@@ -942,10 +967,63 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
     const b = s?.blocked?.find((x) => x.id === id);
     if (!s || !b) return false;
     s.blocked = s.blocked!.filter((x) => x.id !== id);
+    const known = s.blockedInputs?.has(id) ?? false;
+    const input = s.blockedInputs?.get(id);
+    s.blockedInputs?.delete(id);
     this.postEvent(terminalId, blockedResolvedEvent(id, decision));
-    // Allow: a message that names and approves the action lets the retry through (measured).
-    if (decision === 'allow') this.sendMessage(terminalId, approvalMessage(b));
+    if (decision === 'allow') await this.allowOnce(terminalId, s, b, known && input !== undefined, input);
     return true;
+  }
+
+  /**
+   * "Allow this", as a signal the model cannot write (os/approvals.ts). The words of a message never
+   * allow anything here. The daemon:
+   *   1. remembers the ONE call the person allowed (tool and exact input);
+   *   2. puts the CLI in its asking mode with a control request (`set_permission_mode default`), so the
+   *      harness's own judgement of the conversation text is out of the path and the retry arrives at the
+   *      daemon as a `can_use_tool` request;
+   *   3. tells the model, in a plain line, to run the call again;
+   *   4. answers `allow` to a request for exactly that call (see the membrane in spawn()); every other
+   *      gated call in that window waits for the person, like any approval card;
+   *   5. goes back to the smart mode when the call was answered, the turn ended, or the time ran out.
+   * Only this method arms it, and only the owner's `POST …/blocked/:id` reaches this method.
+   */
+  private async allowOnce(terminalId: string, s: Session, b: BlockedAction, known: boolean, input: unknown): Promise<void> {
+    if (s.allowOnce) clearTimeout(s.allowOnce.timer);
+    const timer = setTimeout(() => { void this.endAllowOnce(terminalId, s); }, ALLOW_ONCE_MS);
+    timer.unref?.();
+    s.allowOnce = { toolName: b.toolName, input, known, timer, skipResults: s.turnOpen ? 1 : 0 };
+    // Already asking for every tool (a model with no smart mode): nothing to switch.
+    if (!s.smartFallback) {
+      try {
+        await this.control(terminalId, { subtype: 'set_permission_mode', mode: 'default' }, 'approval');
+      } catch {
+        // The CLI did not leave its own mode: no call can be allowed for the person. Say so; allow nothing.
+        clearTimeout(timer);
+        s.allowOnce = null;
+        this.postEvent(terminalId, { type: 'system', subtype: 'dispatch_notice', level: 'warning', message: 'Dispatch could not allow that action. Ask for it again: you will be asked before it runs.' });
+        return;
+      }
+    }
+    this.sendMessage(terminalId, allowedOnceMessage(b));
+  }
+
+  /** The one allowed call was used, or its window closed: back to the smart mode. */
+  private async endAllowOnce(terminalId: string, s: Session): Promise<void> {
+    const held = s.allowOnce;
+    if (!held) return;
+    clearTimeout(held.timer);
+    s.allowOnce = null;
+    if (this.sessions.get(terminalId) !== s || !s.smart || s.smartFallback) return;
+    s.smartSwitching = true;
+    try {
+      await this.control(terminalId, { subtype: 'set_permission_mode', mode: 'auto' }, 'approval');
+    } catch {
+      // The smart mode did not come back: ask for every tool instead (the safe side), with the one plain line.
+      this.fallBackFromSmart(terminalId, s);
+    } finally {
+      s.smartSwitching = false;
+    }
   }
 
   postNotice(terminalId: string, message: string): void {
@@ -974,6 +1052,7 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
     const s = this.sessions.get(terminalId);
     if (!s) return;
     for (const c of s.controls?.values() ?? []) { clearTimeout(c.timer); c.reject(new Error('The thread stopped')); }
+    if (s.allowOnce) { clearTimeout(s.allowOnce.timer); s.allowOnce = null; }
     s.controls?.clear();
     s.pending = null;
     // Remove the session first: closing readline below can finish a pending drain (see spawn()),

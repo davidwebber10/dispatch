@@ -32,6 +32,12 @@ export function prepareSeparatedBox(cfg: PrivsepConfig, env: NodeJS.ProcessEnv =
   fs.chownSync(cfg.agentRunDir, 0, 0);
   fs.chmodSync(cfg.agentRunDir, 0o755);
 
+  // The daemon's own scratch space, beside the agent run dir: root only.
+  const scratch = path.join(path.dirname(cfg.agentRunDir), 'private');
+  fs.mkdirSync(scratch, { recursive: true, mode: 0o700 });
+  fs.chownSync(scratch, 0, 0);
+  fs.chmodSync(scratch, 0o700);
+
   // The home and the agent data dir belong to the agent.
   fs.mkdirSync(cfg.agentHome, { recursive: true });
   giveToAgent(cfg.agentHome, cfg);

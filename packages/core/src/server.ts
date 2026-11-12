@@ -2,7 +2,7 @@
  * The entry of the daemon. Everything is built in `daemon/build.ts` (W3-A): `createApp` is the test
  * build of it, and `startServer` is the daemon: build, attach, listen, boot recover, start timers.
  */
-import './privsep/install.js'; // FIRST: on a box with privilege separation, before any module can start a process or read a token
+import './privsep/install.js'; // FIRST: on a box with privilege separation, before any module can start a process or read a secret
 import { KILL_GRACE_MS } from './platform/kill-grace.js';
 import fs from 'fs';
 import path from 'path';
@@ -33,6 +33,7 @@ import { runDirFor } from './privsep/paths.js';
 import { getRunningVersion } from './update/version.js';
 import { currentProfile } from './os/profile.js';
 import { boxCapabilities } from './platform/capabilities.js';
+import { describeBoxTokenMode, takeBoxSecrets, type BoxTokenMode } from './platform/box-secrets.js';
 
 export { buildDaemon, wireLedger } from './daemon/build.js';
 export type { BuildDaemonOptions, Daemon, DaemonServices } from './daemon/build.js';
@@ -91,12 +92,18 @@ export function createApp(options: CreateAppOptions): express.Express {
   return app;
 }
 
-export async function startServer(options?: { port?: number; allowRandomPortFallback?: boolean }): Promise<{ port: number; cleanup: () => void; keys: KeyRegistry }> {
-  const preferredPort = options?.port ?? 3456;
-  // DISPATCH_BIND: checked first, so an invalid value stops the start before anything is opened or spawned.
-  const bindHost = parseBindHost(process.env.DISPATCH_BIND);
+/**
+ * Take the two box secrets out of the environment and refuse one value in both roles
+ * (platform/box-secrets.ts). A local install has neither: nothing changes for it.
+ */
+function takeBoxSecretsAtStart(): BoxTokenMode {
+  const mode = takeBoxSecrets();
+  if (mode !== 'local') console.log(`[dispatch] ${describeBoxTokenMode(mode)}`);
+  return mode;
+}
 
-  // Resolve the user's shell PATH so PTYs inherit it (fixes Finder/login-items launches)
+/** Resolve the user's shell PATH so PTYs inherit it (fixes Finder/login-items launches). */
+function adoptLoginPath(): void {
   const shellPath = platform.resolveLoginPath();
   if (shellPath) {
     process.env.PATH = shellPath;
@@ -108,6 +115,15 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       `ts=${new Date().toISOString()}\nSHELL=${process.env.SHELL}\nshellPath=${shellPath}\nprocess.env.PATH=${process.env.PATH}\n`,
     );
   } catch {}
+}
+
+export async function startServer(options?: { port?: number; allowRandomPortFallback?: boolean }): Promise<{ port: number; cleanup: () => void; keys: KeyRegistry }> {
+  const preferredPort = options?.port ?? 3456;
+  // FIRST, before anything is spawned (the PATH probe below starts a shell): no child inherits a box secret.
+  const tokenMode = takeBoxSecretsAtStart();
+  // DISPATCH_BIND: checked first, so an invalid value stops the start before anything is opened or spawned.
+  const bindHost = parseBindHost(process.env.DISPATCH_BIND);
+  adoptLoginPath();
 
   const dataDir = platform.dataDir();
   // Privilege separation (hosted): check the roots and move an older box's state out of the home.
@@ -166,7 +182,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   writeListenInfo(dataDir, { port, bind: boundAddress }); // "dispatch status" prints it
   daemon.listening(port, port !== preferredPort ? { shimEnv: shimFor(port) } : undefined);
   console.log(`Dispatch server listening on port ${port}`);
-  logDaemonStart(port, basePath);
+  logDaemonStart(port, basePath, tokenMode);
   if (daemon.services.accessGate) console.log('Network: other devices need the access token (run "dispatch access"). Tailscale devices on your own account are allowed.');
 
   // Boot recovery does not block the start: it waits a short settle delay before it reads any status.
@@ -189,10 +205,10 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 }
 
 /** Hosted box log (os/box-log.ts): one line that says which build started, and how. Local: no line. */
-function logDaemonStart(port: number, basePath: string): void {
+function logDaemonStart(port: number, basePath: string, tokenMode: BoxTokenMode): void {
   boxLog('daemon.start', {
     version: getRunningVersion(), profile: currentProfile(), basePath: basePath || '/', capabilities: boxCapabilities(),
-    port, node: process.version, ...(process.env.DISPATCH_BOX_ID ? { boxId: process.env.DISPATCH_BOX_ID } : {}),
+    port, node: process.version, tokenMode, ...(process.env.DISPATCH_BOX_ID ? { boxId: process.env.DISPATCH_BOX_ID } : {}),
   });
 }
 

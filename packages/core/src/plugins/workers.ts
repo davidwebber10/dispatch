@@ -7,7 +7,7 @@ import type { PluginRegistry, PluginRow } from './registry.js';
 import type { ThreadEvents, ThreadEvent } from './thread-events.js';
 import { redactThreadEvent } from './thread-events.js';
 import { parseCron, cronMatches, nextCronRun, type CronSpec } from './cron.js';
-import { inheritedEnv } from '../platform/inherited-env.js';
+import { childEnv } from '../platform/inherited-env.js';
 
 /**
  * Plugin workers (docs/superpowers/specs/2026-11-07-plugins-design.md, section 4): one child
@@ -219,11 +219,10 @@ export class PluginWorkers {
     try { fs.mkdirSync(this.runDir, { recursive: true, mode: 0o700 }); } catch { /* exists */ }
     try { fs.unlinkSync(w.socket); } catch { /* none */ }
     const keyFile = this.registry.keyFilePath(row.id);
-    const env: NodeJS.ProcessEnv = {
-      ...inheritedEnv(), ...spec.env,
+    const env: NodeJS.ProcessEnv = childEnv(spec.env, {
       DISPATCH_PLUGIN: row.id, ...(keyFile ? { DISPATCH_PLUGIN_AUTH_FILE: keyFile } : {}),
       DISPATCH_API: typeof this.api === 'function' ? this.api() : this.api, DISPATCH_PLUGIN_SOCKET: w.socket,
-    };
+    });
     this.openLog(w);
     let child: ChildProcess;
     try {
