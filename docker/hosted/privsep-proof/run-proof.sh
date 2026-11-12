@@ -58,7 +58,13 @@ STUB_OUTBOUND_TOKEN="$OUT" node "$HERE/os-stub.mjs" "$STUB_PORT" "$WORK/stub.log
 STUB_PID=$!
 sleep 1
 
-PLATFORM_CAP_DROP="--cap-drop AUDIT_WRITE --cap-drop FSETID --cap-drop MKNOD --cap-drop NET_BIND_SERVICE --cap-drop NET_RAW --cap-drop SETFCAP --cap-drop SYS_CHROOT"
+PLATFORM_CAPS="--cap-drop AUDIT_WRITE --cap-drop FSETID --cap-drop MKNOD --cap-drop NET_BIND_SERVICE --cap-drop NET_RAW --cap-drop SETFCAP --cap-drop SYS_CHROOT"
+# The runtime's DEFAULT seccomp filter, as on the platform (a local Docker may run unconfined). It is
+# what refuses a user namespace to a workload; the self-check measures that (section D2 shows a box
+# without the filter does not report privsep-v1). Whether the platform's filter does the same must
+# be measured on a stage box: `unshare -Ur true` as uid 1000, and the capability list of the box.
+PLATFORM_SECCOMP="--security-opt seccomp=builtin"
+PLATFORM_CAP_DROP="$PLATFORM_CAPS $PLATFORM_SECCOMP"
 start_box() { # start_box <name> <image> <home volume> <state volume or ""> [extra docker args...]
   local name="$1" image="$2" home="$3" state="$4"; shift 4
   docker rm -f "$name" >/dev/null 2>&1
@@ -354,6 +360,16 @@ if compat --user 0 $PLATFORM_CAP_DROP -v "$VH-compat:/home/dispatch" -v "$VS-com
   [ "$SEEN" = 0 ] && fok "in that start no environment the agent user can read names a token" "init and the daemon are root" || fbad "in that start no environment the agent user can read names a token" "$SEEN readable blocks name one"
 else
   fbad "new task definition, one token value: the box starts" "$(docker logs "$NAME-compat" 2>&1 | tail -3 | tr '\n' ' ')"
+fi
+# The same start WITHOUT the seccomp filter: a workload can make a user namespace there, so the
+# self-check must fail and the box must not report privsep-v1.
+docker volume rm -f "$VS-compat" >/dev/null 2>&1
+# shellcheck disable=SC2086
+if compat --user 0 $PLATFORM_CAPS --security-opt seccomp=unconfined -v "$VH-compat:/home/dispatch" -v "$VS-compat:/var/lib/dispatch/state"; then
+  CC="$(api GET /api/host-context | jget capabilities)"
+  docker logs "$NAME-compat" 2>&1 | grep -q 'userns' && ! echo "$CC" | grep -q privsep-v1 && fok "no seccomp filter (a user namespace can be made): the self-check fails, no privsep-v1" "$(docker logs "$NAME-compat" 2>&1 | grep -o 'userns[^"]*' | head -1)" || fbad "no seccomp filter: the self-check fails, no privsep-v1" "$CC"
+else
+  fbad "no seccomp filter: the box starts" "$(docker logs "$NAME-compat" 2>&1 | tail -3 | tr '\n' ' ')"
 fi
 docker rm -f "$NAME-compat" >/dev/null 2>&1
 PORT="$BOX_PORT"

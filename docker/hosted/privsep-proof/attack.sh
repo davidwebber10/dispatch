@@ -38,16 +38,17 @@ done
 [ -z "$(find / -xdev -type f -perm /6000 2>/dev/null | head -1)" ] && ok "no set-uid or set-gid program in the image" || bad "no set-uid or set-gid program in the image" "$(find / -xdev -type f -perm /6000 2>/dev/null | head -3 | tr '\n' ' ')"
 must_fail "become root with su" sh -c 'su -s /bin/sh -c "id -u" root </dev/null | grep -qx 0'
 must_fail "become root with setpriv" setpriv --reuid=0 --clear-groups true
-# A user namespace of its own gives a workload no right over the daemon or its files. Whether one
-# can be made at all depends on the platform's seccomp filter, so that is a note, not a verdict.
+# A user namespace of its own is NOT harmless: in it a workload mounts an empty folder over
+# /etc/claude-code, and a nested harness then runs with no managed policy at all. So a namespace that
+# can be made is a failure. The runtime's default seccomp filter refuses it (the proof starts the box
+# with that filter, as the platform does); the daemon's start-up self-check measures it on each start
+# and reports no privsep-v1 when one can be made.
+must_fail "make an unprivileged user namespace" unshare -Ur true
+must_fail "hide the managed policy with a mount in an own namespace" unshare -Urm sh -c 'mount -t tmpfs none /etc/claude-code && [ ! -e /etc/claude-code/managed-settings.json ]'
 if unshare -Ur true 2>/dev/null; then
-  info "an unprivileged user namespace can be created here" "checked below: it opens nothing"
   must_fail "read the state root from a user namespace" unshare -Ur cat /var/lib/dispatch/state/dispatch.db
   must_fail "read the daemon's environment from a user namespace" unshare -Ur cat "/proc/$D/environ"
   must_fail "signal the daemon from a user namespace" unshare -Ur kill -0 "$D"
-  must_fail "write the managed policy from a user namespace" unshare -Ur sh -c ': >> /etc/claude-code/managed-settings.json'
-else
-  ok "an unprivileged user namespace cannot be created"
 fi
 
 echo "== 2. the two tokens"

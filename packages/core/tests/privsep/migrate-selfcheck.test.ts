@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { MIGRATION_MARKER, classifyEntry, migrateLegacyHome } from '../../src/privsep/migrate.js';
-import { REQUIRED_CHECKS, judgeSelfCheck, runSelfCheck } from '../../src/privsep/selfcheck.js';
+import { execFileSync } from 'node:child_process';
+import { REQUIRED_CHECKS, SELF_CHECK_SCRIPT, judgeSelfCheck, runSelfCheck } from '../../src/privsep/selfcheck.js';
 
 let root: string; let legacy: string; let state: string;
 beforeEach(() => {
@@ -150,6 +151,21 @@ describe('the start-up self-check', () => {
   });
   test('a check that both passed and failed counts as failed', () => {
     expect(judgeSelfCheck(`${allPass}\nFAIL proc-environ-token /proc/7/environ`).ok).toBe(false);
+  });
+  // The real script, with a stand-in `unshare` first on the PATH: only the `userns` line is read.
+  const usernsLine = (unshareExit: number): string => {
+    const bin = path.join(root, 'bin'); fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, 'unshare'), `#!/bin/sh\nexit ${unshareExit}\n`, { mode: 0o755 });
+    const out = execFileSync('/bin/sh', ['-c', SELF_CHECK_SCRIPT, 'selfcheck', '1', state, root, root, String(process.getuid?.() ?? 0)],
+      { env: { PATH: `${bin}:/usr/bin:/bin` }, encoding: 'utf8', timeout: 20_000, stdio: ['ignore', 'pipe', 'ignore'] });
+    return out.split('\n').find((l) => / userns( |$)/.test(l)) ?? '';
+  };
+  test('a user namespace the agent can make fails the check (no privsep-v1)', () => {
+    expect(usernsLine(0)).toBe('FAIL userns a user namespace can be created');
+    expect(judgeSelfCheck(`${allPass.replace('PASS userns', '')}\nFAIL userns a user namespace can be created`)).toMatchObject({ ok: false, failures: ['userns: a user namespace can be created'] });
+  });
+  test('a refused user namespace passes it', () => {
+    expect(usernsLine(1)).toBe('PASS userns');
   });
   test('the script that cannot run is a failure, not a pass', async () => {
     const cfg = { agentUid: 1000, agentGid: 1000, stateDir: '/s/state', agentRunDir: '/r', agentHome: '/h', agentDataDir: '/h/.dispatch' };

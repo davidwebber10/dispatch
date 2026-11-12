@@ -3,6 +3,13 @@
 // USER (through the spawn guard, like every child) and asks it to do what a workload must not be
 // able to do. The image reports `privsep-v1` only when every attempt failed. The check proves on
 // the real platform what the design assumes about it.
+//
+// `userns`: a workload must not be able to make a user namespace. In one of its own it can mount an
+// empty folder over /etc/claude-code, and a nested harness then sees no managed policy at all (no
+// approval lock, no MCP allow-list, no connector or Artifact switch). The sysctl
+// `user.max_user_namespaces` cannot be set on Fargate; the runtime's default seccomp filter normally
+// refuses `unshare`/`clone(CLONE_NEWUSER)` to a process without CAP_SYS_ADMIN. This check MEASURES that
+// on each start: when the namespace can be made, the box does not report privsep-v1.
 import { execFile } from 'node:child_process';
 import path from 'node:path';
 import type { PrivsepConfig } from './config.js';
@@ -54,6 +61,9 @@ for f in /proc/[0-9]*/environ; do
 done
 ok proc-environ-scan
 if command -v su >/dev/null 2>&1 && su -s /bin/sh -c 'id -u' root </dev/null 2>/dev/null | grep -qx 0; then bad setuid-su works; else ok setuid-su; fi
+if ! command -v unshare >/dev/null 2>&1; then bad userns "no unshare program: not measured"
+elif unshare -Ur true >/dev/null 2>&1; then bad userns "a user namespace can be created"
+else ok userns; fi
 `;
 
 export interface SelfCheckDeps {
@@ -76,7 +86,7 @@ export const REQUIRED_CHECKS = [
   'uid', 'no-root-group', 'no-new-privs', 'CapPrm-empty', 'CapEff-empty', 'CapAmb-empty', 'CapInh-empty',
   'daemon-environ', 'init-environ', 'daemon-fds', 'daemon-cwd', 'daemon-mem', 'signal-daemon',
   'state-parent', 'state-root', 'state-db', 'state-write', 'run-dir-write', 'run-dir-read',
-  'env-clean', 'proc-environ-scan', 'setuid-su',
+  'env-clean', 'proc-environ-scan', 'setuid-su', 'userns',
 ] as const;
 
 export function judgeSelfCheck(output: string): SelfCheckResult {

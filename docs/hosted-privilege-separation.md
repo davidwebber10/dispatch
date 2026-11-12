@@ -358,7 +358,7 @@ older image afterwards does NOT bring the state back into the home: keep the sto
 | Capabilities | Bounding set of six for the daemon; workloads have none. The task definition also drops what the container never needs. Fargate allows adding only `SYS_PTRACE`; nothing is added. |
 | Set-uid programs | The image has none; with `no_new_privs` they would be inert anyway. |
 | Read-only root file system | Supported and used in the proof. The writable places are the two mounts, `/tmp` and `/run/dispatch` (both declared volumes of the image; `tmpfs` mounts are not available to a task). The platform sets it with a switch, after one clean start. |
-| User namespaces | Whether a workload can create one depends on the platform's seccomp filter (it can in a local container). The proof shows that one opens nothing: the state root, the daemon's environment, signals and the policy files stay out of reach. |
+| User namespaces | A user namespace is NOT harmless. In one of its own a workload mounts an empty folder over `/etc/claude-code`, and a nested harness then runs with no managed policy (no approval lock, no MCP allow-list, no connector or Artifact switch); this was shown with the real Claude Code in a container without a seccomp filter. The sysctl `user.max_user_namespaces` cannot be set on Fargate. The runtime's default seccomp filter refuses `unshare` and `clone(CLONE_NEWUSER)` to a process without `CAP_SYS_ADMIN` (shown locally with `--security-opt seccomp=builtin`). That the platform's filter does the same must be MEASURED on a stage box: `unshare -Ur true` as uid 1000 must fail. The start-up self-check makes this measurement on every start (check `userns`): when a namespace can be made, the box does not report `privsep-v1`, so the platform gives it no business person. |
 | seccomp | The platform's default filter is active (measured). Custom profiles are not available. |
 | pid and memory limits per workload | cgroups are not delegated to a task. Available: `ulimit` values in the task definition (`nofile`, `nproc`) and the daemon's own caps on live threads. A workload can exhaust the task's memory; the task then restarts. Stated as not protected. |
 | `/proc` | No `hidepid`. Other users' pids and command lines are visible; their environment and memory are not. |
@@ -369,12 +369,12 @@ capability is not reported when one fails): the state root and its parent cannot
 written; the secrets are in no readable environment; the daemon's environment, memory, open files
 and working directory cannot be read; the daemon cannot be signalled; `no_new_privs` is 1 and the
 capability sets of a workload are empty; a set-uid program does not raise privilege; the agent run
-dir is readable and not writable.
+dir is readable and not writable; a user namespace cannot be made (`unshare -Ur true`).
 
 Assumptions it cannot verify, to be measured once on the real platform: a volume mounted at the state
 root leaves the mode of the parent folder as the image made it (the entrypoint refuses to start
 otherwise); IAM authorization of two access points with one task role; that the path of the task
-credential endpoint cannot be learned by a workload; `fs.protected_symlinks`; user namespaces.
+credential endpoint cannot be learned by a workload; `fs.protected_symlinks`.
 
 ## 11. Two tokens end to end (question 8)
 
