@@ -267,6 +267,12 @@ export const BUSINESS_ROUTES: Readonly<Record<string, BusinessRow>> = {
   'DELETE /api/inbox/drops/:dropId': allow(),
   'GET /api/inbox/drops/:dropId/files/:fileId': allow(),
   'GET /api/inbox/drops/:dropId/secret': refuse('inbox.secret', NO_SECRET_DROP),
+  // Inbox → Send a secret (routes/inbox-secrets.ts): a secret for a thread to write into a file or Doppler.
+  // Secrets are managed for a business workspace, so none of it is open there (yet).
+  'POST /api/plugins/previews/secrets': secrets,
+  'GET /api/plugins/previews/secrets': secrets,
+  'DELETE /api/plugins/previews/secrets/:id': secrets,
+  'POST /api/plugins/previews/secrets/use': secrets,
   'GET /api/skills': allow(AGENT),
   'POST /api/skills': refuse('skill.install', NO_SKILLS),
   'POST /api/skills/install': refuse('skill.install', NO_SKILLS),

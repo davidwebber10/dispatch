@@ -50,6 +50,7 @@ const SPAWN_SITES = [
   'docs/git.ts',
   'files/thumbnail.ts',
   'git/exec.ts',
+  'inbox/write-file.ts', // `git check-ignore` after a secret file is written (child_process.execFile)
   'integrations/launcher.ts',
   'limits/claude-get-usage.ts',
   'limits/claude-usage.ts',
