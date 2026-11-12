@@ -331,12 +331,49 @@ function coordinatorPromptBase(harness: string): string {
  * list_watches — plus the etiquette that keeps full agency for N peers from
  * going wrong (rate limits, spawn depth, archive protection).
  */
+/** How report_status ends a turn (a local install, and every thread that is not on a hosted box). */
+const REPORT_STATUS_RULE =
+  '- report_status({ state, summary, ask?, blocker? }) — a STATUS signal for how your turn is ' +
+    'ending, NOT a message to the human, and NOT where your content goes. Call it as the LAST ' +
+    'thing you do every turn: `done` when the work is finished, `needs_you` when you cannot ' +
+    'proceed without the human, `blocked` when you are waiting on another agent or a timer. When it ' +
+    'returns, your turn ends: call no other tool, and do not start new work or answer a question nobody ' +
+    'asked. If you have not written your reply yet, write it now. If you already wrote it, end with one ' +
+    'short closing line; never repeat the reply, and never end with an empty message (an empty one ' +
+    'makes the CLI ask you to continue). The human speaks next. Your ' +
+    'findings, answer, and any question ALWAYS go in your normal reply text — that is what the ' +
+    'human reads. A tool call\'s arguments are collapsed out of sight in the reader\'s view (in ' +
+    'the terminal they must press Ctrl+O to even see them), so anything you put ONLY inside ' +
+    'report_status — or any other tool — is effectively invisible to them. `summary` and `ask` ' +
+    'are just a short COPY for the board and alerts, never the place to say something you did not ' +
+    'also write in your reply. Skipping report_status leaves a turn you ended by asking a ' +
+    'question indistinguishable from one where you finished.\n\n';
+
+/**
+ * The same rule on a HOSTED box. There the person reads only the reply (not the thinking, the tool
+ * calls or the status card), so the rule puts the answer first.
+ */
+export const HOSTED_REPLY_RULE =
+  'YOUR REPLY IS THE ANSWER. The person reads only your reply text and what it shows (tables, charts, ' +
+  'files). Your thinking, your tool calls and report_status are not shown as the answer. So every turn ends ' +
+  'with a reply that holds the answer itself, in plain words: the facts that were asked for. For a record you ' +
+  'looked up, give its key fields (for an order: number, date, status, customer, total, lines, shipping). ' +
+  'When there are rows (order lines, lists, rankings), show them as a table with the `display` tools. Never ' +
+  'reply only "see above", "that is the full record" or a pointer to work the person cannot see.\n' +
+  '- report_status({ state, summary, ask?, blocker? }) — a one-line summary for the thread list, never ' +
+  'the answer. Order of each turn: write the reply with the answer, then call report_status as the last tool ' +
+  '(`done`, `needs_you` when the person must act, `blocked` when you wait on another thread), then end ' +
+  'with one short closing line. Before you call it, check that your reply text already holds the answer; ' +
+  'if it does not, write the answer first.\n\n';
+
 export function buildPeerPrompt(ctx: {
   projectName: string;
   workingDir: string;
   selfLabel: string;
   selfId: string;
   peers: { label: string; type: string; status: string }[];
+  /** A hosted box: the reply rule for a person who reads only the reply (HOSTED_REPLY_RULE). */
+  hosted?: boolean;
 }): string {
   const roster = ctx.peers.length
     ? 'Other threads in this project right now (a snapshot from when you started — threads come ' +
@@ -365,21 +402,7 @@ export function buildPeerPrompt(ctx: {
     'loop: polling burns tokens for no benefit, while a watch costs nothing until it fires. If the peer ' +
     'already settled during your turn, the result has firedNow and a wake text: act on it now, no message follows.\n' +
     '- unwatch_thread({ watchId }) / list_watches() — cancel or inspect your own subscriptions.\n' +
-    '- report_status({ state, summary, ask?, blocker? }) — a STATUS signal for how your turn is ' +
-    'ending, NOT a message to the human, and NOT where your content goes. Call it as the LAST ' +
-    'thing you do every turn: `done` when the work is finished, `needs_you` when you cannot ' +
-    'proceed without the human, `blocked` when you are waiting on another agent or a timer. When it ' +
-    'returns, your turn ends: call no other tool, and do not start new work or answer a question nobody ' +
-    'asked. If you have not written your reply yet, write it now. If you already wrote it, end with one ' +
-    'short closing line; never repeat the reply, and never end with an empty message (an empty one ' +
-    'makes the CLI ask you to continue). The human speaks next. Your ' +
-    'findings, answer, and any question ALWAYS go in your normal reply text — that is what the ' +
-    'human reads. A tool call\'s arguments are collapsed out of sight in the reader\'s view (in ' +
-    'the terminal they must press Ctrl+O to even see them), so anything you put ONLY inside ' +
-    'report_status — or any other tool — is effectively invisible to them. `summary` and `ask` ' +
-    'are just a short COPY for the board and alerts, never the place to say something you did not ' +
-    'also write in your reply. Skipping report_status leaves a turn you ended by asking a ' +
-    'question indistinguishable from one where you finished.\n\n' +
+    (ctx.hosted ? HOSTED_REPLY_RULE : REPORT_STATUS_RULE) +
     'Etiquette and limits, so you fail informed rather than surprised:\n' +
     '- Don\'t ping-pong messages with a peer — messaging a thread is rate-limited per pair, per hour.\n' +
     '- If you create sub-threads of your own, that chain has a fixed depth cap.\n' +

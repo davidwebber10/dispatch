@@ -1,5 +1,5 @@
 import { it, expect } from 'vitest';
-import { systemPromptFor, modelFor, MODEL_FOR_TYPE, COORDINATOR_PROMPT, AGENT_PROMPTS, buildPeerPrompt } from '../../src/overseer/prompts.js';
+import { systemPromptFor, modelFor, MODEL_FOR_TYPE, COORDINATOR_PROMPT, AGENT_PROMPTS, buildPeerPrompt, HOSTED_REPLY_RULE } from '../../src/overseer/prompts.js';
 
 /** Counts non-overlapping occurrences of `needle` in `haystack`. */
 function countOccurrences(haystack: string, needle: string): number {
@@ -196,4 +196,21 @@ it('buildPeerPrompt ends a turn with one short closing line after report_status,
 
 it('agent prompts keep the summary in the reply, not in the closing line', () => {
   for (const prompt of Object.values(AGENT_PROMPTS)) expect(prompt).not.toMatch(/make it the last thing you say/i);
+});
+
+// Hosted reply rule: the person reads only the reply, never the thinking or the status card.
+it('buildPeerPrompt on a hosted box: the reply is the answer; report_status is a one-line summary after it', () => {
+  const local = buildPeerPrompt(SAMPLE_CTX);
+  const hosted = buildPeerPrompt({ ...SAMPLE_CTX, hosted: true });
+  expect(hosted).toContain(HOSTED_REPLY_RULE);
+  expect(local).not.toContain('YOUR REPLY IS THE ANSWER');
+  expect(hosted).not.toContain('a STATUS signal for how your turn is');
+  // Everything else is the same text.
+  expect(hosted.replace(HOSTED_REPLY_RULE, '')).toBe(local.slice(0, local.indexOf('- report_status(')) + local.slice(local.indexOf('Etiquette and limits')));
+  expect(HOSTED_REPLY_RULE).toMatchInlineSnapshot(`
+    "YOUR REPLY IS THE ANSWER. The person reads only your reply text and what it shows (tables, charts, files). Your thinking, your tool calls and report_status are not shown as the answer. So every turn ends with a reply that holds the answer itself, in plain words: the facts that were asked for. For a record you looked up, give its key fields (for an order: number, date, status, customer, total, lines, shipping). When there are rows (order lines, lists, rankings), show them as a table with the \`display\` tools. Never reply only "see above", "that is the full record" or a pointer to work the person cannot see.
+    - report_status({ state, summary, ask?, blocker? }) — a one-line summary for the thread list, never the answer. Order of each turn: write the reply with the answer, then call report_status as the last tool (\`done\`, \`needs_you\` when the person must act, \`blocked\` when you wait on another thread), then end with one short closing line. Before you call it, check that your reply text already holds the answer; if it does not, write the answer first.
+
+    "
+  `);
 });

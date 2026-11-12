@@ -350,6 +350,8 @@ export class SpawnInjection {
       selfLabel: terminal.label,
       selfId: terminal.id,
       peers,
+      // A hosted box: the person reads only the reply (overseer/prompts.ts HOSTED_REPLY_RULE).
+      hosted: isHostedBox(),
     });
   }
 }
