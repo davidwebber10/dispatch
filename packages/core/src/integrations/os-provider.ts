@@ -1,4 +1,5 @@
 import type { McpServerSpec } from '../mcp/injection.js';
+import { boxLog } from '../os/box-log.js';
 
 /**
  * Tools brokered by OS.
@@ -224,6 +225,7 @@ export class OsConnectionsProvider {
         });
         if (!res.ok) {
           this.markUnreachable(`OS returned ${res.status}`);
+          this.logResult(res.status);
           return;
         }
         const body = (await res.json()) as OsConnectionsResponse;
@@ -244,8 +246,10 @@ export class OsConnectionsProvider {
           fetchedAt: new Date().toISOString(),
         });
         this.retryDelay = this.retryMinMs;
+        this.logResult();
       } catch (err: any) {
         this.markUnreachable(err?.name === 'AbortError' ? `no answer from OS within ${this.timeoutMs} ms` : err?.message || 'request failed');
+        this.logResult();
       } finally {
         clearTimeout(timer);
       }
@@ -296,6 +300,19 @@ export class OsConnectionsProvider {
       void this.refresh();
     }, delay);
     this.retryTimer.unref?.();
+  }
+
+  /** The last line the box log got for a fetch: a poll with the same answer writes no new line. */
+  private lastLogged = '';
+  private logResult(status?: number): void {
+    const st = this.state;
+    const fields = st.reachable
+      ? { reachable: true, servers: st.servers.length, needsConsent: st.needsConsent.length, entitled: st.entitled?.length ?? null, profile: st.profile, osTools: !!st.osTools }
+      : { reachable: false, ...(status ? { status } : {}), error: st.error ?? 'unknown', servers: st.servers.length };
+    const key = JSON.stringify(fields);
+    if (key === this.lastLogged) return;
+    this.lastLogged = key;
+    boxLog('os.connections', fields, st.reachable ? 'info' : 'warn');
   }
 
   private set(next: OsConnectionsState): void {

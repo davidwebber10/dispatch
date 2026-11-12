@@ -20,6 +20,7 @@
 import { spawn as nodeSpawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import type { LoginSession, LoginStatus } from './claude-login.js';
+import { boxLog, redactLogText, type BoxLogFields } from '../os/box-log.js';
 
 export type SpawnFn = (cmd: string, args: string[], opts: { env: NodeJS.ProcessEnv; cwd?: string }) => ChildProcessWithoutNullStreams;
 export type ExecFn = (cmd: string, args: string[], opts: { env: NodeJS.ProcessEnv; timeout: number }) => Promise<{ stdout: string; code: number }>;
@@ -47,8 +48,30 @@ export const MSG = {
   timeout: 'The sign-in took too long and was stopped. Start it again.',
   noUrl: 'Claude did not give a sign-in link. Try again in a minute.',
   ended: 'The sign-in stopped before it finished. Start it again.',
-  notSignedIn: 'Claude says this box is still not signed in. Start the sign-in again.',
+  notSignedIn: 'Claude says you are still not signed in. Start the sign-in again.',
+  /** Claude said why (not the usual "code wasn't accepted"); its words follow, redacted. */
+  failedWith: 'The sign-in did not finish. Claude said:',
 } as const;
+
+/** The MSG key of a message, for the log (the log names the step, not the sentence). */
+function reasonOf(message: string): string {
+  for (const [k, v] of Object.entries(MSG)) if (message === v || message.startsWith(`${v} `)) return k;
+  return message.startsWith('Could not start Claude Code') ? 'spawn' : 'other';
+}
+
+/**
+ * The pasted text → what goes to the CLI. Whitespace anywhere (a line break from the copy, spaces
+ * around it) is removed. Returns the shape for the log too (never the code).
+ */
+export function normalizeCode(raw: string): { code: string; hadWhitespace: boolean; shape: 'code#state' | 'no-hash' | 'empty' | 'bad-hash' } {
+  const code = String(raw ?? '').replace(/\s+/g, '');
+  const hadWhitespace = code.length !== String(raw ?? '').length;
+  if (!code) return { code, hadWhitespace, shape: 'empty' };
+  const i = code.indexOf('#');
+  if (i < 0) return { code, hadWhitespace, shape: 'no-hash' };
+  if (i === 0 || i === code.length - 1 || code.indexOf('#', i + 1) >= 0) return { code, hadWhitespace, shape: 'bad-hash' };
+  return { code, hadWhitespace, shape: 'code#state' };
+}
 
 /** The authorize URL from the login's output, or null. Prefers the one that redirects to Claude's page (it shows the code). */
 export function extractLoginUrl(text: string): string | null {
@@ -95,6 +118,8 @@ export interface ClaudeCliLoginOptions {
   sessionTimeoutMs?: number;
   /** How long a `claude auth status` answer is reused. */
   statusTtlMs?: number;
+  /** The structured log (hosted only, os/box-log.ts). Never given a code, a token or a URL query. */
+  log?: (event: string, fields?: BoxLogFields, level?: 'info' | 'warn' | 'error') => void;
 }
 
 interface Live {
@@ -122,6 +147,7 @@ export class ClaudeCliLogin {
   private readonly exchangeTimeoutMs: number;
   private readonly sessionTimeoutMs: number;
   private readonly statusTtlMs: number;
+  private readonly log: NonNullable<ClaudeCliLoginOptions['log']>;
   /** Called when a login ended signed in (after `claude auth status` agreed). */
   onLoggedIn: ((info: { configDir: string | null; tag: unknown; status: ClaudeAuthStatus }) => void | Promise<void>) | null = null;
 
@@ -133,6 +159,13 @@ export class ClaudeCliLogin {
     this.exchangeTimeoutMs = opts.exchangeTimeoutMs ?? 60_000;
     this.sessionTimeoutMs = opts.sessionTimeoutMs ?? 15 * 60_000;
     this.statusTtlMs = opts.statusTtlMs ?? 30_000;
+    this.log = opts.log ?? boxLog;
+  }
+
+  /** Which login, for the log: the primary or an added account (never the e-mail or the label). */
+  private accountOf(tag: unknown): { account: 'primary' | 'added'; accountId?: string } {
+    const t = tag as { kind?: string; id?: unknown } | null;
+    return t && t.kind === 'account' ? { account: 'added', ...(typeof t.id === 'string' ? { accountId: t.id } : {}) } : { account: 'primary' };
   }
 
   private env(configDir: string | null): NodeJS.ProcessEnv {
@@ -163,8 +196,12 @@ export class ClaudeCliLogin {
   async start(target: { configDir?: string | null; email?: string | null; tag?: unknown } = {}): Promise<LoginSession> {
     const configDir = target.configDir ?? null;
     const p = this.live;
-    if (p && p.session.status === 'awaiting_code' && p.configDir === configDir && p.tag === (target.tag ?? null)) return { ...p.session };
+    if (p && p.session.status === 'awaiting_code' && p.configDir === configDir && p.tag === (target.tag ?? null)) {
+      this.log('claude.signin.start', { ...this.accountOf(p.tag), reused: true });
+      return { ...p.session };
+    }
     this.cancel();
+    this.log('claude.signin.start', { ...this.accountOf(target.tag ?? null), reused: false, withEmail: !!target.email, ownConfigDir: configDir !== null });
     const session: LoginSession = { id: randomUUID(), status: 'starting', url: null, error: null, createdAt: new Date().toISOString() };
     const args = ['auth', 'login', '--claudeai', ...(target.email ? ['--email', target.email] : [])];
     let child: ChildProcessWithoutNullStreams;
@@ -173,6 +210,7 @@ export class ClaudeCliLogin {
     } catch (err) {
       session.status = 'error';
       session.error = `Could not start Claude Code: ${(err as Error)?.message ?? err}`;
+      this.log('claude.signin.failed', { step: 'spawn', reason: 'spawn', cliError: String((err as Error)?.message ?? err) }, 'error');
       this.finished = session;
       return { ...session };
     }
@@ -185,8 +223,9 @@ export class ClaudeCliLogin {
     child.stdout.on('data', (d: Buffer) => { live.out += d.toString(); });
     child.stderr.on('data', (d: Buffer) => { live.err += d.toString(); });
     child.on('error', (e) => this.fail(live, `Could not start Claude Code: ${e.message}`));
-    child.on('exit', (code) => {
+    child.on('exit', (code, signal) => {
       live.exitCode = code ?? 1;
+      this.log('claude.signin.cli_exit', { exitCode: code, ...(signal ? { signal } : {}), status: live.session.status }, code === 0 ? 'info' : 'warn');
       if (this.live !== live) return;
       const st = live.session.status;
       // An exit while a code is being checked is read by submitCode; any other exit ends the attempt.
@@ -196,10 +235,18 @@ export class ClaudeCliLogin {
     const deadline = Date.now() + this.startTimeoutMs;
     while (Date.now() < deadline) {
       if ((live.session.status as LoginStatus) === 'error') return { ...live.session };
+      // Replaced by a newer start (or cancelled) while it waited: say so, do not wait out the deadline.
+      if (this.live !== live) {
+        if (live.session.status === 'starting') { live.session.status = 'error'; live.session.error = MSG.ended; }
+        return { ...live.session };
+      }
       const url = extractLoginUrl(live.out) ?? extractLoginUrl(live.err);
       if (url) {
         live.session.url = url;
         live.session.status = 'awaiting_code';
+        let host = 'unknown';
+        try { host = new URL(url).host; } catch { /* keep unknown */ }
+        this.log('claude.signin.url_issued', { host });
         return { ...live.session };
       }
       await sleep(100);
@@ -213,9 +260,10 @@ export class ClaudeCliLogin {
     const live = this.live;
     if (!live) throw Object.assign(new Error('no login in progress'), { code: 'no_session' });
     if (live.session.status !== 'awaiting_code') throw new Error(`login is ${live.session.status}, not awaiting a code`);
-    const code = raw.trim().replace(/\s+/g, '');
+    const { code, shape, hadWhitespace } = normalizeCode(raw);
+    this.log('claude.signin.code_submitted', { length: code.length, shape, hadWhitespace });
     if (!code) throw new Error('code is required');
-    if (!code.includes('#')) {
+    if (shape !== 'code#state') {
       // Claude would answer INVALID_CODE_TEXT and keep waiting; say it in plain words without a round trip.
       live.session.error = MSG.noHash;
       return { ...live.session };
@@ -230,6 +278,7 @@ export class ClaudeCliLogin {
       if (this.live !== live) return { ...live.session };
       const fresh = live.err.slice(live.errFrom);
       if (fresh.includes(INVALID_CODE_TEXT)) {
+        this.log('claude.signin.code_invalid', {}, 'warn');
         live.session.status = 'awaiting_code';
         live.session.error = MSG.noHash;
         live.errFrom = live.err.length;
@@ -250,6 +299,7 @@ export class ClaudeCliLogin {
   private async confirm(live: Live): Promise<LoginSession> {
     this.statusCache.delete(live.configDir ?? '');
     const st = await this.authStatus(live.configDir, { fresh: true });
+    this.log('claude.signin.status', { loggedIn: st?.loggedIn === true, authMethod: st?.authMethod ?? null, answered: st !== null });
     if (!st?.loggedIn) {
       this.fail(live, MSG.notSignedIn);
       return { ...live.session };
@@ -259,13 +309,22 @@ export class ClaudeCliLogin {
     live.session.url = null;
     live.session.error = null;
     if (this.live === live) { this.finished = live.session; this.live = null; }
+    this.log('claude.signin.complete', this.accountOf(live.tag));
     try { await this.onLoggedIn?.({ configDir: live.configDir, tag: live.tag, status: st }); } catch { /* the login itself is done */ }
     return { ...live.session };
   }
 
+  /**
+   * The person's sentence for Claude's "Login failed: …". The usual "code wasn't accepted" is
+   * MSG.rejected; any other reason (a network error, an expired page) is said with Claude's own
+   * words, redacted, so the person is not told that a good code was wrong.
+   */
   private failureText(live: Live): string | null {
     const m = LOGIN_FAILED_RE.exec(live.err.slice(live.errFrom)) ?? LOGIN_FAILED_RE.exec(live.err);
-    return m ? MSG.rejected : null;
+    if (!m) return null;
+    const why = redactLogText(m[1] ?? '', 160);
+    if (!why || /wasn.t accepted|not accepted|invalid (?:code|grant)/i.test(why)) return MSG.rejected;
+    return `${MSG.failedWith} ${why} Start it again.`;
   }
 
   cancel(): void {
@@ -274,11 +333,15 @@ export class ClaudeCliLogin {
     if (!live) return;
     clearTimeout(live.timer);
     this.live = null;
+    this.log('claude.signin.cancel', { status: live.session.status });
     try { live.child.kill('SIGTERM'); } catch { /* gone */ }
   }
 
   private fail(live: Live, message: string): void {
+    if (live.session.status === 'error') return; // already ended: one failure, one log line
     clearTimeout(live.timer);
+    const tail = live.err.slice(-600);
+    this.log('claude.signin.failed', { reason: reasonOf(message), exitCode: live.exitCode, ...(tail.trim() ? { cliError: tail } : {}) }, 'error');
     live.session.status = 'error';
     live.session.error = message;
     live.session.url = null;

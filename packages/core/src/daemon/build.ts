@@ -47,6 +47,7 @@ import { OsConnectionsProvider } from '../integrations/os-provider.js';
 import { createOsToolsRouter, osToolsServerSpec } from '../os/tools-proxy.js';
 import { ClaudeCliLogin, planOf } from '../auth/claude-cli-login.js';
 import { useCleanClaudeLogin, isHostedBox } from '../os/hosted-mode.js';
+import { boxLog } from '../os/box-log.js';
 import { wireStopOnAuthFailure } from '../os/auth-stop.js';
 import { createApprovalsRouter } from '../os/approvals-routes.js';
 import { createContinuityRouter } from '../os/continuity.js';
@@ -449,6 +450,15 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   // Plugins observe hook payloads, spawns, declarations and prompts (plugins design, section 3.3).
   statusService.setHookListener((p, id, payload) => threadEvents.onHookPayload(p, id, payload));
   const harnesses = wireHarnesses({ db, sessionService, statusService, threadEvents, env, injected: opts.managers });
+  // Hosted box log (os/box-log.ts): each thread's exit, with its harness and exit code. Local: no line.
+  if (isHostedBox(env)) {
+    for (const [harness, manager] of harnesses.managers) manager.on('exit', (terminalId: string, code?: number) => boxLog('thread.exit', { thread: terminalId, harness, transport: 'structured', exitCode: code ?? null }));
+    ptyManager.on('exit', (id: string, code?: number) => {
+      let harness: string | null = null;
+      try { harness = terminalsDb.getById(db, id)?.type ?? null; } catch { /* the row is gone */ }
+      boxLog('thread.exit', { thread: id, harness, transport: 'pty', exitCode: code ?? null });
+    });
+  }
   const journalWiring = wireJournal(db, harnesses.managers.values()); // W3-D: the message journal
   wireRestoredQuestions(db, sessionService, harnesses.managers.values(), statusService); // a pending question survives a restart (W2-C)
   agentService.setLifecycleService(statusService);
@@ -693,6 +703,9 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
       plugins.stop();
       pluginHooks.stop();
       void pluginWorkers.stop();
+      // A sign-in in flight ends with the daemon (its child is not left behind). The next daemon
+      // starts with no sign-in in progress; the page then offers to start again.
+      if (claudeLogin.usesCleanLogin) claudeLogin.cancel();
       usageLimits.stop();
       usageGauge.stop();
       boxHeartbeat.stop();

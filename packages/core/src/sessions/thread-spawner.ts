@@ -17,6 +17,7 @@ import { maxLiveThreadsPerProject } from '../caps.js';
 import { systemPromptFor, modelFor } from '../overseer/prompts.js';
 import { approvalsFor, claudeSmartAskRules, claudeSmartSettings } from '../os/approvals.js';
 import { currentProfile } from '../os/profile.js';
+import { boxLog } from '../os/box-log.js';
 import { resolveSpawnModel, isClaudeTierAlias } from '../overseer/spawn-model.js';
 import { COORDINATOR_DISALLOWED_TOOLS, makeCoordinatorPolicy } from '../overseer/coordinator-policy.js';
 import { ROLE_DISALLOWED_TOOLS, roleToolPolicy } from '../roles/role-policy.js';
@@ -274,6 +275,7 @@ export class ThreadSpawner {
       else spawnEnv.DISPATCH_AUTH = sk.key;
     }
     const pid = this.ptyManager.spawn(terminalId, command, args, workDir, spawnEnv);
+    boxLog('thread.start', { thread: terminalId, harness: terminal.type, transport: 'pty', resume: !!terminal.external_id });
     if (sk) this.wiring.threadKeys?.bindPty(terminalId, pid, sk.handle);
     terminalsDb.updatePid(this.db, terminalId, pid);
     // AFTER the spawn, never before: a stored id for a process that failed to start would
@@ -618,6 +620,7 @@ export class ThreadSpawner {
         ? {}
         : { ...(this.wiring.accountEnv?.(terminal.type, config) ?? {}), [TERMINAL_ID_ENV_VAR]: terminal.id, ...(sk ? { DISPATCH_AUTH: sk.key } : {}), ...(opencodeEnv ?? {}) },
     });
+    boxLog('thread.start', { thread: terminal.id, harness: terminal.type, transport: 'structured', resume: !!resumeSessionId });
     if (sk) this.wiring.threadKeys?.bindStructured(terminal.id, sk.handle);
     terminalsDb.updatePid(this.db, terminal.id, pid);
   }

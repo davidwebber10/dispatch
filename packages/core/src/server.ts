@@ -25,6 +25,10 @@ import type { IStructuredManager } from './structured/manager.js';
 import type { ApiRouteDeps } from './server-routes.js';
 import { buildDaemon, NoopPTYManager } from './daemon/build.js';
 import { createDaemonHttpServer } from './daemon/http-server.js';
+import { boxLog } from './os/box-log.js';
+import { getRunningVersion } from './update/version.js';
+import { currentProfile } from './os/profile.js';
+import { BOX_CAPABILITIES } from './platform/capabilities.js';
 
 export { buildDaemon, wireLedger } from './daemon/build.js';
 export type { BuildDaemonOptions, Daemon, DaemonServices } from './daemon/build.js';
@@ -141,6 +145,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   writeListenInfo(dataDir, { port, bind: boundAddress }); // "dispatch status" prints it
   daemon.listening(port, port !== preferredPort ? { shimEnv: shimFor(port) } : undefined);
   console.log(`Dispatch server listening on port ${port}`);
+  logDaemonStart(port, basePath);
   if (daemon.services.accessGate) console.log('Network: other devices need the access token (run "dispatch access"). Tailscale devices on your own account are allowed.');
 
   // Boot recovery does not block the start: it waits a short settle delay before it reads any status.
@@ -158,8 +163,16 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     db.close(); // SQLite (and the message journal in it) is written synchronously: closing it is the flush
     removeOwnPid(dataDir); // only if still ours: a newer daemon may own the file by now
   };
-  for (const sig of ['SIGTERM', 'SIGINT'] as const) process.on(sig, exitAfter(cleanup));
+  for (const sig of ['SIGTERM', 'SIGINT'] as const) process.on(sig, exitAfter(cleanup, sig));
   return { port, cleanup, keys };
+}
+
+/** Hosted box log (os/box-log.ts): one line that says which build started, and how. Local: no line. */
+function logDaemonStart(port: number, basePath: string): void {
+  boxLog('daemon.start', {
+    version: getRunningVersion(), profile: currentProfile(), basePath: basePath || '/', capabilities: [...BOX_CAPABILITIES],
+    port, node: process.version, ...(process.env.DISPATCH_BOX_ID ? { boxId: process.env.DISPATCH_BOX_ID } : {}),
+  });
 }
 
 /**
@@ -168,8 +181,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
  * `docker stop` waited the full timeout and was killed (2026-11-11). The children got SIGTERM in
  * stop(); give them the kill grace (they are SIGKILLed after it), then go. Inside docker's 10 s and ECS's 30 s.
  */
-function exitAfter(cleanup: () => void): () => void {
+function exitAfter(cleanup: () => void, signal: string): () => void {
   return () => {
+    boxLog('daemon.shutdown', { signal, uptimeSec: Math.round(process.uptime()) });
     cleanup();
     setTimeout(() => process.exit(0), KILL_GRACE_MS + 500).unref();
   };
