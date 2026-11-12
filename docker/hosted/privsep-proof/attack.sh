@@ -6,13 +6,15 @@
 # environment). Every attempt below must FAIL for the box to be sound; the script prints one line
 # per attempt and a final count. It changes nothing when the box is sound.
 #
-#   attack.sh <sha256 of the inbound token> <sha256 of the outbound token> <platform base url>
+#   attack.sh <sha256 of the inbound token> <sha256 of the outbound token> <platform base url> [<sha256 of a secret drop's value> [<profile>]]
 #
 # The hashes let the script hunt for the token VALUES without being given them. When the file
 # $HOME/proof/leaked-inbound-token exists, it holds the real inbound token, handed over on purpose
 # to prove that even a leaked owner credential is refused from inside the box (the hunt skips that
-# one folder).
-IN_SHA="${1:-}"; OUT_SHA="${2:-}"; PLATFORM="${3:-}"
+# one folder). The fourth hash is of the value an agent put in a `secret` Inbox drop; the profile
+# (`business` or `developer`) is the one the box runs under.
+IN_SHA="${1:-}"; OUT_SHA="${2:-}"; PLATFORM="${3:-}"; SECRET_SHA="${4:-}"; PROFILE="${5:-developer}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
 LEAKED="$(cat "$HOME/proof/leaked-inbound-token" 2>/dev/null)"
 pass=0; fail=0; note=0
 ok()   { printf 'PASS  %-58s %s\n' "$1" "${2:-}"; pass=$((pass+1)); }
@@ -106,6 +108,51 @@ must_fail "create a managed policy drop-in" sh -c ": > /etc/claude-code/x.json"
 must_fail "change the daemon's code" sh -c ": >> /app/packages/core/dist/server.js"
 must_fail "change the entrypoint" sh -c ": >> /usr/local/bin/entrypoint.sh"
 must_fail "put a program earlier on the system path" sh -c ": > /usr/local/bin/git"
+
+echo "== 4b. the managed policy files and the harness programs (the image's, root-owned)"
+for f in /etc/claude-code/managed-settings.json /etc/codex/requirements.toml; do
+  [ -e "$f" ] || { info "$f is not in this image" "the developer image has no Codex policy"; continue; }
+  own="$(stat -c '%U:%G %a' "$f" 2>/dev/null)"
+  case "$own" in root:root\ 644|root:root\ 444) ok "$f belongs to root, others may only read" "$own" ;; *) bad "$f belongs to root, others may only read" "$own" ;; esac
+  must_fail "overwrite $f" sh -c "echo '{}' > $f"
+  must_fail "delete $f" rm -f "$f"
+  must_fail "rename $f away" mv "$f" "/tmp/moved-policy.$$"
+  must_fail "change the mode of $f" chmod 666 "$f"
+  must_fail "replace $f with a link" ln -sf /tmp/own-policy "$f"
+  d="$(dirname "$f")"
+  must_fail "create a file beside $f" sh -c ": > $d/extra.$$"
+  must_fail "rename the folder of $f away" mv "$d" "/tmp/moved-dir.$$"
+done
+must_fail "create the managed folder of the third harness" mkdir -p /etc/opencode
+for b in /usr/local/bin/claude /usr/local/bin/codex /usr/local/bin/opencode /usr/local/bin/mcp-remote /usr/local/bin/node \
+         /opt/agents/.local/bin/claude /opt/agent-clis/node_modules/.bin/codex /opt/agent-clis/node_modules/.bin/opencode; do
+  [ -e "$b" ] || continue
+  must_fail "append to the program $b" sh -c ": >> $b"
+  must_fail "delete the program $b" rm -f "$b"
+  must_fail "put another program in the place of $b" sh -c "printf '#!/bin/sh\n' > $b.new.$$ && mv -f $b.new.$$ $b"
+done
+for v in /opt/agents/.local/share/claude/versions/*; do
+  [ -e "$v" ] || continue
+  must_fail "append to the Claude Code binary" sh -c ": >> '$v'"
+  must_fail "replace the Claude Code binary" cp -f /bin/true "$v"
+done
+must_fail "add a version beside the Claude Code binary" sh -c ": > /opt/agents/.local/share/claude/versions/9.9.9"
+# The PATH a harness process got from the daemon: no folder in it may be the agent's to write, or a
+# program planted there would be the `claude` or the `git` of every later thread.
+HPID="$(pgrep -u "$(id -u)" -f 'fake-claude.mjs|/claude ' | head -1)"
+HPATH="$(tr '\0' '\n' < "/proc/${HPID:-self}/environ" 2>/dev/null | sed -n 's/^PATH=//p' | head -1)"
+if [ -n "$HPID" ] && [ -n "$HPATH" ]; then
+  writable=""
+  IFS=':' read -r -a parts <<< "$HPATH"
+  for d in "${parts[@]}"; do
+    [ -z "$d" ] && { writable="$writable (empty entry)"; continue; }
+    if [ -w "$d" ] || { [ ! -e "$d" ] && mkdir -p "$d" 2>/dev/null && rmdir "$d" 2>/dev/null; }; then writable="$writable $d"; fi
+    case "$d" in "$HOME"|"$HOME"/*|/tmp|/tmp/*) writable="$writable $d" ;; esac
+  done
+  [ -z "$writable" ] && ok "no folder on a harness's PATH can be written by the agent" "${#parts[@]} entries, pid $HPID" || bad "no folder on a harness's PATH can be written by the agent" "$writable"
+else
+  info "no harness process to read a PATH from" "the PATH row did not run"
+fi
 
 echo "== 5. signals and debugging"
 must_fail "signal the daemon (0)" kill -0 "$D"
@@ -235,6 +282,19 @@ for k in $keys; do
 done
 rm -f "$HOME/projects/proj1/innocent.txt" 2>/dev/null
 
+# Sections 10 to 14: the routes and features added after the first proof (attack-routes.mjs).
+if [ -f "$HERE/attack-routes.mjs" ]; then
+  routes_out="$(A_PORT="$PORT" A_BASE="$BASE" A_HOSTS="127.0.0.1 [::1] $OWN_IP" A_KEYS="$keys" A_LEAKED="$LEAKED" A_PROFILE="$PROFILE" A_SID="$SID" \
+    A_IN_SHA="$IN_SHA" A_OUT_SHA="$OUT_SHA" A_SECRET_SHA="$SECRET_SHA" node "$HERE/attack-routes.mjs" 2>&1)"
+  printf '%s\n' "$routes_out"
+  pass=$((pass + $(printf '%s\n' "$routes_out" | grep -c '^PASS')))
+  fail=$((fail + $(printf '%s\n' "$routes_out" | grep -c '^FAIL')))
+  note=$((note + $(printf '%s\n' "$routes_out" | grep -c '^NOTE')))
+  printf '%s\n' "$routes_out" | grep -q '^== routes result' || bad "the route attacks ran to the end" "$(printf '%s\n' "$routes_out" | tail -1 | cut -c1-160)"
+else
+  bad "the route attacks ran" "attack-routes.mjs is not beside attack.sh"
+fi
+
 echo "== 9. stated, not protected (see section 12 of the design)"
 if echo '{}' > "$HOME/.claude-proof-setting" 2>/dev/null; then info "a workload can write harness files in the home" "accepted: same user, same rights, never the daemon's"; rm -f "$HOME/.claude-proof-setting"; fi
 # A second harness started from a shell: the managed policy decides whether it may skip approvals.
@@ -247,12 +307,15 @@ if grep -q '"disableBypassPermissionsMode"' "$MP" 2>/dev/null; then
 else
   info "this image's managed policy does not turn the approval bypass off" "a nested harness gains no daemon or platform right; see the harness policy"
 fi
-REAL="$(ls /opt/agents/.local/share/claude/versions/* 2>/dev/null | head -1)"
-if [ -n "$REAL" ] && [ -x "$REAL" ] && [ "$(head -c 2 "$REAL" 2>/dev/null)" != '#!' ]; then
-  out="$(cd /tmp && timeout 20 "$REAL" --dangerously-skip-permissions -p 'say hi' 2>&1 | head -c 200 | tr '\n' ' ')"
-  info "a nested harness with the bypass flag answered" "${out:-nothing}"
-else
-  info "the CLI in this container is the proof's stand-in" "a nested real harness was not run"
+# A nested harness with each bypass flag (nested-harness.sh): the REAL binaries of the image, started
+# by a workload. In the main proof box the Claude Code program is a stand-in, so those rows are notes
+# there; run-proof.sh runs the same file in a box that has the real program.
+if [ -f "$HERE/nested-harness.sh" ]; then
+  nested_out="$(bash "$HERE/nested-harness.sh" 2>&1)"
+  printf '%s\n' "$nested_out"
+  pass=$((pass + $(printf '%s\n' "$nested_out" | grep -c '^PASS')))
+  fail=$((fail + $(printf '%s\n' "$nested_out" | grep -c '^FAIL')))
+  note=$((note + $(printf '%s\n' "$nested_out" | grep -c '^NOTE')))
 fi
 info "another AI account's credential" "not isolated by design (one person, one agent user)"
 

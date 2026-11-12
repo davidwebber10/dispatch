@@ -7,6 +7,7 @@ case " $* " in
 esac
 # Record who ran it and what it could see, for the proof (the agent run dir is not writable: use the home).
 { echo "uid=$(id -u) gid=$(id -g) nnp=$(sed -n 's/^NoNewPrivs:[[:space:]]*//p' /proc/self/status) capeff=$(sed -n 's/^CapEff:[[:space:]]*//p' /proc/self/status)"; env | grep -cE '^(DISPATCH_BOX_TOKEN|OS_BOX_TOKEN)=' ; } >> "$HOME/fake-claude-runs.log" 2>/dev/null
-# The proof's stand-in for a prompt-injected agent: a script the harness process starts.
-if [ -x "$HOME/proof/on-harness-start.sh" ]; then ( "$HOME/proof/on-harness-start.sh" >/dev/null 2>&1 & ); fi
+# The proof's stand-in for an agent at work (and for a prompt-injected one): a script the harness
+# process starts, with the harness's own arguments and environment.
+if [ -x "$HOME/proof/on-harness-start.sh" ]; then ( "$HOME/proof/on-harness-start.sh" "$@" >/dev/null 2>&1 & ); fi
 exec node /app/packages/core/tests/structured/fake-claude.mjs "$@"
