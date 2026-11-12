@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from 'react';
+import { PLATFORM_NAME } from '../../lib/hostCopy';
 import { useOsConnections } from '../../stores/osConnections';
 import { SettingsGroup, SettingsRow, StatusMark } from '../settings/ui';
 import { ConnectCard } from './ConnectCard';
@@ -23,9 +24,9 @@ export function CompanyConnections() {
   if (!state?.hosted) return null;
   const down = !state.reachable || tools?.reachable === false;
   return (
-    <SettingsGroup title="Company connections" footer="POLYWOOD OS decides which company systems your threads can use. Ask your administrator to add one.">
+    <SettingsGroup title="Company connections" footer={`${PLATFORM_NAME} decides which company systems your threads can use. Ask your administrator to add one.`}>
       {down && (
-        <SettingsRow label="POLYWOOD OS is not reachable" hint="Your threads keep working. Company tools come back by themselves when POLYWOOD OS answers again."
+        <SettingsRow label={`${PLATFORM_NAME} is not reachable`} hint={`Your threads keep working. Company tools come back by themselves when ${PLATFORM_NAME} answers again.`}
           control={<StatusMark tone="yellow">Offline</StatusMark>} />
       )}
       {!down && state.osToolsEnabled && systems.length === 0 && <SettingsRow label="No company systems are connected yet" />}

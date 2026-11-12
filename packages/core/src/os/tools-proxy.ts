@@ -13,6 +13,7 @@
 // The owner's web page reads the state through GET /api/os/connections and asks OS for its tool list
 // through GET /api/os/tools (no thread id: the page is not a thread).
 import { fileURLToPath } from 'node:url';
+import { PLATFORM_NAME } from './platform-name.js';
 import type { Request, Response, Router } from 'express';
 import type { McpServerSpec } from '../mcp/injection.js';
 import { BOX_CAPABILITIES } from '../platform/capabilities.js';
@@ -36,7 +37,7 @@ export interface OsToolsProxyDeps {
 
 /** The plain sentence a person reads when the company tools cannot be reached. */
 export const OS_UNREACHABLE_NOTICE =
-  'Company tools are not reachable right now. Dispatch keeps trying in the background; the tools come back by themselves when POLYWOOD OS answers again.';
+  `Company tools are not reachable right now. Dispatch keeps trying in the background; the tools come back by themselves when ${PLATFORM_NAME} answers again.`;
 
 /** One JSON-RPC body from an SSE stream (`data:` lines), or the plain JSON body. Null when there is nothing. */
 export function parseMcpBody(contentType: string | null, text: string): unknown {
@@ -63,7 +64,7 @@ export async function forwardToOs(
   extra: Record<string, string>,
 ): Promise<ForwardResult> {
   const url = deps.provider.osToolsUrl();
-  if (!url) return { status: 404, body: { error: 'os_tools_disabled', message: 'Company tools are turned off for you in POLYWOOD OS.' } };
+  if (!url) return { status: 404, body: { error: 'os_tools_disabled', message: `Company tools are turned off for you in ${PLATFORM_NAME}.` } };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), deps.timeoutMs ?? 60_000);
   try {
@@ -80,7 +81,7 @@ export async function forwardToOs(
     });
     const text = await res.text();
     let body: unknown = null;
-    try { body = parseMcpBody(res.headers.get('content-type'), text); } catch { body = { error: 'bad_response', message: `POLYWOOD OS answered ${res.status} with a body that is not JSON.` }; }
+    try { body = parseMcpBody(res.headers.get('content-type'), text); } catch { body = { error: 'bad_response', message: `${PLATFORM_NAME} answered ${res.status} with a body that is not JSON.` }; }
     return { status: res.status, body };
   } finally {
     clearTimeout(timer);
@@ -114,11 +115,11 @@ export function createOsToolsRouter(deps: OsToolsProxyDeps): Router {
     if (typeof proto === 'string') extra['mcp-protocol-version'] = proto;
     try {
       const r = await forwardToOs(deps, req.body, extra);
-      if (r.status >= 500) throw new Error(`POLYWOOD OS answered ${r.status}`);
+      if (r.status >= 500) throw new Error(`${PLATFORM_NAME} answered ${r.status}`);
       if (r.body === null) return void res.status(r.status === 200 ? 202 : r.status).end();
       res.status(r.status).json(r.body);
     } catch (err) {
-      const msg = (err as Error)?.name === 'AbortError' ? 'no answer from POLYWOOD OS in time' : (err as Error)?.message || 'request failed';
+      const msg = (err as Error)?.name === 'AbortError' ? `no answer from ${PLATFORM_NAME} in time` : (err as Error)?.message || 'request failed';
       deps.provider.markUnreachable(msg);
       if (!warned.has(terminalId)) {
         warned.add(terminalId);
@@ -149,9 +150,9 @@ export function createOsToolsRouter(deps: OsToolsProxyDeps): Router {
     try {
       const init = await forwardToOs(deps, { jsonrpc: '2.0', id: 'init', method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'dispatch-connections', version: '1' } } }, {});
       if (init.status === 404) return void res.json({ enabled: false, reachable: true, tools: [] });
-      if (init.status >= 500) throw new Error(`POLYWOOD OS answered ${init.status}`);
+      if (init.status >= 500) throw new Error(`${PLATFORM_NAME} answered ${init.status}`);
       const list = await forwardToOs(deps, { jsonrpc: '2.0', id: 'list', method: 'tools/list', params: {} }, {});
-      if (list.status >= 500) throw new Error(`POLYWOOD OS answered ${list.status}`);
+      if (list.status >= 500) throw new Error(`${PLATFORM_NAME} answered ${list.status}`);
       const tools = (list.body as { result?: { tools?: unknown[] } } | null)?.result?.tools;
       res.json({ enabled: true, reachable: true, tools: Array.isArray(tools) ? tools.map(publicTool) : [] });
     } catch (err) {

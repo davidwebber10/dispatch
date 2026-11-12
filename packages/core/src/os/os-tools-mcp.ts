@@ -14,6 +14,7 @@
 // empty, a tools call returns a plain error, and the bridge tries again in the background. When the
 // list comes back it sends `notifications/tools/list_changed`, so the CLI picks the tools up again.
 import * as readline from 'node:readline';
+import { PLATFORM_NAME } from './platform-name.js';
 import { authHeaders } from '../overseer/agency-shared.js';
 
 type Json = Record<string, any>;
@@ -32,14 +33,14 @@ const LOCAL_INIT = {
   protocolVersion: '2025-06-18',
   capabilities: { tools: { listChanged: true } },
   serverInfo: { name: 'os-tools', version: '1' },
-  instructions: 'Company tools from POLYWOOD OS.',
+  instructions: `Company tools from ${PLATFORM_NAME}.`,
 };
 
 /** The plain text of an error answer from the daemon or OS. */
 function plainError(status: number, body: any): string {
   if (body && typeof body.message === 'string' && body.message) return body.message;
-  if (status === 404) return 'Company tools are turned off for you in POLYWOOD OS.';
-  if (status === 401) return 'POLYWOOD OS did not accept this box. Ask your administrator.';
+  if (status === 404) return `Company tools are turned off for you in ${PLATFORM_NAME}.`;
+  if (status === 401) return `${PLATFORM_NAME} did not accept this box. Ask your administrator.`;
   if (status === 403) return "This thread's Dispatch key is not valid for company tools. Start the thread again.";
   return `Company tools failed (HTTP ${status}).`;
 }

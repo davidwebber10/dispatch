@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { PLATFORM_NAME } from '../../lib/hostCopy';
 import { Check, Palette } from '@phosphor-icons/react';
 import { useSettings, ACCENTS, formatSidebarLimit, stepSidebarLimit, type DocEditor, type Density } from '../../stores/settings';
 import { pickableThemes, systemDark, systemLight, getTheme, resolveTokens, onAccent, type Theme } from '../../themes';
@@ -168,7 +169,7 @@ export function AppearanceSection() {
       {/* Developer profile only (the real one, so the switch stays to turn the preview off). */}
       {realHostContext().profile === 'developer' && (
         <SettingsGroup title="Profile preview" footer="A preview in this browser only. The workspace stays in the developer profile: nothing is blocked, and terminal threads still work for other devices. The page reloads.">
-          <SettingsRow label="Preview as business user" hint="Hides the developer features and uses the POLYWOOD OS theme, as a business person sees it."
+          <SettingsRow label="Preview as business user" hint={`Hides the developer features and uses the ${PLATFORM_NAME} theme, as a business person sees it.`}
             control={<Toggle on={isBusinessPreview()} label="Preview as business user" onClick={() => setBusinessPreview(!isBusinessPreview())} />} />
         </SettingsGroup>
       )}

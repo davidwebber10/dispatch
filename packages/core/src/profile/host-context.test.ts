@@ -39,7 +39,7 @@ describe('readHostContext', () => {
   test('osBaseUrl prefers OS_PUBLIC_URL, else OS_BASE_URL, without a trailing slash', () => {
     const env = { OS_BASE_URL: 'http://os-internal:8000/', OS_BOX_TOKEN: 'x' };
     expect(readHostContext(env).osBaseUrl).toBe('http://os-internal:8000');
-    expect(readHostContext({ ...env, OS_PUBLIC_URL: 'https://os.polywood.tech/' }).osBaseUrl).toBe('https://os.polywood.tech');
+    expect(readHostContext({ ...env, OS_PUBLIC_URL: 'https://os.example.com/' }).osBaseUrl).toBe('https://os.example.com');
   });
 
   test('a non-http address is never a link', () => {

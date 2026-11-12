@@ -1,4 +1,5 @@
 import { ArrowSquareOut, ArrowClockwise, PlugsConnected } from '@phosphor-icons/react';
+import { PLATFORM_NAME } from '../../lib/hostCopy';
 import { Button } from '../ui';
 import { osLink, useOsConnections } from '../../stores/osConnections';
 
@@ -19,7 +20,7 @@ export function ConnectCard({ label, connect, compact }: { label: string; connec
     }}>
       <PlugsConnected size={16} style={{ flexShrink: 0, color: 'var(--color-text-secondary)' }} />
       <span style={{ flex: 1, minWidth: 160, fontSize: 13, color: 'var(--color-text-body)' }}>
-        Connect {label} in POLYWOOD OS so your threads can use it.
+        Connect {label} in {PLATFORM_NAME} so your threads can use it.
       </span>
       {href && (
         <Button variant="primary" size="sm" icon={<ArrowSquareOut size={13} />} onClick={() => window.open(href, '_blank', 'noopener')}>
