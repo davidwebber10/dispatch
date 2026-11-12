@@ -5,6 +5,7 @@ import { ClaudeStructuredSessionManager } from '../structured/manager.js';
 import { approvalsFor, acpSmartAllows, isSafeCommand, opencodeSmartPermission, claudeSmartSettings, approvalTitle } from './approvals.js';
 import { claudeCodeProvider as claudeCode } from '../providers/claude-code.js';
 import { describeReviewAction } from '../structured/codex-manager.js';
+import { setCurrentOsServerNames, resetCurrentOsServerNames } from './os-servers.js';
 
 const FAKE = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../tests/fixtures/fake-claude-smart.mjs');
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -78,9 +79,9 @@ describe('smart approvals — rules and wiring', () => {
   });
 
   test('the Claude command: auto mode, plus ask rules only when there are rules', () => {
-    const smart = claudeCode.buildStructuredCommand!({ workDir: '/w', smartApprovals: { settings: claudeSmartSettings(['mcp__os-tools__gmail_send']) } });
+    const smart = claudeCode.buildStructuredCommand!({ workDir: '/w', smartApprovals: { settings: claudeSmartSettings(['mcp__gmail__send']) } });
     expect(smart.args.join(' ')).toContain('--permission-mode auto');
-    expect(smart.args).toContain('{"permissions":{"ask":["mcp__os-tools__gmail_send"]}}');
+    expect(smart.args).toContain('{"permissions":{"ask":["mcp__gmail__send"]}}');
     const plain = claudeCode.buildStructuredCommand!({ workDir: '/w' });
     expect(plain.args.join(' ')).toContain('--permission-mode default');
     expect(claudeSmartSettings([])).toBeNull();
@@ -94,8 +95,14 @@ describe('smart approvals — rules and wiring', () => {
     expect(acpSmartAllows('execute', 'Bash', { command: 'git status' }, '/p')).toBe(true);
     expect(acpSmartAllows('execute', 'Bash', { command: 'git status && rm -rf /' }, '/p')).toBe(false);
     expect(acpSmartAllows('fetch', 'WebFetch', { url: 'https://x' }, '/p')).toBe(false);
-    expect(acpSmartAllows(undefined, 'os-tools_zendesk_search', {}, '/p')).toBe(true);
-    expect(acpSmartAllows(undefined, 'os-tools_gmail_send', {}, '/p')).toBe(false);
+    setCurrentOsServerNames(['zendesk', 'gmail', 'connections']);
+    expect(acpSmartAllows(undefined, 'zendesk_search', {}, '/p')).toBe(true);
+    expect(acpSmartAllows(undefined, 'mcp__zendesk__search_tickets', {}, '/p')).toBe(true);
+    expect(acpSmartAllows(undefined, 'connections__list', {}, '/p')).toBe(true);
+    expect(acpSmartAllows(undefined, 'gmail_send', {}, '/p')).toBe(false);
+    // A server that is not a company system: never a company read.
+    expect(acpSmartAllows(undefined, 'github_search', {}, '/p')).toBe(false);
+    resetCurrentOsServerNames();
     expect(isSafeCommand('ls -la')).toBe(true);
     expect(isSafeCommand('ls $(rm x)')).toBe(false);
   });
@@ -107,11 +114,16 @@ describe('smart approvals — rules and wiring', () => {
     expect(p.webfetch).toBe('ask');
     expect(p.bash['*']).toBe('ask');
     expect(p.bash['git status *']).toBe('allow');
+    const q = opencodeSmartPermission(['acumatica', 'connections']) as any;
+    expect(q['acumatica_*']).toBe('ask');
+    expect(q['acumatica_*search*']).toBe('allow');
+    expect(q['connections_*list*']).toBe('allow');
+    expect(JSON.stringify(q)).not.toContain('os-tools');
   });
 
   test('Codex reviewed actions read as plain lines', () => {
     expect(describeReviewAction({ type: 'command', command: 'rm -rf build', cwd: '/p', source: 'shell' })).toEqual({ toolName: 'Bash', detail: 'rm -rf build' });
     expect(describeReviewAction({ type: 'networkAccess', target: 'https://x', host: 'x', protocol: 'https', port: 443 }).toolName).toBe('WebFetch');
-    expect(approvalTitle('mcp__os-tools__gmail_send')).toBe('Wants to send an email');
+    expect(approvalTitle('mcp__gmail__send')).toBe('Wants to send an email');
   });
 });

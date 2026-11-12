@@ -10,11 +10,13 @@
 //                       a reviewer denial becomes a card, a high-risk request a pending approval
 //          Grok/OpenCode a STATIC rule set (below): reads/searches and edits inside the project run,
 //                       shell commands other than a short safe list ask, web requests ask, MCP
-//                       tools ask except the os-tools read tools. Rule-based, not a risk judgement.
+//                       tools ask except the read tools of the company systems (os/os-servers.ts).
+//                       Rule-based, not a risk judgement.
 //
 // `smart` is the default for a new thread under the BUSINESS profile; the developer default is
 // unchanged. The setting lives in the thread's config as `approvals`.
 import path from 'node:path';
+import { currentOsServerNames } from './os-servers.js';
 
 export type Approvals = 'auto' | 'ask' | 'smart';
 export const APPROVALS: readonly Approvals[] = ['auto', 'ask', 'smart'];
@@ -36,7 +38,7 @@ export function approvalsFor(config: Record<string, unknown>, profile: 'business
 
 /**
  * Claude Code `permissions.ask` rules in smart mode. Built-in tools: none (the classifier decides).
- * EXTEND HERE: company-system WRITE tools (e.g. `mcp__os-tools__gmail_send`) once OS marks them; an
+ * EXTEND HERE: company-system WRITE tools (e.g. `mcp__gmail__send`) once OS marks them; an
  * `ask` rule forces a can_use_tool request even in auto mode (measured 2026-11-11), and MCP
  * annotations (readOnlyHint/destructiveHint) change nothing.
  */
@@ -59,17 +61,32 @@ export function isSafeCommand(cmd: string): boolean {
   return SAFE_COMMANDS.some((s) => c === s || c.startsWith(s + ' '));
 }
 
-/** os-tools tools whose name says they only read (smart mode lets them run on Grok/OpenCode). */
-export function isOsToolsRead(toolName: string): boolean {
+const READ_VERB = /(^|[_.-])(list|search|get|read|find|query|describe|lookup)([_.-]|$)/;
+const escapeRe = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * A company-system tool whose name says it only reads (smart mode lets it run on Grok/OpenCode).
+ * `servers`: the company-system server names (os/os-servers.ts); a tool of any other server is not
+ * a company tool. The harness may name it `mcp__<server>__<tool>`, `<server>__<tool>` or `<server>_<tool>`.
+ */
+export function isOsToolsRead(toolName: string, servers: readonly string[] = currentOsServerNames()): boolean {
   const n = toolName.toLowerCase();
-  if (!/os-tools|os_tools/.test(n)) return false;
-  return /(^|[_.-])(list|search|get|read|find|query|describe|lookup)([_.-]|$)/.test(n.replace(/^.*(os-tools|os_tools)[_.-]*/, ''));
+  for (const s of [...servers].sort((a, b) => b.length - a.length)) {
+    const m = new RegExp(`^(mcp__)?${escapeRe(s.toLowerCase())}(__|_|\\.)(.+)$`).exec(n);
+    if (m) return m[3] === 'list' || READ_VERB.test(m[3]);
+  }
+  return false;
 }
 
 /** OpenCode's `permission` block for smart mode. Its MCP tools are named `<server>_<tool>`. */
-export function opencodeSmartPermission(): Record<string, unknown> {
+export function opencodeSmartPermission(osServers: readonly string[] = currentOsServerNames()): Record<string, unknown> {
   const bash: Record<string, string> = { '*': 'ask' };
   for (const s of SAFE_COMMANDS) { bash[s] = 'allow'; bash[`${s} *`] = 'allow'; }
+  const company: Record<string, string> = {};
+  for (const s of osServers) {
+    company[`${s}_*`] = 'ask';
+    for (const verb of ['list', 'search', 'get', 'read']) company[`${s}_*${verb}*`] = 'allow';
+  }
   return {
     '*': 'ask',
     read: 'allow', list: 'allow', glob: 'allow', grep: 'allow', todowrite: 'allow', todoread: 'allow',
@@ -78,8 +95,7 @@ export function opencodeSmartPermission(): Record<string, unknown> {
     external_directory: 'ask',
     bash,
     webfetch: 'ask', websearch: 'ask',
-    'os-tools_*': 'ask',
-    'os-tools_*list*': 'allow', 'os-tools_*search*': 'allow', 'os-tools_*get*': 'allow', 'os-tools_*read*': 'allow',
+    ...company,
   };
 }
 
@@ -111,10 +127,10 @@ export function acpSmartAllows(kind: string | undefined, toolName: string, input
 export function approvalTitle(toolName: string, input?: any): string {
   const n = toolName.toLowerCase();
   if (n === 'bash' || n.includes('command') || n === 'execute' || n === 'shell') return 'Wants to run a command';
-  if (/send.*(mail|email|message)|gmail_send|email/.test(n)) return 'Wants to send an email';
+  if (/send.*(mail|email|message)|(mail|message)[a-z_-]*__send|gmail_send|email/.test(n)) return 'Wants to send an email';
   if (n === 'write' || n === 'edit' || n === 'multiedit' || n.includes('patch') || n.includes('edit')) return 'Wants to change a file';
   if (n === 'webfetch' || n === 'websearch' || n.includes('network') || n.includes('fetch')) return 'Wants to reach the internet';
-  if (n.startsWith('mcp__') || n.includes('os-tools')) return `Wants to use ${toolName.replace(/^mcp__/, '').replace(/__/g, ' › ')}`;
+  if (n.startsWith('mcp__')) return `Wants to use ${toolName.replace(/^mcp__/, '').replace(/__/g, ' › ')}`;
   void input;
   return `Wants to use ${toolName}`;
 }

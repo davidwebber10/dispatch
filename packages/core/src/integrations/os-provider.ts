@@ -76,7 +76,7 @@ export interface OsConnectionsPublic {
   osPublicUrl: string | null;
   osToolsEnabled: boolean;
   needsConsent: OsConsent[];
-  /** Names of the MCP servers OS attached directly (not the os-tools proxy). */
+  /** Names of the MCP servers OS attached directly (not the company-system servers of os/os-servers.ts). */
   servers: string[];
 }
 
@@ -185,7 +185,7 @@ export class OsConnectionsProvider {
   getServerSpecs(): McpServerSpec[] {
     if (!this.enabled) return [];
     // Stale, or OS was not reachable at the last try: ask again now (coalesced, 5 s timeout). This
-    // spawn still gets the cache; the os-tools bridge picks the tools up by itself when OS answers.
+    // spawn still gets the cache; a company-system server lists its tools live when the thread starts.
     if (this.isStale() || !this.state.reachable) void this.refresh();
     return this.state.servers;
   }

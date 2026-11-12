@@ -15,6 +15,8 @@ import { isAgentType } from '../providers/agent-types.js';
 import { writeGrokHome, type McpServerEntry } from '../providers/grok-home.js';
 import { claudeSpinnerVerbs } from '../settings/harness-settings.js';
 import { ThreadConfigStore } from './thread-config.js';
+import { osServerNames, osServersNote, resolveOsServerNames, setCurrentOsServerNames } from '../os/os-servers.js';
+import { PLATFORM_NAME } from '../os/platform-name.js';
 import type { SessionWiring } from './session-wiring.js';
 
 /** The MCP server name every eligible thread gets its Dispatch (agency) tools under. */
@@ -65,15 +67,19 @@ export class SpawnInjection {
    * the thread was launched with on its row (`config.toolsAvailable`, spec section 3.3).
    */
   applyPluginInjection(terminalId: string, harness: string, specs: McpServerSpec[], prompts: string[]): void {
+    if (this.wiring.pluginInjection) {
+      // The thread's project: a project's skills reach its threads and not another's (spec section 8).
+      const inj = this.wiring.pluginInjection(harness, this.getTerminal(terminalId)?.sessionId ?? null);
+      // A plugin's server must find the daemon under every harness: Codex passes only the listed
+      // variables to an MCP server, so the address rides in the spec's own env (as the agency's does).
+      const api = this.apiUrl();
+      const reach = { ...(api ? { DISPATCH_API: api } : {}), ...(this.wiring.daemonPort ? { DISPATCH_PORT: String(this.wiring.daemonPort) } : {}) };
+      specs.push(...inj.specs.map((s) => ({ ...s, env: { ...reach, ...(s.env ?? {}) } })));
+      prompts.push(...inj.prompts);
+    }
+    // Company-system servers last: every other server keeps its name (os/os-servers.ts).
+    finalizeOsServers(specs, prompts);
     if (!this.wiring.pluginInjection) return; // no plugin system wired (tests of the bare service): the row stays as it was
-    // The thread's project: a project's skills reach its threads and not another's (spec section 8).
-    const inj = this.wiring.pluginInjection(harness, this.getTerminal(terminalId)?.sessionId ?? null);
-    // A plugin's server must find the daemon under every harness: Codex passes only the listed
-    // variables to an MCP server, so the address rides in the spec's own env (as the agency's does).
-    const api = this.apiUrl();
-    const reach = { ...(api ? { DISPATCH_API: api } : {}), ...(this.wiring.daemonPort ? { DISPATCH_PORT: String(this.wiring.daemonPort) } : {}) };
-    specs.push(...inj.specs.map((s) => ({ ...s, env: { ...reach, ...(s.env ?? {}) } })));
-    prompts.push(...inj.prompts);
     const toolsAvailable = specs.map((s) => s.name);
     try { this.configStore.patch(terminalId, { toolsAvailable }); } catch { /* the record is informational */ }
     try { this.wiring.onSpawned?.(terminalId, toolsAvailable); } catch { /* observers never block a spawn */ }
@@ -83,9 +89,14 @@ export class SpawnInjection {
    * The MCP servers in the shape that Grok and OpenCode read. A server with authEnv gets the key as a
    * reference to the variable (`ref`, in that harness's own syntax), never as a literal.
    */
-  mcpEntries(specs: McpServerSpec[], ref: string): Record<string, McpServerEntry> {
+  mcpEntries(specs: McpServerSpec[], ref: string, opts: { http?: boolean } = {}): Record<string, McpServerEntry> {
     const out: Record<string, McpServerEntry> = {};
     for (const spec of specs) {
+      // `http`: this harness takes a loopback HTTP entry with the key reference in a header (OpenCode).
+      if (opts.http && spec.http && spec.authEnv) {
+        out[spec.name] = { url: spec.http.url, headers: { Authorization: `Bearer ${ref}` } };
+        continue;
+      }
       const env = spec.authEnv ? { ...(spec.env ?? {}), DISPATCH_AUTH: ref } : spec.env;
       out[spec.name] = { command: spec.command, args: spec.args, ...(env ? { env } : {}) };
     }
@@ -329,4 +340,34 @@ export class SpawnInjection {
       peers,
     });
   }
+}
+
+/**
+ * The person's own MCP server names in their Claude Code user config (`~/.claude.json` mcpServers),
+ * cached by the file's mtime. A company-system server never takes one of these names.
+ */
+let userServersCache: { mtimeMs: number; names: string[] } | null = null;
+export function userClaudeServerNames(file = path.join(process.env.CLAUDE_CONFIG_DIR || os.homedir(), '.claude.json')): string[] {
+  try {
+    const st = fs.statSync(file);
+    if (userServersCache && userServersCache.mtimeMs === st.mtimeMs) return userServersCache.names;
+    const servers = JSON.parse(fs.readFileSync(file, 'utf8'))?.mcpServers;
+    const names = servers && typeof servers === 'object' ? Object.keys(servers) : [];
+    userServersCache = { mtimeMs: st.mtimeMs, names };
+    return names;
+  } catch { return []; }
+}
+
+/**
+ * Company-system servers of one spawn (os/os-servers.ts), in place: an OS server whose name another
+ * server already has becomes `os-<name>`; the names go to smart approvals; one line tells the thread
+ * which servers are company systems.
+ */
+export function finalizeOsServers(specs: McpServerSpec[], prompts: string[], taken: readonly string[] = userClaudeServerNames()): void {
+  if (!specs.some((s) => s.osSystem)) return;
+  const resolved = resolveOsServerNames(specs, taken);
+  specs.splice(0, specs.length, ...resolved);
+  setCurrentOsServerNames(osServerNames(resolved));
+  const note = osServersNote(resolved, PLATFORM_NAME);
+  if (note) prompts.push(note);
 }

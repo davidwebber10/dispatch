@@ -16,8 +16,10 @@ import { LimitSnapshots } from '../../src/limits/snapshot.js';
  * key rule without a matching edit here fails the second test below.
  */
 const EXPECTED_KEY_ROUTES: string[] = [
-  // The company-tools proxy (os/tools-proxy.ts): a thread key on loopback only.
-  'POST /api/os-tools/mcp',
+  // The company-system servers (os/tools-proxy.ts): a thread key on loopback only.
+  'POST /api/os/mcp/:system',
+  'GET /api/os/mcp/:system',
+  'DELETE /api/os/mcp/:system',
   'POST /api/plugins/:id/assist',
   // Coach plan (2026-11-07): the assist meter and share for a plugin's own key; push; usage and analytics reads.
   'GET /api/plugins/:id/assist/usage',

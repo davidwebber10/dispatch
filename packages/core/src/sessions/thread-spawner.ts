@@ -16,6 +16,7 @@ import { platform } from '../platform/index.js';
 import { maxLiveThreadsPerProject } from '../caps.js';
 import { systemPromptFor, modelFor } from '../overseer/prompts.js';
 import { approvalsFor, claudeSmartAskRules, claudeSmartSettings } from '../os/approvals.js';
+import { osServerNames } from '../os/os-servers.js';
 import { currentProfile } from '../os/profile.js';
 import { boxLog } from '../os/box-log.js';
 import { resolveSpawnModel, isClaudeTierAlias } from '../overseer/spawn-model.js';
@@ -529,7 +530,7 @@ export class ThreadSpawner {
     let opencodeEnv: Record<string, string> | undefined;
     if (terminal.type === 'opencode' && this.wiring.statusContext) {
       try {
-        const mcpServers = this.mcpEntries(specs, '{env:DISPATCH_AUTH}');
+        const mcpServers = this.mcpEntries(specs, '{env:DISPATCH_AUTH}', { http: true });
         // A model with no tool-capable endpoint (settings/model-capabilities.ts) runs
         // chat-only: every tool off, no MCP, and no peer-tools block in the prompt (it
         // would describe tools the model cannot call). The verdict is pinned in
@@ -553,6 +554,7 @@ export class ThreadSpawner {
           smart,
           systemPrompt: [persona, toolsDisabled ? undefined : structuredMcp?.systemPrompt].filter(Boolean).join('\n\n') || undefined,
           mcpServers,
+          osServers: osServerNames(specs),
           toolsDisabled,
         });
         opencodeEnv = { OPENCODE_CONFIG: cfgPath };

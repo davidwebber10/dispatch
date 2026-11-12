@@ -33,6 +33,8 @@ export interface OpencodeConfigSpec {
   smart?: boolean;
   systemPrompt?: string;
   mcpServers?: Record<string, McpServerEntry>;
+  /** The company-system servers among `mcpServers` (smart approvals let their read tools run). */
+  osServers?: readonly string[];
   /**
    * True when the model has no tool-capable endpoint (settings/model-capabilities.ts). The
    * config then DENIES every tool (`permission: {"*": "deny"}` — built-ins and MCP alike)
@@ -53,7 +55,7 @@ export function writeOpencodeConfig(spec: OpencodeConfigSpec): string {
   const cfg: Record<string, unknown> = {
     $schema: 'https://opencode.ai/config.json',
     model: spec.model || OPENCODE_DEFAULT_MODEL,
-    permission: spec.toolsDisabled ? { '*': 'deny' } : spec.smart && !spec.escalate ? opencodeSmartPermission() : { edit: mode, bash: mode, webfetch: mode },
+    permission: spec.toolsDisabled ? { '*': 'deny' } : spec.smart && !spec.escalate ? opencodeSmartPermission(spec.osServers) : { edit: mode, bash: mode, webfetch: mode },
   };
 
   const rulesPath = path.join(spec.dir, 'rules.md');
@@ -71,6 +73,11 @@ export function writeOpencodeConfig(spec: OpencodeConfigSpec): string {
   if (!spec.toolsDisabled && spec.mcpServers && Object.keys(spec.mcpServers).length > 0) {
     const mcp: Record<string, unknown> = {};
     for (const [name, s] of Object.entries(spec.mcpServers)) {
+      // A loopback HTTP entry (a company system, os/os-servers.ts): OpenCode's `remote` shape.
+      if (typeof s.url === 'string') {
+        mcp[name] = { type: 'remote', url: s.url, enabled: true, ...(s.headers && typeof s.headers === 'object' ? { headers: s.headers } : {}) };
+        continue;
+      }
       mcp[name] = {
         type: 'local',
         command: [s.command, ...(s.args ?? [])].filter((p): p is string => typeof p === 'string' && p.length > 0),

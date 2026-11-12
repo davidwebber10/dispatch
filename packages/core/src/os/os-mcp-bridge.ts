@@ -1,27 +1,30 @@
 #!/usr/bin/env node
-// packages/core/src/os/os-tools-mcp.ts
-// The `os-tools` MCP server a thread runs (stdio). It is a pipe, not a server of its own: each
-// JSON-RPC line from the CLI goes to the daemon's loopback route POST /api/os-tools/mcp with the
-// thread's own key (DISPATCH_AUTH, or the key file of DISPATCH_AUTH_FILE), and the daemon forwards it
-// to POLYWOOD OS as the box (os/tools-proxy.ts). Each answer goes back as one line.
+// packages/core/src/os/os-mcp-bridge.ts
+// The stdio form of ONE company-system MCP server (os/os-servers.ts). A harness that can take a
+// loopback HTTP entry with the thread key in a header (Claude Code, the Codex CLI, Codex Pretty,
+// OpenCode) reaches the daemon route directly and runs no process; a harness that cannot (Grok, the
+// Codex CLI view whose key is a file) runs this bridge, one per system.
 //
-// Why stdio and not the CLIs' own HTTP MCP client: one bridge serves Claude Code, Codex, Grok and
-// OpenCode the same way through the injection that already carries the per-thread key as an
-// environment REFERENCE (mcp/injection.ts, authEnv). A native HTTP entry would need the key as a
-// header value, which for Codex Pretty and OpenCode means a literal in a config.
+// It is a pipe, not a server of its own: each JSON-RPC line from the CLI goes to the daemon's
+// loopback route POST /api/os/mcp/<system> (DISPATCH_OS_SYSTEM) with the thread's own key
+// (DISPATCH_AUTH, or the key file of DISPATCH_AUTH_FILE). The route renames the tools and forwards to
+// POLYWOOD OS as the box (os/tools-proxy.ts). Each answer goes back as one line.
 //
-// When OS is not reachable, the bridge stays up: `initialize` is answered locally, `tools/list` is
-// empty, a tools call returns a plain error, and the bridge tries again in the background. When the
-// list comes back it sends `notifications/tools/list_changed`, so the CLI picks the tools up again.
+// When the daemon is not reachable, the bridge stays up: `initialize` is answered locally,
+// `tools/list` is empty, a tools call returns a plain error, and the bridge tries again in the
+// background. When the list comes back it sends `notifications/tools/list_changed`.
 import * as readline from 'node:readline';
 import { PLATFORM_NAME } from './platform-name.js';
 import { authHeaders } from '../overseer/agency-shared.js';
+import { serverNameFor } from './os-servers.js';
 
 type Json = Record<string, any>;
 
 export interface BridgeOptions {
   /** The daemon's address (DISPATCH_API). */
   api: string;
+  /** The OS system this bridge serves (DISPATCH_OS_SYSTEM). */
+  system: string;
   write: (line: string) => void;
   fetchImpl?: typeof fetch;
   headers?: (url: string) => Record<string, string> | undefined;
@@ -29,12 +32,12 @@ export interface BridgeOptions {
   retryMs?: number;
 }
 
-const LOCAL_INIT = {
+const localInit = (system: string) => ({
   protocolVersion: '2025-06-18',
   capabilities: { tools: { listChanged: true } },
-  serverInfo: { name: 'os-tools', version: '1' },
+  serverInfo: { name: serverNameFor(system), version: '1' },
   instructions: `Company tools from ${PLATFORM_NAME}.`,
-};
+});
 
 /** The plain text of an error answer from the daemon or OS. */
 function plainError(status: number, body: any): string {
@@ -46,7 +49,8 @@ function plainError(status: number, body: any): string {
 }
 
 export function createBridge(opts: BridgeOptions) {
-  const url = `${opts.api.replace(/\/+$/, '')}/api/os-tools/mcp`;
+  const url = `${opts.api.replace(/\/+$/, '')}/api/os/mcp/${encodeURIComponent(opts.system)}`;
+  const LOCAL_INIT = localInit(opts.system);
   const doFetch = opts.fetchImpl ?? fetch;
   const headers = opts.headers ?? ((u: string) => authHeaders(u, {}));
   let protocolVersion: string | null = null;
@@ -73,7 +77,7 @@ export function createBridge(opts: BridgeOptions) {
     retryTimer = setTimeout(async () => {
       retryTimer = null;
       try {
-        const r = await post({ jsonrpc: '2.0', id: '__os_tools_probe', method: 'tools/list', params: {} });
+        const r = await post({ jsonrpc: '2.0', id: '__os_probe', method: 'tools/list', params: {} });
         if (r.status < 300 && answers(r.body).some((a) => a.result)) {
           listFailed = false;
           send({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' });
@@ -138,11 +142,13 @@ export function createBridge(opts: BridgeOptions) {
 
 function main(): void {
   const api = process.env.DISPATCH_API || `http://127.0.0.1:${process.env.DISPATCH_PORT || 3456}`;
-  const bridge = createBridge({ api, write: (l) => process.stdout.write(l + '\n'), retryMs: 30_000 });
+  const system = process.env.DISPATCH_OS_SYSTEM || '';
+  if (!system) { process.stderr.write('DISPATCH_OS_SYSTEM is not set\n'); process.exit(2); }
+  const bridge = createBridge({ api, system, write: (l) => process.stdout.write(l + '\n'), retryMs: 30_000 });
   const rl = readline.createInterface({ input: process.stdin });
   // Requests run concurrently (a slow tool must not hold a tools/list); each answer carries its id.
   rl.on('line', (l) => { void bridge.line(l); });
   rl.on('close', () => { bridge.stop(); process.exit(0); });
 }
 
-if (process.argv[1] && /os-tools-mcp\.(js|ts)$/.test(process.argv[1])) main();
+if (process.argv[1] && /os-mcp-bridge\.(js|ts)$/.test(process.argv[1])) main();

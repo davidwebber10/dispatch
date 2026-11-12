@@ -166,7 +166,7 @@ export function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?
           ? <span style={{ marginLeft: 'auto', flexShrink: 0, font: '400 11px var(--font-mono)', color: meta.color }}>{meta.text}</span>
           : <span className="chat-shimmer" style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 11 }}>running…</span>}
       </button>
-      {/* A company tool that needs the person's consent first (os-tools `not_connected`): the Connect card, inline. */}
+      {/* A company tool that needs the person's consent first (a company system's `not_connected`): the Connect card, inline. */}
       {(() => { const nc = err ? notConnectedOf(out) : null; return nc ? <ConnectCard compact label={nc.label} connect={nc.connect} /> : null; })()}
       {open && expandable && (
         <div style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', background: 'var(--color-elevated)', overflow: 'hidden', margin: '4px 20px 8px' }}>

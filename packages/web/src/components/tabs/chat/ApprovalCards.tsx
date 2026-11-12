@@ -8,10 +8,10 @@ import { Button } from '../../ui';
 export function approvalTitle(toolName: string): string {
   const n = toolName.toLowerCase();
   if (n === 'bash' || n.includes('command') || n === 'execute' || n === 'shell') return 'Wants to run a command';
-  if (/send.*(mail|email|message)|gmail_send|email/.test(n)) return 'Wants to send an email';
+  if (/send.*(mail|email|message)|(mail|message)[a-z_-]*__send|gmail_send|email/.test(n)) return 'Wants to send an email';
   if (n === 'write' || n === 'edit' || n === 'multiedit' || n.includes('patch') || n.includes('edit')) return 'Wants to change a file';
   if (n === 'webfetch' || n === 'websearch' || n.includes('network') || n.includes('fetch')) return 'Wants to reach the internet';
-  if (n.startsWith('mcp__') || n.includes('os-tools')) return `Wants to use ${toolName.replace(/^mcp__/, '').replace(/__/g, ' › ')}`;
+  if (n.startsWith('mcp__')) return `Wants to use ${toolName.replace(/^mcp__/, '').replace(/__/g, ' › ')}`;
   return `Wants to use ${toolName}`;
 }
 

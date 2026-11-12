@@ -8,7 +8,14 @@
 // the owner and the calling thread's id added. The key is valid only on this daemon, and this route
 // answers only a loopback peer, so a leaked config would give nothing off the box.
 //
-//   thread CLI --stdio--> os-tools-mcp.js --HTTP+dtk_ key--> POST /api/os-tools/mcp --box token--> OS
+// A thread sees each company system as its own MCP server (os/os-servers.ts): one route per system,
+//
+//   thread CLI --HTTP+dtk_ key (or the stdio bridge os-mcp-bridge.js)--> POST /api/os/mcp/<system>
+//              --box token, owner, thread id, x-dispatch-systems: <system>, real tool name--> OS
+//
+// The route renames the tools (`acumatica_get_customer` <-> `get_customer`) so OS needs no change.
+// OsToolCatalog keeps OS's tool list (one fetch per change) to decide which servers a spawn gets and
+// to answer tools/list while OS is away.
 //
 // The owner's web page reads the state through GET /api/os/connections and asks OS for its tool list
 // through GET /api/os/tools (no thread id: the page is not a thread).
@@ -21,9 +28,7 @@ import { keyRoute, ownerOnly, ownerOnlyStrict, policyRouter, type Rule } from '.
 import { principalOf } from '../auth/request-principal.js';
 import { isLoopbackAddress } from '../files/reveal.js';
 import type { OsConnectionsProvider } from '../integrations/os-provider.js';
-
-/** The MCP server name every thread gets the company tools under. */
-export const OS_TOOLS_MCP_SERVER = 'os-tools';
+import { OS_SELF_SYSTEM, isSystemId, localToolName, osServerSpecs, realToolName, renameTool, serverNameFor, toolSystem } from './os-servers.js';
 
 export interface OsToolsProxyDeps {
   provider: OsConnectionsProvider;
@@ -33,6 +38,8 @@ export interface OsToolsProxyDeps {
   onUnreachable?: (terminalId: string, message: string) => void;
   /** The thread's systems filter (`x-dispatch-systems`), when a thread is limited to some systems. */
   systemsFor?: (terminalId: string) => string[] | null;
+  /** OS's tool list (which servers exist, and tools/list while OS is away). */
+  catalog?: OsToolCatalog;
 }
 
 /** The plain sentence a person reads when the company tools cannot be reached. */
@@ -97,37 +104,117 @@ export function createOsToolsRouter(deps: OsToolsProxyDeps): Router {
   const warned = new Set<string>();
   deps.provider.onChange((s) => { if (s.reachable) warned.clear(); });
 
-  // A thread's call. Only a thread key, only from loopback. The owner and a credential-free caller
-  // get 403: the route exists for threads, and a thread id comes only from the key.
-  router.post('/os-tools/mcp', keyRoute({ thread: threadOnLoopback, roleRun: threadOnLoopback }), async (req: Request, res: Response) => {
-    let terminalId: string;
+  // A thread's call to one company system. Only a thread key, only from loopback. The owner and a
+  // credential-free caller get 403: the route exists for threads, and a thread id comes only from the key.
+  const threadOnly = (req: Request, res: Response): string | null => {
     try {
       const p = principalOf(req);
-      if (p.kind !== 'thread') return void res.status(403).json({ error: 'thread_only', message: 'Only a thread calls the company tools route.' });
-      terminalId = p.terminalId;
-    } catch {
-      return void res.status(403).json({ error: 'thread_only', message: 'Only a thread calls the company tools route.' });
+      if (p.kind === 'thread' && isLoopbackAddress(req.socket?.remoteAddress)) return p.terminalId;
+    } catch { /* below */ }
+    res.status(403).json({ error: 'thread_only', message: 'Only a thread on this machine calls the company tools route.' });
+    return null;
+  };
+  router.post('/os/mcp/:system', keyRoute({ thread: threadOnLoopback, roleRun: threadOnLoopback }), async (req: Request, res: Response) => {
+    const terminalId = threadOnly(req, res);
+    if (!terminalId) return;
+    const system = String(req.params.system ?? '');
+    if (!isSystemId(system)) return void res.status(404).json({ error: 'unknown_system', message: 'No such company system.' });
+    const limit = deps.systemsFor?.(terminalId) ?? null;
+    const allowed = system === OS_SELF_SYSTEM || !limit || limit.includes(system);
+    const proto = typeof req.headers['mcp-protocol-version'] === 'string' ? req.headers['mcp-protocol-version'] : null;
+    const ctx: CallCtx = { terminalId, system, allowed, proto };
+    const body = req.body;
+    if (Array.isArray(body)) {
+      const out = (await Promise.all(body.map((m) => handleOne(ctx, m)))).filter((x): x is Json => x !== null);
+      return void (out.length ? res.json(out) : res.status(202).end());
     }
-    if (!isLoopbackAddress(req.socket?.remoteAddress)) return void res.status(403).json({ error: 'out_of_scope', message: 'The company tools route answers only on this machine.' });
-    const systems = deps.systemsFor?.(terminalId) ?? null;
-    const extra: Record<string, string> = { 'x-dispatch-thread-id': terminalId, ...(systems?.length ? { 'x-dispatch-systems': systems.join(',') } : {}) };
-    const proto = req.headers['mcp-protocol-version'];
-    if (typeof proto === 'string') extra['mcp-protocol-version'] = proto;
-    try {
-      const r = await forwardToOs(deps, req.body, extra);
-      if (r.status >= 500) throw new Error(`${PLATFORM_NAME} answered ${r.status}`);
-      if (r.body === null) return void res.status(r.status === 200 ? 202 : r.status).end();
-      res.status(r.status).json(r.body);
-    } catch (err) {
-      const msg = (err as Error)?.name === 'AbortError' ? `no answer from ${PLATFORM_NAME} in time` : (err as Error)?.message || 'request failed';
-      deps.provider.markUnreachable(msg);
-      if (!warned.has(terminalId)) {
-        warned.add(terminalId);
-        try { deps.onUnreachable?.(terminalId, OS_UNREACHABLE_NOTICE); } catch { /* a notice is best effort */ }
-      }
-      res.status(502).json({ error: 'os_unreachable', message: OS_UNREACHABLE_NOTICE });
-    }
+    const one = await handleOne(ctx, body);
+    if (one === null) return void res.status(202).end();
+    res.json(one);
   });
+  // Streamable HTTP: no server-initiated stream and no session to end on this route.
+  const noStream = (_req: Request, res: Response) => { res.setHeader('Allow', 'POST'); res.status(405).json({ error: 'method_not_allowed', message: 'POST only.' }); };
+  router.get('/os/mcp/:system', keyRoute({ thread: threadOnLoopback, roleRun: threadOnLoopback }), noStream);
+  router.delete('/os/mcp/:system', keyRoute({ thread: threadOnLoopback, roleRun: threadOnLoopback }), noStream);
+
+  type Json = Record<string, any>;
+  interface CallCtx { terminalId: string; system: string; allowed: boolean; proto: string | null }
+
+  /** OS could not be reached: flag it, and tell the thread once (per outage) in plain words. */
+  const unreachable = (ctx: CallCtx, err: unknown) => {
+    const msg = (err as Error)?.name === 'AbortError' ? `no answer from ${PLATFORM_NAME} in time` : (err as Error)?.message || 'request failed';
+    deps.provider.markUnreachable(msg);
+    if (!warned.has(ctx.terminalId)) {
+      warned.add(ctx.terminalId);
+      try { deps.onUnreachable?.(ctx.terminalId, OS_UNREACHABLE_NOTICE); } catch { /* a notice is best effort */ }
+    }
+  };
+  const toOs = async (ctx: CallCtx, payload: unknown): Promise<ForwardResult> => {
+    const extra: Record<string, string> = { 'x-dispatch-thread-id': ctx.terminalId, 'x-dispatch-systems': ctx.system };
+    if (ctx.proto) extra['mcp-protocol-version'] = ctx.proto;
+    const r = await forwardToOs(deps, payload, extra);
+    if (r.status >= 500) throw new Error(`${PLATFORM_NAME} answered ${r.status}`);
+    return r;
+  };
+  const answerOf = (body: unknown, id: unknown): Json | null => {
+    if (body && typeof body === 'object' && !Array.isArray(body)) return 'jsonrpc' in body ? (body as Json) : null;
+    const list = Array.isArray(body) ? body : [];
+    return (list.find((a) => a && typeof a === 'object' && (a as Json).id === id) as Json | undefined) ?? null;
+  };
+  const errorResult = (id: unknown, code: string, message: string): Json =>
+    ({ jsonrpc: '2.0', id, result: { isError: true, content: [{ type: 'text', text: JSON.stringify({ error: code, message }) }] } });
+
+  /** One JSON-RPC message. Null: a notification (nothing to answer). */
+  async function handleOne(ctx: CallCtx, msg: Json): Promise<Json | null> {
+    if (!msg || typeof msg !== 'object') return { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid request' } };
+    const id = msg.id;
+    if (id === undefined || id === null) return null;
+    const method = typeof msg.method === 'string' ? msg.method : '';
+    const server = serverNameFor(ctx.system);
+    if (method === 'initialize') {
+      const local = { jsonrpc: '2.0', id, result: { protocolVersion: typeof msg.params?.protocolVersion === 'string' ? msg.params.protocolVersion : '2025-06-18', capabilities: { tools: { listChanged: true } }, serverInfo: { name: server, version: '1' }, instructions: `Company tools from ${PLATFORM_NAME}.` } };
+      if (!deps.provider.osToolsUrl()) return local;
+      try {
+        const a = answerOf((await toOs(ctx, msg)).body, id);
+        if (a?.result) return { ...a, result: { ...a.result, serverInfo: { name: server, version: String(a.result.serverInfo?.version ?? '1') } } };
+      } catch (err) { unreachable(ctx, err); }
+      return local;
+    }
+    if (method === 'ping') return { jsonrpc: '2.0', id, result: {} };
+    if (method === 'resources/list') return { jsonrpc: '2.0', id, result: { resources: [] } };
+    if (method === 'resources/templates/list') return { jsonrpc: '2.0', id, result: { resourceTemplates: [] } };
+    if (method === 'prompts/list') return { jsonrpc: '2.0', id, result: { prompts: [] } };
+    if (method === 'tools/list') {
+      if (!ctx.allowed || !deps.provider.osToolsUrl()) return { jsonrpc: '2.0', id, result: { tools: [] } };
+      try {
+        const r = await toOs(ctx, msg);
+        const a = answerOf(r.body, id);
+        const tools: unknown[] = Array.isArray(a?.result?.tools) ? a!.result.tools : [];
+        if (r.status < 300 && a?.result) {
+          return { jsonrpc: '2.0', id, result: { tools: tools.filter((t) => toolSystem(t, deps.catalog?.knownSystems() ?? []) === ctx.system).map((t) => renameTool(ctx.system, t as Json)) } };
+        }
+        if (r.status === 404) return { jsonrpc: '2.0', id, result: { tools: [] } };
+      } catch (err) { unreachable(ctx, err); }
+      // OS away: the last list this box saw, so a thread that starts now still has its tools.
+      return { jsonrpc: '2.0', id, result: { tools: (deps.catalog?.tools(ctx.system) ?? []).map((t) => renameTool(ctx.system, t)) } };
+    }
+    if (method === 'tools/call') {
+      const local = typeof msg.params?.name === 'string' ? msg.params.name : '';
+      if (!ctx.allowed) return errorResult(id, 'not_permitted', 'This thread may not use this company system.');
+      if (!deps.provider.osToolsUrl()) return errorResult(id, 'not_permitted', `Company tools are turned off for you in ${PLATFORM_NAME}.`);
+      const real = realToolName(ctx.system, local, deps.catalog?.realNames(ctx.system) ?? []);
+      try {
+        const r = await toOs(ctx, { ...msg, params: { ...(msg.params ?? {}), name: real } });
+        const a = answerOf(r.body, id);
+        if (a) return a;
+        return errorResult(id, r.status === 404 ? 'not_permitted' : 'tool_failed', (r.body as Json | null)?.message ?? `Company tools failed (HTTP ${r.status}).`);
+      } catch (err) {
+        unreachable(ctx, err);
+        return errorResult(id, 'os_unreachable', OS_UNREACHABLE_NOTICE);
+      }
+    }
+    return { jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } };
+  }
 
   // The page: what OS last said (profile, consent cards, reachability). No env, no tokens.
   router.get('/os/connections', ownerOnly, (_req, res) => {
@@ -165,15 +252,14 @@ export function createOsToolsRouter(deps: OsToolsProxyDeps): Router {
 }
 
 /** A tool as the panel shows it: name, title, description, its system and whether it writes. */
-function publicTool(t: unknown): { name: string; title: string | null; description: string | null; system: string | null; readOnly: boolean | null } {
+function publicTool(t: unknown): { name: string; server: string | null; tool: string; title: string | null; description: string | null; system: string | null; readOnly: boolean | null } {
   const o = (t && typeof t === 'object' ? t : {}) as Record<string, any>;
   const name = typeof o.name === 'string' ? o.name : '';
-  const meta = o._meta && typeof o._meta === 'object' ? o._meta : {};
-  const system = typeof meta.system === 'string' ? meta.system
-    : typeof o.annotations?.system === 'string' ? o.annotations.system
-      : /^([a-z0-9]+)[_.]/i.exec(name)?.[1] ?? null;
+  const system = toolSystem(o);
   return {
     name,
+    server: system ? serverNameFor(system) : null,
+    tool: system ? localToolName(system, name) : name,
     title: typeof o.title === 'string' ? o.title : typeof o.annotations?.title === 'string' ? o.annotations.title : null,
     description: typeof o.description === 'string' ? o.description : null,
     system,
@@ -181,12 +267,91 @@ function publicTool(t: unknown): { name: string; title: string | null; descripti
   };
 }
 
+/** The stdio bridge script (the per-system server for a harness that takes no loopback HTTP entry). */
+export const OS_BRIDGE_PATH = fileURLToPath(new URL('./os-mcp-bridge.js', import.meta.url));
+
 /**
- * The `os-tools` MCP server spec for a thread: the stdio bridge (os-tools-mcp.js) with the daemon's
- * loopback address. `authEnv`: the injection gives it the thread key as an environment REFERENCE
- * (mcp/injection.ts), so no file holds a key, and the box token is in none of it.
+ * OS's tool list, kept by the box: which systems have a tool for this person (one server each) and,
+ * while OS is away, what tools/list answers. Fetched with no thread id and no systems filter, once
+ * when OS's answer changes and again when older than `ttlMs` (in the background of a spawn).
  */
-export function osToolsServerSpec(daemonApi: string): McpServerSpec {
-  const bridge = fileURLToPath(new URL('./os-tools-mcp.js', import.meta.url));
-  return { name: OS_TOOLS_MCP_SERVER, command: 'node', args: [bridge], env: { DISPATCH_API: daemonApi }, authEnv: true };
+export class OsToolCatalog {
+  private bySystem = new Map<string, Array<Record<string, unknown>>>();
+  private loadedAt: number | null = null;
+  private inFlight: Promise<void> | null = null;
+  private readonly ttlMs: number;
+  constructor(private readonly deps: Pick<OsToolsProxyDeps, 'provider' | 'fetchImpl' | 'timeoutMs'> & { ttlMs?: number }) {
+    this.ttlMs = deps.ttlMs ?? 5 * 60_000;
+  }
+
+  /** Follow OS: refresh when its answer changes; forget the list when OS turns the tools off. */
+  start(): () => void {
+    return this.deps.provider.onChange((s) => {
+      if (!s.osTools) { this.bySystem.clear(); this.loadedAt = null; return; }
+      if (s.reachable) void this.refresh();
+    });
+  }
+
+  get loaded(): boolean { return this.loadedAt !== null; }
+
+  /** Every system id OS named (entitled, consent, a tool's own). */
+  knownSystems(): string[] {
+    const st = this.deps.provider.snapshot();
+    return [...new Set([...(st.entitled ?? []), ...st.needsConsent.map((c) => c.system), ...this.bySystem.keys(), OS_SELF_SYSTEM])];
+  }
+
+  tools(system: string): Array<Record<string, unknown>> { return this.bySystem.get(system) ?? []; }
+  realNames(system: string): string[] { return this.tools(system).map((t) => String(t.name ?? '')); }
+
+  /** Systems with at least one tool, in OS's order. */
+  systems(): string[] { return [...this.bySystem.keys()]; }
+
+  async refresh(): Promise<void> {
+    if (this.inFlight) return this.inFlight;
+    this.inFlight = (async () => {
+      if (!this.deps.provider.osToolsUrl()) return;
+      try {
+        const init = await forwardToOs(this.deps, { jsonrpc: '2.0', id: 'init', method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'dispatch-catalog', version: '1' } } }, {});
+        if (init.status >= 300) return;
+        const list = await forwardToOs(this.deps, { jsonrpc: '2.0', id: 'list', method: 'tools/list', params: {} }, {});
+        const tools = (list.body as { result?: { tools?: unknown[] } } | null)?.result?.tools;
+        if (list.status >= 300 || !Array.isArray(tools)) return;
+        const known = this.knownSystems();
+        const next = new Map<string, Array<Record<string, unknown>>>();
+        for (const t of tools) {
+          if (!t || typeof t !== 'object' || typeof (t as any).name !== 'string') continue;
+          const sys = toolSystem(t, known);
+          if (!sys || !isSystemId(sys)) continue;
+          next.set(sys, [...(next.get(sys) ?? []), t as Record<string, unknown>]);
+        }
+        this.bySystem = next;
+        this.loadedAt = Date.now();
+      } catch { /* OS away: keep the last list */ }
+    })();
+    try { await this.inFlight; } finally { this.inFlight = null; }
+  }
+
+  /** Older than the ttl (or never loaded): refresh in the background. */
+  refreshIfStale(): void {
+    if (this.loadedAt === null || Date.now() - this.loadedAt > this.ttlMs) void this.refresh();
+  }
+}
+
+/**
+ * The systems that get a server at this spawn: those with a tool in the catalog (before the first
+ * load: the entitled ones), plus OS's own `connections`, minus a system that still needs the
+ * person's consent (its tools are absent until the person connects it in OS).
+ */
+export function systemsForSpawn(provider: OsConnectionsProvider, catalog: OsToolCatalog): string[] {
+  if (!provider.osToolsUrl()) return [];
+  catalog.refreshIfStale();
+  const st = provider.snapshot();
+  const consent = new Set(st.needsConsent.map((c) => c.system));
+  const base = catalog.loaded ? catalog.systems() : [...(st.entitled ?? []), OS_SELF_SYSTEM];
+  return base.filter((s) => s === OS_SELF_SYSTEM || !consent.has(s));
+}
+
+/** The company-system server specs for a thread (os/os-servers.ts), reaching OS only through this daemon. */
+export function osSystemServerSpecs(daemonApi: string, systems: readonly string[]): McpServerSpec[] {
+  return osServerSpecs({ daemonApi, systems, bridgePath: OS_BRIDGE_PATH });
 }
