@@ -150,7 +150,7 @@ const PAGE = 20;
 
 export default function activate(d) {
   // SDK version 2 (plugin.json "sdk": 2): `d` is bound to this plugin, so no call names the plugin id.
-  const { h, hooks: { useState, useEffect, useMemo, useProjects }, ui, docs, files, events, icons, actions } = d;
+  const { h, Fragment, hooks: { useState, useEffect, useMemo, useProjects, useThreads }, ui, docs, files, events, icons, actions } = d;
   const ID = d.id || 'previews';
   const VIEW = `plugin:${ID}:history`;
   const KEEP = 1000; // previews kept; the oldest seen ones are removed past this
@@ -160,9 +160,28 @@ export default function activate(d) {
   const isPreview = (v) => !!v && typeof v === 'object' && typeof v.id === 'string' && Array.isArray(v.files);
 
   // ── the store ────────────────────────────────────────────────────────────────────────────
+  // Inbox → Send a secret (2026-11-12): the owner's secrets for a thread live in the daemon, not in this plugin's
+  // documents (a thread with a storage grant reads those). Owner routes, through the page's own session.
+  const secretApi = async (method, p, body) => {
+    const res = await fetch(d.url(p), { method, credentials: 'same-origin', ...(body !== undefined ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}) });
+    let data = null;
+    try { data = await res.json(); } catch { data = null; }
+    if (!res.ok) throw new Error((data && typeof data.error === 'string' && data.error) || `The daemon answered ${res.status}.`);
+    return data;
+  };
   const usePv = d.zustand.create((set, get) => ({
     items: [], loaded: false, loading: false, sheet: null,
+    secrets: [],
+    loadSecrets: async () => {
+      try { const r = await secretApi('GET', '/api/inbox/secrets'); set({ secrets: Array.isArray(r && r.secrets) ? r.secrets : [] }); } catch { /* the next open tries again */ }
+    },
+    addSecret: (r) => set({ secrets: [r, ...get().secrets.filter((x) => x.id !== r.id)] }),
+    removeSecret: async (id) => {
+      set({ secrets: get().secrets.filter((x) => x.id !== id) });
+      try { await secretApi('DELETE', `/api/inbox/secrets/${encodeURIComponent(id)}`); } catch { void get().loadSecrets(); }
+    },
     load: async () => {
+      void get().loadSecrets();
       if (get().loading) return;
       set({ loading: true });
       try {
@@ -215,7 +234,20 @@ export default function activate(d) {
     const v = await docs.get(e.key, null);
     if (isPreview(v)) usePv.getState().upsert(expireSecret(v) || v);
   });
+  // A thread used a secret, or the owner sent or deleted one (on another device): the list again. No value in the event.
+  events.on('inbox:secrets', () => { void usePv.getState().loadSecrets(); });
   void usePv.getState().load();
+
+  // A secret as an item of the lists, so the filters, the days and the pages treat it like the rest. Seen: the owner made it.
+  const SECRET_PREFIX = 'inbox-secret:';
+  const secretItem = (r) => ({ id: SECRET_PREFIX + r.id, secret: r, sessionId: r.sessionId, terminalId: r.terminalId || r.usedBy || null, terminalLabel: r.terminalLabel || r.usedByLabel || null,
+    title: r.name, note: null, text: null, files: [], createdAt: r.createdAt, seenAt: r.createdAt });
+  /** The documents and the secrets, newest first. Two selectors and a memo: one selector that made a new list each time would render forever. */
+  function useAllItems() {
+    const items = usePv((s) => s.items);
+    const secrets = usePv((s) => s.secrets);
+    return useMemo(() => (secrets.length ? [...items, ...secrets.map(secretItem)].sort(newestFirst) : items), [items, secrets]);
+  }
 
   // ── helpers ──────────────────────────────────────────────────────────────────────────────
   const kindOf = (f) => (f.mime.startsWith('image/') ? 'image' : f.mime === 'application/pdf' ? 'pdf' : f.mime === 'text/html' ? 'html' : f.mime === 'text/markdown' ? 'markdown' : 'text');
@@ -453,11 +485,129 @@ export default function activate(d) {
       reading && text && h(ui.FileViewer, { files: [{ src: '', name: docName, mime: 'text/markdown', size: text.length, loadText: async () => text }], index: 0, onClose: () => setReading(false) }));
   }
 
+  // ── Send a secret (2026-11-12): the owner hands a thread a secret by a short ID ─────────────
+  // The scope: a thread (from its tab) or a project (from its sheet; from the Inbox view, a picked project). The
+  // value goes to the daemon once and is never shown again: after Send, the sheet shows the ID and a line to copy.
+  const label = { display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)' };
+  const field = { height: 36, padding: '0 10px', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', font: '400 15px var(--font-sans)', minWidth: 0 };
+  function SendSecret({ sessionId, terminalId, terminalLabel, onClose }) {
+    const projects = useProjects();
+    const [name, setName] = useState('');
+    const [value, setValue] = useState('');
+    const [reveal, setReveal] = useState(false);
+    const [picked, setPicked] = useState('');
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState(null);
+    const [made, setMade] = useState(null);
+    const project = sessionId || picked;
+    const projectName = (projects.find((x) => x.id === project) || {}).name;
+    const ready = !!name.trim() && value.length > 0 && !!project && !busy;
+    const send = async () => {
+      if (!ready) return;
+      setBusy(true); setError(null);
+      try {
+        const r = await secretApi('POST', '/api/inbox/secrets', { name: name.trim(), value, sessionId: project, ...(terminalId ? { terminalId } : {}), allowReveal: reveal });
+        setValue(''); // the value leaves the page at once
+        setMade(r);
+        usePv.getState().addSecret(r);
+      } catch (e) { setError(e && e.message ? e.message : 'Could not send the secret.'); }
+      finally { setBusy(false); }
+    };
+    const scope = terminalId
+      ? `For ${terminalLabel ? `${terminalLabel}, ` : ''}this thread only.`
+      : project ? `For any thread of ${projectName || 'this project'}.` : null;
+    const line = made ? `The secret "${made.name}" is in my ${NAME}: ${made.id}` : '';
+    return h(ui.Modal, { open: true, sheet: true, title: made ? 'Secret sent' : 'Send a secret', onClose },
+      h('div', { 'data-testid': 'send-secret', style: { display: 'flex', flexDirection: 'column', gap: 12, paddingBottom: 8 } },
+        made
+          ? h(Fragment, null,
+            h('div', { style: { fontSize: 13, lineHeight: 1.5, color: 'var(--color-text-secondary)' } }, 'Give the thread this ID. It works once, for 24 hours. The value is not shown again.'),
+            h('div', { style: { ...block, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '14px 12px' } },
+              h('span', { 'data-testid': 'secret-id', style: { font: '700 30px/1.1 var(--font-mono)', letterSpacing: '6px', color: 'var(--color-text-primary)', userSelect: 'all', WebkitUserSelect: 'all' } }, made.id)),
+            h('div', { style: row },
+              h(CopyButton, { text: made.id, label: 'Copy ID' }),
+              h(CopyButton, { text: line, label: 'Copy line', aria: 'Copy line' })),
+            h('div', { style: { ...block, ...mono, fontSize: 12.5, padding: '8px 12px', color: 'var(--color-text-secondary)' } }, line),
+            h('div', null, h('button', { type: 'button', onClick: onClose, style: solid }, 'Done')))
+          : h(Fragment, null,
+            !sessionId && !terminalId && h('div', { style: label }, 'Project',
+              h(ui.Select, { value: picked, onChange: setPicked, ariaLabel: 'Project', placeholder: 'Choose a project',
+                options: projects.filter((x) => !x.archived).map((x) => ({ value: x.id, label: x.name })) })),
+            scope && h('div', { style: { fontSize: 12.5, color: 'var(--color-text-tertiary)' } }, scope),
+            h('label', { style: label }, 'Name',
+              h('input', { type: 'text', 'aria-label': 'Name', value: name, maxLength: 100, placeholder: 'Stripe key', autoComplete: 'off', onChange: (e) => setName(e.target.value), style: field })),
+            h('label', { style: label }, 'Value',
+              h('input', { type: 'password', 'aria-label': 'Value', value, autoComplete: 'new-password', spellCheck: false, autoCapitalize: 'off', autoCorrect: 'off', 'data-1p-ignore': true, 'data-lpignore': 'true',
+                onChange: (e) => setValue(e.target.value), onKeyDown: (e) => { if (e.key === 'Enter') void send(); }, style: { ...field, fontFamily: 'var(--font-mono)' } })),
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 10 } },
+              h('div', { style: { flex: 1, minWidth: 0 } },
+                h('div', { style: { fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' } }, 'Let the thread read it'),
+                h('div', { style: { fontSize: 11.5, lineHeight: 1.45, color: 'var(--color-text-tertiary)' } }, reveal ? 'The thread may get the value itself.' : 'Off: the thread can only write it to a file or to Doppler.')),
+              h(ui.Toggle, { on: reveal, onClick: () => setReveal((v) => !v), label: 'Let the thread read it' })),
+            error && h('div', { role: 'alert', style: { fontSize: 12.5, color: 'var(--color-status-red)' } }, error),
+            h('div', { style: row },
+              h('button', { type: 'button', disabled: !ready, onClick: () => void send(), style: { ...solid, opacity: ready ? 1 : 0.5, cursor: ready ? 'pointer' : 'default' } },
+                h(icons.key, { size: 14, weight: 'bold' }), busy ? 'Sending…' : 'Send'),
+              h('span', { style: { fontSize: 11.5, color: 'var(--color-text-tertiary)' } }, 'One use. Gone after 24 hours.')))));
+  }
+
+  function SendSecretButton({ onClick }) {
+    return h('button', { type: 'button', onClick, style: { ...chip, height: 30, padding: '0 11px', fontWeight: 600, fontSize: 12.5, flexShrink: 0 } },
+      h(icons.key, { size: 14 }), 'Send a secret');
+  }
+
+  // A secret the owner sent: its name, its ID, its scope and its state. The value is never in the page.
+  const SECRET_STATE = {
+    waiting: { label: 'Waiting', color: 'var(--color-orange)' },
+    used: { label: 'Used', color: 'var(--color-green)' },
+    expired: { label: 'Expired', color: 'var(--color-text-tertiary)' },
+  };
+  const whereTo = (to) => {
+    if (!to) return null;
+    if (to.kind === 'file') return to.name ? `${to.name} in ${to.path}` : to.path;
+    if (to.kind === 'doppler') return `Doppler ${to.name}`;
+    if (to.kind === 'reveal') return 'read by the thread';
+    return null;
+  };
+  function SecretCard({ item, showProject, onDelete }) {
+    const r = item.secret;
+    const project = useProjects().find((x) => x.id === r.sessionId);
+    const projectName = project ? project.name : null;
+    const st = SECRET_STATE[r.state] || SECRET_STATE.expired;
+    const scope = r.terminalId ? `Thread ${r.terminalLabel || 'a thread'} only${showProject !== false && projectName ? ` · ${projectName}` : ''}` : `Any thread of ${projectName || 'the project'}`;
+    const detail = r.state === 'used' ? `Used by ${r.usedByLabel || 'a thread'} · ${timeOf(r.usedAt)}`
+      : r.state === 'waiting' ? `Usable until ${timeOf(r.expiresAt)}`
+        : 'The value was deleted after 24 hours';
+    const to = r.state === 'used' ? whereTo(r.usedTo) : null;
+    const when = timeOf(r.createdAt);
+    return h('div', { 'data-testid': 'sent-secret', 'data-state': r.state, style: { display: 'flex', flexDirection: 'column', gap: 8, padding: '11px 13px 12px', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)' } },
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+        h(KindChip, { kind: 'secret' }),
+        h('span', { style: { flex: 1, minWidth: 0, fontSize: 14.5, fontWeight: 600, color: 'var(--color-text-primary)', overflowWrap: 'anywhere' } }, r.name),
+        when && h('span', { style: { flexShrink: 0, font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap' } }, when),
+        onDelete && h('button', { type: 'button', 'aria-label': 'Delete secret', title: 'Delete', onClick: () => onDelete(r.id), style: { width: 28, height: 28, padding: 0, border: 'none', borderRadius: 'var(--radius-sm)', background: 'transparent', color: 'var(--color-text-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 } }, h(icons.trash, { size: 15 }))),
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
+        h('span', { 'data-testid': 'sent-secret-id', style: { font: '700 15px var(--font-mono)', letterSpacing: '2px', color: r.state === 'waiting' ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)', userSelect: 'all', WebkitUserSelect: 'all' } }, r.id),
+        r.state === 'waiting' && h(CopyButton, { text: r.id, aria: 'Copy ID', compact: true }),
+        h('span', { style: { display: 'inline-flex', alignItems: 'center', height: 20, padding: '0 8px', borderRadius: 'var(--radius-pill)', background: `color-mix(in srgb, ${st.color} 15%, transparent)`, color: st.color, font: '600 10.5px var(--font-sans)' } }, st.label),
+        r.allowReveal && h('span', { title: 'The thread may read the value', style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11.5, color: 'var(--color-text-tertiary)' } }, h(icons.eye, { size: 13 }), 'Readable')),
+      h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)', overflowWrap: 'anywhere' } },
+        h('span', null, scope),
+        h('span', { style: { color: r.state === 'used' ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)' } }, detail),
+        to && h('span', { style: { color: 'var(--color-text-secondary)' } }, `→ ${to}`)));
+  }
+
+  /** One card of a list: a sent secret, or a thread's item. */
+  const cardOf = (p, showProject) => (p.secret
+    ? h(SecretCard, { key: p.id, item: p, showProject, onDelete: (id) => void usePv.getState().removeSecret(id) })
+    : h(Item, { key: p.id, preview: p, showProject, onDelete: (id) => void usePv.getState().remove(id) }));
+
   // ── the project's previews in a bottom sheet (phone and desktop) ─────────────────────────
   // Load on open; mark seen on CLOSE, not open, so the unviewed dots show while you look.
   function Sheet() {
     const sessionId = usePv((s) => s.sheet);
-    const items = usePv((s) => s.items);
+    const items = useAllItems();
+    const [sending, setSending] = useState(false);
     const loaded = usePv((s) => s.loaded);
     const project = useProjects().find((x) => x.id === sessionId);
     const projectName = project ? project.name : null;
@@ -469,13 +619,15 @@ export default function activate(d) {
     // The same page of 20 as the history (2026-11-09): every card at once crashed the page on an iPhone.
     // Hooks stay above the early return, so their order never changes.
     const [shown, setShown] = useState(PAGE);
-    useEffect(() => { setShown(PAGE); }, [sessionId]);
+    useEffect(() => { setShown(PAGE); setSending(false); }, [sessionId]);
     if (!sessionId) return null;
     const mine = items.filter((p) => p.sessionId === sessionId);
     return h(ui.Modal, { open: true, sheet: true, title: projectName ? `${NAME} · ${projectName}` : NAME, onClose: () => usePv.getState().closeSheet() },
       h('div', { style: { display: 'flex', flexDirection: 'column', gap: 10, paddingBottom: 6 } },
+        h('div', { style: row }, h(SendSecretButton, { onClick: () => setSending(true) })),
+        sending && h(SendSecret, { sessionId, onClose: () => setSending(false) }),
         mine.length === 0 && h('div', { style: { fontSize: 13, color: 'var(--color-text-tertiary)', padding: '8px 0 14px' } }, loaded ? `Nothing here yet. Threads put commands, links, files and text in ${NAME} for you.` : 'Loading…'),
-        ...mine.slice(0, shown).map((p) => h(Item, { key: p.id, preview: p, showProject: false, onDelete: (id) => void usePv.getState().remove(id) })),
+        ...mine.slice(0, shown).map((p) => cardOf(p, false)),
         mine.length > shown && h('button', { type: 'button', onClick: () => setShown((n) => n + PAGE),
           style: { alignSelf: 'center', height: 34, padding: '0 16px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13, fontWeight: 500, cursor: 'pointer' } },
           `Show older (${mine.length - shown} more)`)));
@@ -483,7 +635,8 @@ export default function activate(d) {
 
   // ── the history across projects (the rail view), grouped by day ──────────────────────────
   function History() {
-    const all = usePv((s) => s.items);
+    const all = useAllItems();
+    const [sending, setSending] = useState(false);
     const loaded = usePv((s) => s.loaded);
     const sessions = useProjects();
     const [project, setProject] = useState('');
@@ -520,9 +673,12 @@ export default function activate(d) {
     }, [visible]);
     return h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px clamp(16px, 4vw, 26px) 40px' } },
       h('div', { style: { maxWidth: 820, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 18 } },
-        h('div', null,
-          h('h1', { style: { margin: 0, fontSize: 18, fontWeight: 700 } }, NAME),
-          h('div', { style: { fontSize: 13, color: 'var(--color-text-secondary)', marginTop: 4 } }, 'Commands, links, files and text that threads handed you to look at or copy, newest first.')),
+        h('div', { style: { display: 'flex', alignItems: 'flex-start', gap: 12 } },
+          h('div', { style: { flex: 1, minWidth: 0 } },
+            h('h1', { style: { margin: 0, fontSize: 18, fontWeight: 700 } }, NAME),
+            h('div', { style: { fontSize: 13, color: 'var(--color-text-secondary)', marginTop: 4 } }, 'Commands, links, files and text that threads handed you to look at or copy, newest first.')),
+          h(SendSecretButton, { onClick: () => setSending(true) })),
+        sending && h(SendSecret, { sessionId: project || null, onClose: () => setSending(false) }),
         all.length > 0 && h('div', { role: 'search' },
           h(ui.FilterBar, { query, onQueryChange: setQuery, placeholder: `Search ${MANY}`, facets,
             doneLabel: `Show ${items.length} ${items.length === 1 ? ONE : MANY}` })),
@@ -530,15 +686,17 @@ export default function activate(d) {
         all.length > 0 && items.length === 0 && h('div', { style: { fontSize: 13.5, color: 'var(--color-text-tertiary)', padding: '12px 0' } }, `No ${ONE} matches.`),
         ...groups.map((g) => h('section', { key: g.day, style: { display: 'flex', flexDirection: 'column', gap: 10 } },
           h('h2', { style: { margin: 0, font: '500 10.5px var(--font-mono)', letterSpacing: '1.2px', textTransform: 'uppercase', color: 'var(--color-text-tertiary)' } }, g.day),
-          ...g.items.map((p) => h(Item, { key: p.id, preview: p, onDelete: (id) => void usePv.getState().remove(id) })))),
+          ...g.items.map((p) => cardOf(p, true)))),
         items.length > shown && h('button', { type: 'button', onClick: () => setShown((n) => n + PAGE),
           style: { alignSelf: 'center', height: 34, padding: '0 16px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13, fontWeight: 500, cursor: 'pointer' } },
           `Show older (${items.length - shown} more)`)));
   }
 
   // ── the right-column tab (desktop, 2026-11-09): the open thread's previews only ───────────
-  function ThreadTab({ terminalId }) {
-    const all = usePv((s) => s.items);
+  function ThreadTab({ terminalId, sessionId }) {
+    const all = useAllItems();
+    const [sending, setSending] = useState(false);
+    const threads = useThreads();
     const loaded = usePv((s) => s.loaded);
     useEffect(() => {
       void usePv.getState().load();
@@ -557,9 +715,13 @@ export default function activate(d) {
     const visible = useMemo(() => mine.slice(0, shown), [mine, shown]);
     const empty = (text) => h('div', { style: { fontSize: 13, color: 'var(--color-text-tertiary)', padding: '4px 2px' } }, text);
     if (!terminalId) return h('div', { style: { padding: 12, display: 'flex', flexDirection: 'column', gap: 10 } }, empty(`Open a thread to see its ${MANY}.`));
+    const thread = threads.find((t) => t.id === terminalId);
+    const project = sessionId || (thread ? thread.projectId : null);
     return h('div', { style: { padding: 12, display: 'flex', flexDirection: 'column', gap: 10 } },
+      project && h('div', { style: row }, h(SendSecretButton, { onClick: () => setSending(true) })),
+      sending && project && h(SendSecret, { sessionId: project, terminalId, terminalLabel: thread ? thread.label : null, onClose: () => setSending(false) }),
       mine.length === 0 && empty(loaded ? `No ${MANY} from this thread yet. A thread sends commands, links, files and text here.` : 'Loading…'),
-      ...visible.map((p) => h(Item, { key: p.id, preview: p, showProject: false, onDelete: (id) => void usePv.getState().remove(id) })),
+      ...visible.map((p) => cardOf(p, false)),
       mine.length > shown && h('button', { type: 'button', onClick: () => setPage({ id: terminalId, shown: shown + PAGE }),
         style: { alignSelf: 'center', height: 34, padding: '0 16px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13, fontWeight: 500, cursor: 'pointer' } },
         `Show older (${mine.length - shown} more)`));
