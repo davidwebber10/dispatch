@@ -69,6 +69,18 @@ describe('the policy itself', () => {
     expect(local().problem(path.join(w.project, 'env-link'), { project: w.project, use: 'read' })).toBe('system');
   });
 
+  test('a local install serves a removable drive under /run/media; /run itself, the rest of /run and a hosted box still refuse', () => {
+    for (const p of ['/run/media/person/USB/project/a.txt', '/run/media/person/USB']) {
+      expect(inSystemTree(p, false), p).toBe(false);
+      expect(local().problem(p, { project: p, use: 'write' }), p).toBeNull();
+      expect(inSystemTree(p), p).toBe(true);
+      for (const policy of [hostedDev(), business()]) expect(policy.problem(p, { project: w.project, use: 'read' }), p).toBe('system');
+    }
+    for (const p of ['/run', '/run/media', '/run/dispatch/agent/x', '/run/secrets/x', '/run/user/1000/x', '/var/run/docker.sock', '/run/mediax/y']) {
+      expect(local().problem(p, { project: w.project, use: 'read' }), p).toBe('system');
+    }
+  });
+
   test('a local install keeps the read of any other absolute path', () => {
     for (const p of [path.join(w.outside, 'secret.txt'), path.join(w.dataDir, 'state.json'), path.join(w.appDir, 'server.js'), path.join(w.home, '.claude', 'settings.json'), '/etc/hosts']) {
       expect(local().problem(p, { project: w.project, use: 'read' }), p).toBeNull();

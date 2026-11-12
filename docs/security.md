@@ -62,7 +62,9 @@ folder in `DISPATCH_FILE_ROOTS`.
 On every install, for every caller, the file routes refuse:
 
 - the system's own trees: `/proc`, `/sys`, `/dev`, `/run`. `/proc/<pid>/environ` is the environment of a
-  process, not a file of yours. A link that leads there is refused too;
+  process, not a file of yours. A link that leads there is refused too. One exception on a local install:
+  a removable drive under `/run/media/<user>/` (Fedora, Arch, openSUSE) is served like any other folder;
+  `/run` itself and the rest of it stay refused, and a hosted box refuses all of `/run`;
 - credential files and folders (`~/.ssh`, `~/.aws`, `~/.gnupg`, the access token, the database, the saved
   logins of the agent programs, and more: `packages/core/src/files/secret-paths.ts`), also under a second
   name (a hard link);

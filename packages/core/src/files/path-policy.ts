@@ -110,9 +110,16 @@ const real = (p: string): string => { try { return fs.realpathSync(path.resolve(
 const strictlyWithin = (root: string, p: string): boolean => p !== root && within(root, p);
 const underAny = (roots: readonly string[], p: string): boolean => roots.some((r) => within(r, p));
 
-/** True when `p` (text or real) is in one of the system's own trees. */
-export function inSystemTree(p: string): boolean {
+/**
+ * Where some Linux systems (Fedora, Arch, openSUSE) mount removable drives: `/run/media/<user>/…`. On a
+ * local install a project there is the person's own; `/run` itself and the rest of it stay refused.
+ */
+const LOCAL_MEDIA_TREES = ['/run/media', '/var/run/media'];
+
+/** True when `p` (text or real) is in one of the system's own trees. `hosted`: a hosted box, where every tree is refused. */
+export function inSystemTree(p: string, hosted = true): boolean {
   const abs = path.resolve(p);
+  if (!hosted && LOCAL_MEDIA_TREES.some((t) => strictlyWithin(t, abs))) return false;
   return SYSTEM_TREES.some((t) => within(t, abs));
 }
 
@@ -150,7 +157,7 @@ export class PathPolicy {
     const abs = path.resolve(target);
     const realPath = q.self ? path.join(realAsFarAsItExists(path.dirname(abs)), path.basename(abs)) : realAsFarAsItExists(abs);
     // 1. Everywhere.
-    if (inSystemTree(abs) || inSystemTree(realPath)) return 'system';
+    if (inSystemTree(abs, c.hosted) || inSystemTree(realPath, c.hosted)) return 'system';
     if (!c.hosted) return null;
     // 2. A hosted box.
     const home = real(c.home);
