@@ -102,6 +102,19 @@ export function errorText(event: any): string | undefined {
 }
 
 /**
+ * The items of a `system` event that the DAEMON wrote into a thread (not the CLI): a plain notice
+ * (`dispatch_notice`, e.g. "Company tools are not reachable right now"). Null: not one of these.
+ * The socket fold and the journal fold both call it, so the two render the same.
+ */
+export function daemonSystemItems(e: any): ConvItem[] | null {
+  if (!e || e.type !== 'system') return null;
+  if (e.subtype === 'dispatch_notice') {
+    return typeof e.message === 'string' && e.message ? [{ kind: 'notice', text: e.message }] : [];
+  }
+  return null;
+}
+
+/**
  * The timeline items of one WHOLE event (W3-D): a `user`, `assistant`, `result` or notice event as
  * the daemon's message journal keeps it. It is the fold that the chat socket applies to the same
  * event when no stream came before it (useChatSocket.ts), built with the same helpers, so an item
@@ -113,7 +126,9 @@ export function itemsFromEvent(event: unknown, sessionId: string | undefined, se
   if (!e || typeof e !== 'object') return [];
   const out: ConvItem[] = [];
   if (e.type === 'system') {
-    if (e.subtype === 'model') {
+    const own = daemonSystemItems(e);
+    if (own) out.push(...own);
+    else if (e.subtype === 'model') {
       const model = modelFromFrame(e);
       if (e.switched === true && model) out.push({ kind: 'system', systemKind: 'model', text: model });
     } else if (e.subtype === 'settings_refused') {

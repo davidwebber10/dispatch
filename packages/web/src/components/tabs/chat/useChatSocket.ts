@@ -3,7 +3,7 @@ import { modelFromFrame } from '../../../lib/modelName';
 import { useActiveModel } from '../../../stores/activeModel';
 import type { ConvItem, PendingPermission } from '../../../api/types';
 import { openStructuredSocket } from '../../../api/structured-socket';
-import { safeJson, flattenContent, imageItemFromBlock, imagesFromContent, userOrNotice, errorText } from './convItems';
+import { safeJson, flattenContent, imageItemFromBlock, imagesFromContent, userOrNotice, errorText, daemonSystemItems } from './convItems';
 import { threadViewCache } from '../../../lib/threadViewCache';
 import { shownThisTurn, withSeq, type ChatHistory } from './useChatHistory';
 import type { ApiRetry, AuthRequired, CompactResult } from './useStructuredChat';
@@ -334,6 +334,10 @@ export function useChatSocket(args: {
         // the spinner: no turn is coming (#76).
         // A model/effort change the harness refused: the daemon says so in the thread, so it is not mistaken for one
         // that took hold (the card also shows the reason where it was asked).
+        // A line the daemon itself wrote into the thread (convItems.daemonSystemItems).
+        const own = daemonSystemItems(event);
+        if (own) { if (own.length) setItems((p) => [...p, ...own]); return; }
+
         if (type === 'system' && event.subtype === 'settings_refused') {
           const why = typeof event.message === 'string' && event.message ? event.message : 'The model or effort change was refused.';
           setItems((p) => [...p, { kind: 'result', isError: true, text: why }]);

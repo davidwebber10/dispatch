@@ -87,3 +87,53 @@ describe('OsConnectionsProvider', () => {
     expect(f).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('OsConnectionsProvider — the box <-> OS contract fields', () => {
+  test('reads profile, entitled, osTools, osPublicUrl and the consent list (system, label, connectUrl)', async () => {
+    const body = { servers: [], profile: 'business', entitled: true, osPublicUrl: 'https://os.example/', osTools: { url: 'https://os.internal/mcp' },
+      needsConsent: [{ system: 'google', label: 'Google', connectUrl: 'https://os.example/c/google' }, { id: 'jira', connectUrl: '/c/jira' }, { label: 'no url' }] };
+    const p = provider(vi.fn().mockResolvedValue({ ok: true, json: async () => body }));
+    const s = await p.refresh();
+    expect(s.profile).toBe('business');
+    expect(s.entitled).toBe(true);
+    expect(p.osToolsUrl()).toBe('https://os.internal/mcp');
+    expect(s.osPublicUrl).toBe('https://os.example');
+    expect(s.needsConsent).toEqual([
+      { system: 'google', label: 'Google', connectUrl: 'https://os.example/c/google' },
+      { system: 'jira', label: 'jira', connectUrl: '/c/jira' },
+    ]);
+  });
+
+  test('onChange fires when the profile changes, and not for an identical answer', async () => {
+    let profile = 'developer';
+    const p = provider(vi.fn().mockImplementation(async () => ({ ok: true, json: async () => ({ servers: [], profile }) })));
+    const seen: string[] = [];
+    p.onChange((s) => seen.push(String(s.profile)));
+    await p.refresh(); await p.refresh();
+    profile = 'business';
+    await p.refresh();
+    expect(seen).toEqual(['developer', 'business']);
+  });
+
+  test('a failed fetch retries in the background until OS answers', async () => {
+    const f = vi.fn()
+      .mockRejectedValueOnce(new Error('down'))
+      .mockResolvedValue({ ok: true, json: async () => ({ servers: [] }) });
+    const p = provider(f, { retryMinMs: 5 });
+    expect((await p.refresh()).reachable).toBe(false);
+    await new Promise((r) => setTimeout(r, 40));
+    expect(p.snapshot().reachable).toBe(true);
+    expect(f).toHaveBeenCalledTimes(2);
+    p.stop();
+  });
+
+  test('a spawn while OS is flagged unreachable asks OS again', async () => {
+    const f = vi.fn().mockRejectedValueOnce(new Error('down')).mockResolvedValue({ ok: true, json: async () => OK });
+    const p = provider(f, { retryMinMs: 60_000 });
+    await p.refresh();
+    p.getServerSpecs();
+    await new Promise((r) => setTimeout(r, 5));
+    expect(p.snapshot().reachable).toBe(true);
+    p.stop();
+  });
+});

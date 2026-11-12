@@ -304,6 +304,11 @@ export interface IStructuredManager extends EventEmitter {
   setEffort?(terminalId: string, effort: string): Promise<void>;
   /** A line in the thread for a model/effort change the harness refused (kept in the replay ring). */
   postNotice?(terminalId: string, message: string): void;
+  /**
+   * Put one event the daemon wrote itself into the thread (kept in the replay ring and the journal, pushed
+   * quiet): a `{type:'system', subtype:…}` notice such as `dispatch_notice` or `permission_blocked`.
+   */
+  postEvent?(terminalId: string, event: Record<string, unknown>): void;
   /** Codex: the efforts each model takes, from the app-server's last `model/list`, or null if never asked. */
   modelEfforts?(): Record<string, string[]> | null;
   /** Codex: the effort each model runs at by default (same source), or null if never asked. */
@@ -827,6 +832,13 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
   }
 
   /** A line in the thread for the viewers and the replay: a model/effort change the CLI refused. */
+  postEvent(terminalId: string, event: Record<string, unknown>): void {
+    const s = this.sessions.get(terminalId);
+    if (!s) return;
+    s.ring.push(event, { quiet: true });
+    this.fire('event', terminalId, event);
+  }
+
   postNotice(terminalId: string, message: string): void {
     const s = this.sessions.get(terminalId);
     if (!s) return;

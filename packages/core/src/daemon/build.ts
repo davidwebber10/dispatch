@@ -43,6 +43,7 @@ import { jsonErrorHandler } from '../http/error-handler.js';
 import { createJsonBody } from '../http/json-body.js';
 import { jsonCompression } from '../http/compress.js';
 import { OsConnectionsProvider } from '../integrations/os-provider.js';
+import { createOsToolsRouter, osToolsServerSpec } from '../os/tools-proxy.js';
 import { IntegrationsService, type IntegrationLauncher } from '../integrations/service.js';
 import { HeartbeatService } from '../platform/heartbeat.js';
 import { inheritedEnv } from '../platform/inherited-env.js';
@@ -517,8 +518,17 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
       has: (type, id) => { const p = providerOfType(type); return p ? accounts.has(p, id) : false; },
       defaultId: (type) => { const p = providerOfType(type); return p ? accounts.defaultId(p) : 'cli'; },
     },
-    secretsServerSpec: () => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }),
-    integrationsSpecs: () => [...integrationsService.getServerSpecs(), ...osConnections.getServerSpecs()],
+    // OS's standing instruction (systemPrompt of /api/dispatch/connections) rides with the Doppler note,
+    // so every harness gets it the way it gets that one (Claude --append-system-prompt, Codex
+    // developerInstructions, Grok --rules, OpenCode's rules file).
+    secretsServerSpec: () => ({ spec: secretsService.getServerSpec(), prompt: [secretsService.getSystemPrompt(), osConnections.getSystemPrompt()].filter(Boolean).join('\n\n') || null }),
+    // The company tools (os/tools-proxy.ts): one `os-tools` server per thread when OS gives this
+    // person tools, reaching OS only through this daemon's loopback route.
+    integrationsSpecs: () => {
+      const specs = [...integrationsService.getServerSpecs(), ...osConnections.getServerSpecs()];
+      if (osConnections.osToolsUrl() && daemonApi) specs.push(osToolsServerSpec(daemonApi));
+      return specs;
+    },
     toolsAwareness: () => {
       // Sync, so it can only serve the cache; a stale one is refreshed behind this spawn.
       // Not without the network: the check runs each bundled CLI, and a test's tools folder can be a real one.
@@ -569,6 +579,21 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     reachableAddresses: auth.reachableAddresses, refreshPtyEnv: spawnEnv.refresh,
     endless: opts.endless ?? endless, usageLimits: opts.usageLimits ?? limits.routeDeps,
     watchCatchUp: (id) => watchDispatcher.catchUp(id), outbox, journal: journalWiring.journal,
+  });
+  // Company tools (os/tools-proxy.ts): the loopback route a thread's os-tools bridge calls, and the
+  // state the Company connections panel reads. On a local install OS is not configured, so the routes
+  // answer "not hosted" and inject nothing.
+  app.use('/api', createOsToolsRouter({
+    provider: osConnections,
+    onUnreachable: (terminalId, message) => {
+      sessionService.structuredManagerForTerminal(terminalId)?.postEvent?.(terminalId, { type: 'system', subtype: 'dispatch_notice', level: 'warning', message });
+    },
+  }));
+  // Any change from OS (the boot fetch included) reaches the spawn env at once: the short-lived tokens
+  // of OS's own servers live in `env`, and before this they arrived only with some later refresh.
+  osConnections.onChange(() => {
+    spawnEnv.refresh();
+    broadcaster.broadcast({ type: 'os:connections', state: osConnections.publicSnapshot() });
   });
   const webDist = opts.webDist === undefined ? defaultWebDist(env) : opts.webDist;
   const servesWeb = mountWeb(app, { webDist, basePath, dataDir, plugins });
@@ -641,6 +666,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
       usageLimits.stop();
       usageGauge.stop();
       boxHeartbeat.stop();
+      osConnections.stop();
       threadAutoNamer.dispose();
       endless.stop();
       endlessManager.killAll();

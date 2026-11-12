@@ -669,6 +669,11 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
     session.pickedEffort = effort;
   }
 
+  postEvent(terminalId: string, event: Record<string, unknown>): void {
+    const session = this.sessions.get(terminalId);
+    if (session) this.pushEvent(session, event);
+  }
+
   postNotice(terminalId: string, message: string): void {
     const session = this.sessions.get(terminalId);
     if (session) this.pushEvent(session, { type: 'system', subtype: 'settings_refused', message });

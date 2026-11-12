@@ -341,6 +341,11 @@ export class AcpStructuredSessionManager extends StructuredEmitter implements IS
     }
   }
 
+  postEvent(terminalId: string, event: Record<string, unknown>): void {
+    const session = this.sessions.get(terminalId);
+    if (session) this.pushEvent(session, event);
+  }
+
   private pushEvent(session: GrokSession, event: unknown): void {
     session.ring.push(event);
     session.coalescer.observe(session.ring, event); // ring only: the live emit below is the event as it came
