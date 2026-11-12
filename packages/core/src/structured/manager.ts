@@ -14,6 +14,7 @@ import { EventRing } from './shared/event-ring.js';
 import type { JournalRecorder, ThreadRecorder } from '../journal/recorder.js';
 import { ClaudeStreamCompactor } from './shared/stream-compaction.js';
 import { settleTurn, type SettleDeps } from './shared/settle-turn.js';
+import { blockedEvent, blockedResolvedEvent, approvalTitle, approvalMessage, inputDetail, SMART_FALLBACK_NOTICE, type BlockedAction, type Approvals } from '../os/approvals.js';
 import { StructuredEmitter, type AnyStructuredListener, type StructuredListener, type StructuredManagerEventName, type StructuredManagerEvents } from './shared/events.js';
 
 /**
@@ -110,6 +111,16 @@ interface Session {
   model?: string;
   /** The account the thread runs on (StructuredSpawnOpts.accountId), for auth_required. */
   accountId?: string;
+  /** Smart approvals (os/approvals.ts): --permission-mode auto; every can_use_tool that arrives is surfaced. */
+  smart?: boolean;
+  /** Smart was asked for but the CLI runs another mode (the model has no auto mode): escalate instead. */
+  smartFallback?: boolean;
+  /** Smart was switched on live: the init frame reflects the spawn flags, so only `status` frames count. */
+  smartLive?: boolean;
+  /** A live switch to smart is waiting for the CLI's answer: mode reports before it are stale. */
+  smartSwitching?: boolean;
+  /** Actions the classifier blocked this session, newest last, for the in-thread cards. */
+  blocked?: BlockedAction[];
   /** Our own control requests awaiting the CLI's control_response (set_model). */
   controls?: Map<string, { resolve: (r: any) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>;
 }
@@ -124,6 +135,9 @@ const SYNTHETIC = '<synthetic>';
  *  manager they identify how to reach its app-server — but the shape is shared so
  *  `SessionService.spawnStructured` can drive either without branching. */
 export interface StructuredSpawnOpts {
+  /** Smart approvals (os/approvals.ts). Claude: the command carries --permission-mode auto; Codex: the
+   *  auto_review reviewer; Grok/OpenCode: the static rule set. Absent: today's escalate/auto-allow. */
+  approvals?: 'smart';
   command: string;
   args: string[];
   workDir: string;
@@ -309,6 +323,12 @@ export interface IStructuredManager extends EventEmitter {
    * quiet): a `{type:'system', subtype:…}` notice such as `dispatch_notice` or `permission_blocked`.
    */
   postEvent?(terminalId: string, event: Record<string, unknown>): void;
+  /** Switch the live thread between auto / ask / smart approvals (os/approvals.ts). */
+  setApprovals?(terminalId: string, mode: Approvals): Promise<void>;
+  /** The actions the harness blocked by itself and nobody answered yet (the in-thread cards). */
+  getBlocked?(terminalId: string): BlockedAction[];
+  /** "Allow this" / "Keep blocked" on a blocked action. False: no such action. */
+  resolveBlocked?(terminalId: string, id: string, decision: 'allow' | 'keep'): Promise<boolean>;
   /** Codex: the efforts each model takes, from the app-server's last `model/list`, or null if never asked. */
   modelEfforts?(): Record<string, string[]> | null;
   /** Codex: the effort each model runs at by default (same source), or null if never asked. */
@@ -346,6 +366,18 @@ export function turnTextsFromEvents(events: readonly unknown[]): string[] {
     if (text) texts.push(text);
   }
   return texts.reverse();
+}
+
+/** The input of the tool_use with this id in a Claude-shaped ring (newest first), or undefined. */
+export function toolUseInput(events: readonly unknown[], toolUseId: unknown): unknown {
+  if (typeof toolUseId !== 'string' || !toolUseId) return undefined;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e: any = events[i];
+    if (e?.type !== 'assistant' || !Array.isArray(e.message?.content)) continue;
+    const b = e.message.content.find((c: any) => c?.type === 'tool_use' && c.id === toolUseId);
+    if (b) return b.input;
+  }
+  return undefined;
 }
 
 /** How much of a structured CLI's stderr to keep for its exit report. */
@@ -416,7 +448,7 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
 
     const counterScope = randomUUID(); // Claude result counters restart with each CLI invocation.
     const rl = readline.createInterface({ input: child.stdout });
-    const session: Session = { child, rl, ring: new EventRing(), compactor: new ClaudeStreamCompactor(), escalate: opts.escalate ?? false, toolPolicy: opts.toolPolicy, pending: null, accountId: opts.accountId };
+    const session: Session = { child, rl, ring: new EventRing(), compactor: new ClaudeStreamCompactor(), escalate: opts.escalate ?? false, toolPolicy: opts.toolPolicy, pending: null, accountId: opts.accountId, smart: opts.approvals === 'smart', blocked: [] };
     // Resume backfill: seed the ring with prior history (restored from the claude
     // transcript) BEFORE any live event lands, so a ws (re)connect replays the past
     // conversation first and the View isn't blank after a daemon restart.
@@ -467,6 +499,7 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
         const m = event.message?.model;
         if (typeof m === 'string' && m && m !== SYNTHETIC) session.model = m;
       }
+      if (session.smart) this.observeSmart(terminalId, session, event);
       if (event?.type === 'control_request' && event?.request?.subtype === 'can_use_tool') {
         const r = event.request;
         // Track regardless of the allow/deny path below — every tool call passes through
@@ -493,7 +526,9 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
             type: 'control_response',
             response: { subtype: 'success', request_id: event.request_id, response: { behavior: 'deny', message: denied.message } },
           });
-        } else if (session.escalate || isAsk) {
+        } else if (session.escalate || isAsk || session.smart) {
+          // Smart approvals: auto mode let the routine calls run without asking, so EVERY request
+          // that still arrives is one the classifier or an `ask` rule wants a person for.
           // Do NOT auto-allow. Capture the pending decision and surface it so it can be
           // approved/denied (or an AskUserQuestion answered). The CLI stays blocked on stdin
           // until answerPermission() writes the response.
@@ -837,6 +872,80 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
     if (!s) return;
     s.ring.push(event, { quiet: true });
     this.fire('event', terminalId, event);
+  }
+
+  /**
+   * Smart approvals, per CLI frame (measured on Claude Code 2.1.322, 2026-11-11):
+   *  - `system/permission_denied` (decision_reason_type classifier): auto mode refused a call and
+   *    told only the model. It becomes a card: what, why, Allow this / Keep blocked.
+   *  - `system/init` or `system/status` naming a permissionMode other than `auto`: the model has no
+   *    auto mode and the CLI fell back silently. Escalate every tool instead, with one plain line.
+   */
+  private observeSmart(terminalId: string, session: Session, event: any): void {
+    if (event?.type !== 'system') return;
+    if (event.subtype === 'permission_denied') {
+      const toolName = typeof event.tool_name === 'string' ? event.tool_name : 'tool';
+      // The event names the call, not its input: find the input in the call's own tool_use frame.
+      const input = event.tool_input ?? event.input ?? toolUseInput(session.ring.snapshot(), event.tool_use_id);
+      const b: BlockedAction = {
+        id: typeof event.tool_use_id === 'string' && event.tool_use_id ? event.tool_use_id : randomUUID(),
+        toolName, title: approvalTitle(toolName, input), detail: inputDetail(input),
+        reason: typeof event.decision_reason === 'string' ? event.decision_reason : typeof event.message === 'string' ? event.message : null,
+        at: Date.now(),
+      };
+      session.blocked = [...(session.blocked ?? []).filter((x) => x.id !== b.id), b].slice(-20);
+      this.postEvent(terminalId, blockedEvent(b));
+      return;
+    }
+    const counts = !session.smartSwitching && (event.subtype === 'status' || (event.subtype === 'init' && !session.smartLive));
+    const mode = counts ? event.permissionMode ?? event.permission_mode : undefined;
+    if (typeof mode === 'string' && mode && mode !== 'auto' && !session.smartFallback) this.fallBackFromSmart(terminalId, session);
+  }
+
+  private fallBackFromSmart(terminalId: string, session: Session): void {
+    session.smartFallback = true;
+    session.escalate = true;
+    this.postEvent(terminalId, { type: 'system', subtype: 'dispatch_notice', level: 'info', message: SMART_FALLBACK_NOTICE });
+  }
+
+  async setApprovals(terminalId: string, mode: Approvals): Promise<void> {
+    const s = this.sessions.get(terminalId);
+    if (!s) throw new Error('This thread is not running');
+    if (mode === 'smart') {
+      s.smart = true;
+      s.smartLive = true;
+      s.smartFallback = false;
+      s.escalate = false;
+      s.smartSwitching = true;
+      try {
+        await this.control(terminalId, { subtype: 'set_permission_mode', mode: 'auto' }, 'approval change');
+      } catch {
+        // `auto_mode_model`: this model has no auto mode. Ask for every tool instead.
+        this.fallBackFromSmart(terminalId, s);
+      } finally {
+        s.smartSwitching = false;
+      }
+      return;
+    }
+    if (s.smart) await this.control(terminalId, { subtype: 'set_permission_mode', mode: 'default' }, 'approval change').catch(() => undefined);
+    s.smart = false;
+    s.smartFallback = false;
+    this.setEscalate(terminalId, mode === 'ask');
+  }
+
+  getBlocked(terminalId: string): BlockedAction[] {
+    return [...(this.sessions.get(terminalId)?.blocked ?? [])];
+  }
+
+  async resolveBlocked(terminalId: string, id: string, decision: 'allow' | 'keep'): Promise<boolean> {
+    const s = this.sessions.get(terminalId);
+    const b = s?.blocked?.find((x) => x.id === id);
+    if (!s || !b) return false;
+    s.blocked = s.blocked!.filter((x) => x.id !== id);
+    this.postEvent(terminalId, blockedResolvedEvent(id, decision));
+    // Allow: a message that names and approves the action lets the retry through (measured).
+    if (decision === 'allow') this.sendMessage(terminalId, approvalMessage(b));
+    return true;
   }
 
   postNotice(terminalId: string, message: string): void {

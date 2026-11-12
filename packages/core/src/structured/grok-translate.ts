@@ -53,6 +53,8 @@ export type GrokAction =
       options: AcpPermissionOption[];
       alwaysSurface: boolean;
       autoApprove: unknown;
+      /** ACP's tool kind (read, edit, search, execute, fetch…), for the smart rules. */
+      toolKind?: string;
     };
 
 export interface TranslateOpts {
@@ -498,6 +500,7 @@ export class GrokTranslator {
       options,
       alwaysSurface: false,
       autoApprove: buildPermissionResponse({ behavior: 'allow' }, options),
+      ...(typeof toolCall.kind === 'string' ? { toolKind: toolCall.kind } : {}),
     }];
   }
 }

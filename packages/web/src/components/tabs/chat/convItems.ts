@@ -111,6 +111,15 @@ export function daemonSystemItems(e: any): ConvItem[] | null {
   if (e.subtype === 'dispatch_notice') {
     return typeof e.message === 'string' && e.message ? [{ kind: 'notice', text: e.message }] : [];
   }
+  // A blocked action and its answer: the card above the composer shows them (ApprovalCards); the
+  // timeline keeps one quiet line for the record.
+  if (e.subtype === 'permission_blocked') {
+    const b = e.block ?? {};
+    return [{ kind: 'notice', text: `Blocked by the safety check: ${typeof b.title === 'string' ? b.title.replace(/^Wants to /, '') : 'an action'}${typeof b.detail === 'string' && b.detail ? ` (${b.detail.slice(0, 120)})` : ''}` }];
+  }
+  if (e.subtype === 'permission_blocked_resolved') {
+    return [{ kind: 'notice', text: e.decision === 'allow' ? 'You allowed the blocked action.' : 'You kept the action blocked.' }];
+  }
   return null;
 }
 

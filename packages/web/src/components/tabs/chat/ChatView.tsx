@@ -2,6 +2,7 @@ import { threadViewCache } from '../../../lib/threadViewCache';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { SignedOutCard } from './SignedOutCard';
 import { ConnectClaudeCard } from '../../connections/ConnectClaudeCard';
+import { ApprovalCards } from './ApprovalCards';
 import { ModelSwitcher } from './ModelSwitcher';
 import { isClaudeAuthError } from '../../endless/ClaudeLogin';
 import { MessageScroller } from '@shadcn/react/message-scroller';
@@ -273,6 +274,9 @@ export function ChatView({ terminalId }: { terminalId: string }) {
         )}
         </div>
       </MessageScroller.Provider>
+
+      {/* Gated tools and blocked actions waiting for the person, pinned above the composer. */}
+      <ApprovalCards terminalId={terminalId} pending={pending} refreshKey={`${items.length}:${connStatus}`} />
 
       {/* A hosted box signed out of Claude: the one guided "Connect your Claude account" step, above the composer. */}
       {tab?.type === 'claude-code' && !authRequired && (

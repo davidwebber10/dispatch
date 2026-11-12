@@ -286,6 +286,12 @@ export const api = {
     reply?: string; imageCount?: number; canned?: 'discuss' | 'dismiss';
   }) =>
     req<void>(`/api/terminals/${terminalId}/permission`, { method: 'POST', body: body(payload) }),
+  // Approvals of a chat thread (core os/approvals-routes.ts): auto / ask / smart, the blocked-action cards.
+  getApprovals: (terminalId: string) => req<ThreadApprovals>(`/api/terminals/${terminalId}/approvals`),
+  setApprovals: (terminalId: string, mode: 'auto' | 'ask' | 'smart') =>
+    req<{ mode: string; live: boolean }>(`/api/terminals/${terminalId}/approvals`, { method: 'POST', body: body({ mode }) }),
+  resolveBlocked: (terminalId: string, blockId: string, decision: 'allow' | 'keep') =>
+    req<void>(`/api/terminals/${terminalId}/blocked/${encodeURIComponent(blockId)}`, { method: 'POST', body: body({ decision }) }),
   // Autonomy dial: supervised (surface gated tools as Needs) ⇄ autonomous (auto-allow, run free).
   setAutonomy: (terminalId: string, mode: 'supervised' | 'autonomous') =>
     req<Terminal>(`/api/terminals/${terminalId}/autonomy`, { method: 'POST', body: body({ mode }) }),
@@ -744,3 +750,7 @@ export interface OsToolsList {
   error?: string;
   tools: Array<{ name: string; title: string | null; description: string | null; system: string | null; readOnly: boolean | null }>;
 }
+
+/** An action the harness blocked by itself (Claude's classifier, Codex's reviewer). */
+export interface BlockedAction { id: string; toolName: string; title: string; detail: string | null; reason: string | null; riskLevel?: string | null; at: number }
+export interface ThreadApprovals { mode: 'auto' | 'ask' | 'smart'; blocked: BlockedAction[]; pending: import('./types').PendingPermission | null }
