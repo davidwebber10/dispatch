@@ -91,7 +91,9 @@ of a business person). See `packages/core/src/os/approvals.ts`.
 - **Capabilities.** `platform/capabilities.ts` (`base-path`, `os-tools-proxy`, `profile`,
   `headless-v1`, `idle-info`, `gate-v2`) rides the heartbeat, `GET /api/host-context` and
   `GET /api/os/connections`. `automations-safe` is not advertised. OS should admit a business person
-  only to a box that lists `gate-v2`.
+  only to a box that lists `gate-v2`. `privsep-v1` is added to the list only when THIS START proved
+  privilege separation (hosted-privilege-separation.md): OS should require it for a business person
+  too.
 
 ## The two tokens
 
@@ -217,16 +219,25 @@ has no setuid file instead); `linuxParameters.tmpfs` is not supported (use a tas
 Not a task-definition matter but open: the security group lets a box reach the EFS mount targets and
 the whole internet; the EFS file system has no policy that enforces the access point.
 
-## What privilege separation must still close
+## Privilege separation
 
-The daemon and the agents run as one operating-system user. Until they do not:
+Design, proof and limits: [hosted-privilege-separation.md](hosted-privilege-separation.md). In short:
+started as root with a volume at `/var/lib/dispatch/state`, the daemon stays root with six
+capabilities and `no_new_privs`, and every other process (harness, shell, MCP bridge, plugin worker,
+helper) runs as uid 1000 with none. The box tokens reach the daemon through a pipe. The daemon's
+state is in that volume, below a folder only root can enter. The owner credential is refused from a
+peer inside the box. A self-check at each start, run as uid 1000, decides whether the box reports
+`privsep-v1`.
 
-- an agent can read the daemon's first environment block and memory, so both box tokens;
-- an agent can write the daemon's database and data folder, and read the access-token file (which now
-  admits nobody under the business profile, but the box token it can read does);
-- so every refusal above that an agent meets is a refusal of its own key, not of what it can take.
+What the platform sets for it (this replaces the rows above where they differ):
 
-Hooks left for that work: `platform/box-secrets.ts` (the one reader of the two tokens),
-`platform/inherited-env.ts` `childEnv` (the one builder of a child's environment; the user of the child
-is decided at its callers), `docker/hosted/entrypoint.sh` `start_daemon` (the one place that picks the
-daemon's user), and the line after the setuid strip in the Dockerfile (where one setuid helper may go).
+| Setting | Value | Why |
+| --- | --- | --- |
+| `user` | `"0"` | Only root can start a process as another user. Without it (or without the state volume) the box runs as one user and does not report `privsep-v1` |
+| `mountPoints` | the home at `/home/dispatch`; a second access point at `/var/lib/dispatch/state`; task volumes at `/run/dispatch` and `/tmp` | State outside the home; two writable paths on the task's disk for a read-only root file system |
+| `linuxParameters.capabilities` | `drop` everything except `CHOWN DAC_OVERRIDE FOWNER KILL SETGID SETUID SETPCAP` | The daemon keeps the first six; the entrypoint needs `SETPCAP` once to drop the rest from the bounding set |
+| env `DISPATCH_PRIVSEP` | `1` (or unset: on when started as root with the state volume) | `0` forces the one-user layout |
+| env `DISPATCH_MIGRATE_LEGACY_HOME` | `1` until the box has reported `privsep-v1` once | One-time import of the state of a box that kept it in the home |
+
+Box log lines: `privsep.prepare` (imported, removed, skipped) and `privsep.proof` (guardOk, selfCheck,
+failures).

@@ -1,7 +1,8 @@
 # Hosted boxes: privilege separation
 
-Status: design and first implementation (capability `privsep-v1`). Hosted mode only. A local install
-is unchanged: with `DISPATCH_PRIVSEP` unset, none of this code runs.
+Status: built, and proven in a locally built image (section 13). Not yet run on the real platform
+(section 10 lists what must be checked there). Capability: `privsep-v1`. Hosted mode only: a local
+install is unchanged, and with `DISPATCH_PRIVSEP` unset none of this code changes anything.
 
 ## 1. The problem
 
@@ -42,7 +43,7 @@ restart, terminals and the headless API keep working.
 | D7 | The inbound token (router to box) and the outbound token (box to platform) are different values. Each side stores in clear only the one it must present. | A leak of one direction does not give the other. |
 | D8 | Owner authority is never accepted from a local peer (loopback or the box's own addresses). A local caller is a key principal or nothing. | Even a leaked inbound token is useless from inside the box. |
 | D9 | Daemon state moves out of the person's home to a directory that the agent user cannot traverse. Files that a workload must read are written to a separate root-owned directory; files that a workload must write stay in the home. | Default private: a path that nobody converted is unreadable to a workload (it fails closed, and it shows in testing). |
-| D10 | Everything in the person's home is untrusted input to the daemon. | The agent owns it. |
+| D10 | Everything in the person's home is untrusted input to the daemon, and the daemon changes nothing below the home with its own rights: every write, folder, rename and removal there runs as the agent user. | The agent owns the home and can swap any folder in it for a link at any moment. A root process that writes there can be led anywhere; a check before the write does not close the race. |
 | D11 | The home keeps an access point with an enforced POSIX user (the agent uid). Daemon state gets a second access point, mounted below a local root-only directory. Each box has its own IAM role that may mount only its own two access points, and the file system refuses every client that does not use IAM, TLS and an access point. | Section 8. |
 | D12 | The image reports `privsep-v1` only when a self-check, run as the agent user at start, fails every access it should fail. The platform refuses a business person on a box without it. | The Fargate-dependent assumptions are verified on every start, on the real platform. |
 
@@ -89,7 +90,7 @@ design does not change when that happens.
 `privsep/spawn-guard.ts` replaces the process-creation entry points of `child_process`
 (`ChildProcess.prototype.spawn`, which `spawn`, `exec`, `execFile` and `fork` all use, and the three
 synchronous functions) and wraps the PTY library. Each call gets `uid` and `gid` of the agent user,
-a default umask is not changed, and the environment is filtered (section 5). There is no option to
+and the environment is filtered (section 5). There is no option to
 start a child as the daemon user. In the forked child the runtime calls `setgroups(0)`, `setgid`,
 `setuid` and then `exec`. The kernel clears the permitted, effective and ambient capability sets on
 that uid change. `no_new_privs` and the bounding set are inherited.
@@ -128,8 +129,9 @@ Delivery at start:
 1. The task definition carries them as environment variables of the container.
 2. The entrypoint (root) reads them, writes them into a pipe, and starts the daemon with that pipe as
    an inherited descriptor and with the variables removed from the daemon's environment.
-3. The daemon reads the pipe once, closes it, and keeps the values in memory
-   (`privsep/secrets.ts`). Nothing is written to a file system.
+3. The daemon reads the pipe once and closes it (`privsep/secrets.ts`), and the holder of the two
+   secrets (`platform/box-secrets.ts`) keeps the values in memory. Nothing is written to a file
+   system, and the environment block that `/proc/<pid>/environ` shows never held them.
 4. PID 1 (the init process) still has the original environment. It runs as root, so a workload
    cannot read it.
 
@@ -150,7 +152,9 @@ table of section 6 and nothing else.
   A peer is local when its address is a loopback address or one of the box's own interface
   addresses. The decision uses the socket's address, never a forwarded header. This holds for HTTP
   and for WebSocket upgrades.
-- The owner access-token file of a local install is not created and not accepted on a hosted box.
+- The owner access-token file of a local install is not created and not accepted on a separated box.
+  The `dispatch` command line in a developer's shell on the box therefore has no owner authority
+  either: a shell in the box is a workload like any other.
 - A request with no credential is refused (the box gate, unchanged).
 - A WebSocket upgrade with a key is refused (unchanged), so a workload cannot open a terminal or a
   structured socket.
@@ -174,9 +178,10 @@ table of section 6 and nothing else.
 
 | Root | Path on a box | Owner, mode | Holds |
 | --- | --- | --- | --- |
-| state | `/var/lib/dispatch/state`, below `/var/lib/dispatch` (root, `0700`) | root, `0700` | the database, settings files, accounts list, plugin registry files, logs, pid and listen files, everything not listed below |
-| agent run dir | `/run/dispatch/agent` | root, `0755`; files `0644`, key files `0440` group dispatch | what the daemon generates for a workload to READ: thread key files, MCP config files, prompt files, hook settings, the browser shim, preload scripts. Rebuilt at each start. |
-| agent data dir | `$HOME/.dispatch` | dispatch | what a harness must WRITE and keep: per-account config dirs of the harnesses, the chat working folder, run output, per-thread harness homes |
+| state | `/var/lib/dispatch/state`, below `/var/lib/dispatch` (root, `0700`) | root, `0700` | the database, settings files, accounts list, plugins and their registry files, skills, logs, pid and listen files, everything not listed below |
+| agent run dir | `/run/dispatch/agent` | root; folders `0750` and files `0640`, group of the agent | what the daemon generates for a workload to READ: thread and plugin key files, MCP config files, prompt files, hook settings, per-thread OpenCode config, the browser shim, preload scripts. Emptied at each start. One sub-folder (`rw/`) belongs to the agent, for sockets. |
+| daemon scratch | `/run/dispatch/private` | root, `0700` | uploads in transit |
+| agent data dir | `$HOME/.dispatch` | dispatch | what a harness must WRITE and keep: per-account config dirs of the harnesses, the chat working folder |
 
 `platform.dataDir()` returns the state root on a box. A path that nobody moved is therefore private.
 A workload that needs a file the daemon forgot to publish gets a permission error, not a secret.
@@ -186,11 +191,19 @@ A workload that needs a file the daemon forgot to publish gets a permission erro
 The daemon parses transcripts, lists skills, reads project files and harness config. All of it is
 data, never authority:
 
-- Paths from the home are resolved before use; a path that resolves into the state root or the agent
-  run dir is refused by the file routes (the credential deny-list covers both roots).
-- When the daemon writes below the home it refuses a destination whose resolved parent is outside
-  the home, and it gives the new file to the agent user.
+- The file routes serve the person's own folders only (the path policy of the file routes); the
+  state root and the agent run dir are outside them.
+- The daemon makes no change below the home with its own rights (`privsep/agent-fs.ts`). A file
+  write, an upload, a new folder, a rename, a removal, a new project folder, a harness account
+  folder: each runs as one small script under the agent's uid, so the kernel applies the agent's
+  rights to every part of the path. A link a workload planted leads only where that workload could
+  already go. The daemon changes an owner at exactly two fixed paths, at start, before any workload
+  runs (the home and the agent data dir in it), and never follows a link there.
 - No setting that the daemon acts on is read from the home on a box.
+
+Reads are different: the daemon reads transcripts and project files with its own rights. What it
+reads is shown to the owner or parsed as data; the state root holds no secret (section 5), and the
+file routes refuse a path outside the person's folders after resolving it.
 
 ### What persists in agent-writable files (prompt-injection persistence)
 
@@ -204,7 +217,7 @@ locked and which are accepted.
 | Transcripts | resumed by a later turn | Accepted: same thread, same rights. |
 | Files the daemon generates per spawn (MCP config, prompt file, hook settings, key file) | decide what a thread is told and which servers it gets | Locked: root-owned in the agent run dir, rebuilt at each spawn. |
 | Daemon database, settings, approvals, schedules, thread registry, integrations | everything | Locked: state root. |
-| Plugins: code and manifest | a manifest grants API permissions to the plugin's key | Locked: state root; a worker runs from a root-owned copy in the agent run dir. |
+| Plugins: code and manifest | a manifest grants API permissions to the plugin's key | Locked: state root. (A consequence: the worker of an INSTALLED plugin cannot read its own code on a separated box yet; see section 12. Plugins that ship in the image work.) |
 
 ## 8. Credentials of the person's AI accounts (question 5)
 
@@ -232,7 +245,7 @@ per-account uids were considered and rejected for the same reason as per-thread 
   both act as uid 1000 on it, the daemon reads every file, what it creates belongs to the agent, and
   an existing box needs no ownership change on the shared file system.
 - **Daemon state**: a second access point per box, root directory outside every home, enforced user
-  990:990, mounted at `/var/lib/dispatch/state`. Because enforcement makes mode bits meaningless,
+  990:990 (an id no process in the box runs as), mounted at `/var/lib/dispatch/state`. Because enforcement makes mode bits meaningless,
   protection inside the box comes from the parent directory `/var/lib/dispatch`, which is on the
   container's own file system, owned by root, mode `0700`. A process of another uid cannot walk
   through it, and has no other way to name the mount (no descriptor is inherited, `/proc/<pid>/cwd`
@@ -246,7 +259,9 @@ per-account uids were considered and rejected for the same reason as per-thread 
 ### Between boxes
 
 - A file-system policy denies every client that does not use TLS, a mount target and an access
-  point, denies root access to everyone, and allows nothing to anonymous clients.
+  point, and denies root access to everyone. In its first level an anonymous client may still mount
+  through an access point (so a box on an older task definition keeps its home); in its second
+  level, set when every box was rebuilt, no anonymous client is admitted at all.
 - Each box has its own IAM role, created by the provisioner under a fixed path with a permissions
   boundary. The role's only file-system permission is mount and write through that box's two access
   points. The volumes of the task use IAM authorization and transit encryption.
@@ -272,36 +287,48 @@ that matter are taken from the live profile and the image's policy, not only fro
 On the first start of the new image the daemon (root), before it opens the database:
 
 1. If the state root holds the marker `migrated-from-home`, go to step 4.
-2. If `DISPATCH_MIGRATE_LEGACY_HOME=1` (the platform sets it for a box that existed before) and
-   `$HOME/.dispatch/dispatch.db` exists: copy the private entries of the old data directory into
-   `state/.incoming`, then rename each into place. An interrupted copy is discarded and repeated;
-   the source is not touched until the end.
-3. Write the marker.
+2. If `DISPATCH_MIGRATE_LEGACY_HOME=1` (the platform sets it until the box has reported `privsep-v1`
+   once), `$HOME/.dispatch/dispatch.db` exists and the state root holds no database yet: copy the
+   private entries of the old data directory into `state/.incoming`, then rename each into place, the
+   database last. An interrupted copy is discarded and repeated; the source is not touched until the
+   end. Symbolic links are not copied, at any depth.
+3. Write the marker (also on a box with no old state). Without the platform's flag an old data
+   directory is left exactly as it is, and no marker is written: nothing is deleted that was not
+   copied.
 4. Remove the private entries (database, token files, registry files, key files) from
-   `$HOME/.dispatch`. Idempotent; safe to interrupt.
+   `$HOME/.dispatch`. Idempotent; safe to interrupt. The harness folders stay.
 5. Give `$HOME` and `$HOME/.dispatch` to the agent user (a no-op on the enforced mount).
 
 The old database was writable by the old agent, so this one import trusts it once. A database that
-appears in the home later is never imported: the marker lives in the state root.
+appears in the home later is never imported: the marker lives in the state root. Going back to an
+older image afterwards does NOT bring the state back into the home: keep the storage backup.
 
 ## 10. Kernel and resource controls on Fargate (question 7)
 
 | Control | Use |
 | --- | --- |
+| Start as root | The image's default user is the agent user. Privilege separation needs the container to START as root (`user: "0"` in the task definition) and a volume at the state root; otherwise the entrypoint runs everything as one user, as before, and the box does not report `privsep-v1`. |
 | `no_new_privs` | Set by the entrypoint on the daemon; inherited by all workloads. |
-| Capabilities | Bounding set of six for the daemon; workloads have none. The task definition also drops the rest for the container. Fargate allows adding only `SYS_PTRACE`; nothing is added. |
-| Set-uid programs | The image strips set-uid and set-gid bits; with `no_new_privs` they would be inert anyway. |
-| Read-only root file system | Set in the task definition. The writable places are the two mounts, `/tmp`, `/run/dispatch` and `/dev/shm`. `tmpfs` mounts are not available to a task, so `/run/dispatch` is a bind-mounted task volume. |
+| Capabilities | Bounding set of six for the daemon; workloads have none. The task definition also drops what the container never needs. Fargate allows adding only `SYS_PTRACE`; nothing is added. |
+| Set-uid programs | The image has none; with `no_new_privs` they would be inert anyway. |
+| Read-only root file system | Supported and used in the proof. The writable places are the two mounts, `/tmp` and `/run/dispatch` (both declared volumes of the image; `tmpfs` mounts are not available to a task). The platform sets it with a switch, after one clean start. |
+| User namespaces | Whether a workload can create one depends on the platform's seccomp filter (it can in a local container). The proof shows that one opens nothing: the state root, the daemon's environment, signals and the policy files stay out of reach. |
 | seccomp | The platform's default filter is active (measured). Custom profiles are not available. |
 | pid and memory limits per workload | cgroups are not delegated to a task. Available: `ulimit` values in the task definition (`nofile`, `nproc`) and the daemon's own caps on live threads. A workload can exhaust the task's memory; the task then restarts. Stated as not protected. |
 | `/proc` | No `hidepid`. Other users' pids and command lines are visible; their environment and memory are not. |
 | Cloud credential endpoint | Reachable by any process that knows the path. The path is hidden from workloads (section 5). The role is minimal (section 9). |
 
 Assumptions that the start-up self-check verifies on the real platform (run as the agent user; the
-capability is not reported when one fails): the state root cannot be listed or read; the secrets are
-not in any readable environment; the daemon cannot be signalled; `no_new_privs` is 1 and the
-effective capability set is empty for a workload; a set-uid program does not raise privilege; the
-agent run dir is not writable.
+capability is not reported when one fails): the state root and its parent cannot be listed, read or
+written; the secrets are in no readable environment; the daemon's environment, memory, open files
+and working directory cannot be read; the daemon cannot be signalled; `no_new_privs` is 1 and the
+capability sets of a workload are empty; a set-uid program does not raise privilege; the agent run
+dir is readable and not writable.
+
+Assumptions it cannot verify, to be measured once on the real platform: a volume mounted at the state
+root leaves the mode of the parent folder as the image made it (the entrypoint refuses to start
+otherwise); IAM authorization of two access points with one task role; that the path of the task
+credential endpoint cannot be learned by a workload; `fs.protected_symlinks`; user namespaces.
 
 ## 11. Two tokens end to end (question 8)
 
@@ -339,6 +366,12 @@ agent run dir is not writable.
   here.
 - A workload can exhaust CPU, memory, pids or disk of its own box.
 - A defect in the daemon that executes code gives root in the container.
+- Not working on a separated box yet (each fails closed): the worker of an installed plugin (its code
+  is in the state root); the Doppler secrets MCP server (its config is in the state root); per-thread
+  Grok homes (a Grok thread runs without the injected servers and hooks); the in-app CLI installer
+  (the image's CLIs are used). Skills installed from a marketplace were not exercised.
+- Proven only with a stand-in for the Claude CLI. The real Claude, Codex, OpenCode and Grok CLIs and
+  the real sign-in flows were not run under the two-user layout.
 - If an agent obtains the task role's credentials, it can read and change its own box's daemon state
   through a session of its own (section 9).
 - The tokens are clear text in the task definition and in the init process's environment (root
@@ -346,7 +379,18 @@ agent run dir is not writable.
 
 ## 13. How this is proven
 
-`docker/hosted/privsep-proof/` holds a script that builds nothing and assumes a running box. It runs
-an attack list AS THE AGENT USER inside the container and prints a PASS/FAIL table, then a functional
-list from outside. The unit tests cover the chokepoint, the secrets loader, the path roots, the
-local-peer rule and the migration.
+`docker/hosted/privsep-proof/run-proof.sh` starts one box from a locally built image (started as
+root, read-only root file system, a volume for the home and one for the state), a stand-in for the
+platform and a stand-in for the Claude CLI. It prints:
+
+- what works: start and self-check, a chat thread, a developer terminal, files in both directions,
+  the sign-in state, the process table, a planted link that cannot redirect the owner's actions;
+- the attack list (`attack.sh`), run AS A WORKLOAD: once in a developer shell the daemon started,
+  once by the harness process itself under the business profile. Every attempt must fail;
+- restart: threads, history and sign-in state survive;
+- an existing box: a home made by an image from before this work is imported on the first start.
+
+`docker exec` is not used to run the attacks: it makes a process the daemon never started, with the
+container's own environment. The unit tests (`tests/privsep/`) cover the chokepoint, the secrets
+hand-over, the path roots, the agent-side file operations, the local-peer rule, the migration and
+the self-check.

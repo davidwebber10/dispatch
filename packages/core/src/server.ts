@@ -140,8 +140,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const daemon = buildDaemon({ db, dataDir, auth: 'gate', port: preferredPort, shimEnv: shimFor(preferredPort) });
   const { sessionService, keys } = daemon.services;
   // A Claude overseer loads only its own memory folder under this home (overseer memory scope spec 2026-10-07, Unit 1).
-  // (Not with privilege separation: the scoping writes below the home, which the daemon does not do there.)
-  if (!separated) sessionService.setOverseerMemoryHome(os.homedir());
+  sessionService.setOverseerMemoryHome(os.homedir());
   if (daemon.webDist) console.log(`Serving web client from ${daemon.webDist}${basePath ? ` under ${basePath}` : ''}`);
 
   // Prove the separation before anything listens (a child that would run as the daemon user is fatal).
