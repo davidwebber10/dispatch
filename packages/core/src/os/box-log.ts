@@ -36,8 +36,8 @@ export function redactLogText(text: string, max = MAX_TEXT): string {
   return s.length > max ? `${s.slice(0, max)}…` : s;
 }
 
-/** A thread, project or session id: a UUID is an identifier, not a secret, and the log must name its thread. */
-const ID_KEYS = new Set(['thread', 'terminal', 'terminalId', 'session', 'sessionId', 'project']);
+/** A thread, project, session or Inbox drop id: a UUID is an identifier, not a secret, and the log must name its thread. */
+const ID_KEYS = new Set(['thread', 'terminal', 'terminalId', 'session', 'sessionId', 'project', 'drop']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** An MCP tool name (`mcp__<server>__<tool>`) in a list of tools or names: kept, so a warning names the tool. */

@@ -166,7 +166,15 @@ async function preview(args) {
   try { await call('PUT', `/api/plugins/${encodeURIComponent(PLUGIN)}/data/preview:${id}`, { value: doc }); }
   catch (e) { throw disabledIfGone(e); }
   void prune().catch(() => {});
-  return { ok: true, id, files: files.map((f) => f.name) };
+  return { ok: true, id, title, files: files.map((f) => f.name) };
+}
+
+/**
+ * The text the model reads after a drop: plain words first, so it tells the person and does not post the
+ * same thing again; then the JSON (`ok`, `id`, `title`, `files`) for a caller that parses it.
+ */
+function sentText(result) {
+  return `Sent to the person's Inbox: ${result.title}. They can open it now; do not send it again.`;
 }
 
 /**
@@ -215,7 +223,7 @@ async function callTool(name, args) {
     if (name === 'inbox_secret' && !BUSINESS) return { content: await inboxSecret(args) };
     if (name !== 'preview') return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
     const result = await preview(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return { content: [{ type: 'text', text: sentText(result) }, { type: 'text', text: JSON.stringify(result) }] };
   } catch (e) {
     return { content: [{ type: 'text', text: `Error: ${e && e.message ? e.message : String(e)}` }], isError: true };
   }

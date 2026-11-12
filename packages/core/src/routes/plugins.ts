@@ -20,6 +20,7 @@ import { pathPolicyFor } from '../files/path-policy-default.js';
 import { checkProjectFile, ProjectFileError, PROJECT_FILE_MIME, sendProjectFile } from '../plugins/files.js';
 import { INBOX_PLUGIN } from './inbox.js';
 import { currentProfile } from '../os/profile.js';
+import { boxLog } from '../os/box-log.js';
 import { SNAPSHOT_MAX_BYTES, takeSnapshot, snapshotPath, removeSnapshot, removeAllSnapshots } from '../plugins/snapshots.js';
 import type { PluginRegistry } from '../plugins/registry.js';
 import { ASSIST_HARNESSES, ASSIST_CLAUDE_MODEL, ASSIST_OPENROUTER_MODEL, type AssistRunner, type AssistHarness, type AssistResult } from '../assist/run.js';
@@ -229,6 +230,32 @@ function writerOf(req: Request): pluginData.Writer | null {
   return { terminalId: p.terminalId, sessionId: c?.sessionId ?? '', label: c?.label ?? null };
 }
 
+/** An Inbox drop's storage key: `preview:<id>`. */
+const INBOX_DROP_PREFIX = 'preview:';
+
+/** Who called: a thread, a plugin, the owner (any other principal), or unknown. */
+function callerKind(req: Request): string {
+  try { return principalOf(req).kind; } catch { return 'unknown'; }
+}
+
+/**
+ * One box log line per Inbox write (`plugin.data.put`), so "did the drop arrive?" is answerable from the
+ * log: the drop's id, its kind, how many files, whether it is marked seen, and which thread wrote it.
+ * Never its title, note, text or a file name.
+ */
+function logInboxPut(key: string, value: unknown, writer: pluginData.Writer | null, req: Request): void {
+  const v = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+  boxLog('plugin.data.put', {
+    plugin: INBOX_PLUGIN,
+    drop: key.slice(INBOX_DROP_PREFIX.length),
+    kind: typeof v.kind === 'string' ? v.kind : null,
+    files: Array.isArray(v.files) ? v.files.length : 0,
+    seen: Boolean(v.seenAt),
+    by: callerKind(req),
+    ...(writer ? { thread: writer.terminalId } : {}),
+  });
+}
+
 function storageError(res: import('express').Response, e: unknown): void {
   const msg = e instanceof Error ? e.message : String(e);
   if (msg === 'too large') return void res.status(413).json({ error: 'too_large', message: `A document is at most ${pluginData.DOC_MAX_BYTES} bytes.` });
@@ -348,7 +375,10 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
   router.get('/plugins/:id/data', dataRead, (req, res) => {
     if (!known(req, res)) return;
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ docs: req.query.values === '1' ? pluginData.listDocs(db, req.params.id, { values: true }).map((d) => withoutSecret(req.params.id, d)) : pluginData.listDocs(db, req.params.id) });
+    const docs = req.query.values === '1' ? pluginData.listDocs(db, req.params.id, { values: true }).map((d) => withoutSecret(req.params.id, d)) : pluginData.listDocs(db, req.params.id);
+    // The Inbox list (the app's load, and each post's prune): how many drops it held. Never a title or a value.
+    if (req.params.id === INBOX_PLUGIN) boxLog('inbox.list', { count: docs.filter((d) => d.key.startsWith(INBOX_DROP_PREFIX)).length, values: req.query.values === '1', by: callerKind(req) });
+    res.json({ docs });
   });
 
   router.get('/plugins/:id/data/:key', dataRead, (req, res) => {
@@ -365,8 +395,10 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     const body = req.body as { value?: unknown } | undefined;
     if (!body || typeof body !== 'object' || !('value' in body)) return void res.status(400).json({ error: 'bad_body', message: 'Send { "value": ... }.' });
     try {
-      const doc = pluginData.setDoc(db, req.params.id, req.params.key, body.value, writerOf(req));
+      const writer = writerOf(req);
+      const doc = pluginData.setDoc(db, req.params.id, req.params.key, body.value, writer);
       plugins.broadcast({ type: 'plugin:data', id: req.params.id, key: req.params.key });
+      if (req.params.id === INBOX_PLUGIN && req.params.key.startsWith(INBOX_DROP_PREFIX)) logInboxPut(req.params.key, body.value, writer, req);
       res.json(doc);
     } catch (e) { storageError(res, e); }
   });
