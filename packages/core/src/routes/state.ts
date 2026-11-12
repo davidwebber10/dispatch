@@ -1,5 +1,6 @@
 import { hostedTarget, cachedHostedUpdate } from '../update/hosted.js';
 import fs from 'fs';
+import { reportsStatus } from '../sessions/thread-config.js';
 import path from 'path';
 import os from 'os';
 import type { Router } from 'express';
@@ -172,6 +173,9 @@ export function createStateRouter(db: Database.Database, opts: { policy?: PathPo
       if (!r.config) continue;
       let cfg: any;
       try { cfg = JSON.parse(r.config); } catch { continue; }
+      // Only threads that have report_status can declare (owner, 2026-11-12: a thread the owner
+      // started has neither the tool nor the rule; see reportsStatus).
+      if (!reportsStatus(cfg)) continue;
       const outcome = cfg?.lastOutcome;
       if (!outcome || typeof outcome !== 'object') continue;
       if (outcome.inferred) {

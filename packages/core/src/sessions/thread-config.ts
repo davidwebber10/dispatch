@@ -229,3 +229,16 @@ export class ThreadConfigStore {
     return {};
   }
 }
+
+/**
+ * Whether a thread gets the report_status tool and its rule (owner, 2026-11-12). A thread that another
+ * thread or a role started does: its starter reads the declared end state. A thread the owner started
+ * does not: the rule made the model put its answer in its thinking, call the tool, and end with one
+ * closing line. Its status comes from the turn end and the question check instead (status/question.ts).
+ */
+export function reportsStatus(config: Record<string, unknown> | null | undefined): boolean {
+  if (!config) return false;
+  const str = (v: unknown) => typeof v === 'string' && v.trim() !== '';
+  return str(config.role) || str(config.agentType) || str(config.spawnedBy) || str(config.roleRun)
+    || config.origin === 'endless' || config.runner === true;
+}

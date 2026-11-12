@@ -331,7 +331,10 @@ function coordinatorPromptBase(harness: string): string {
  * list_watches — plus the etiquette that keeps full agency for N peers from
  * going wrong (rate limits, spawn depth, archive protection).
  */
-/** How report_status ends a turn (a local install, and every thread that is not on a hosted box). */
+/**
+ * How report_status ends a turn: for a thread that another thread or a role started (see reportsStatus
+ * in sessions/thread-config.ts) and that is not a hosted chat thread.
+ */
 const REPORT_STATUS_RULE =
   '- report_status({ state, summary, ask?, blocker? }) — a STATUS signal for how your turn is ' +
     'ending, NOT a message to the human, and NOT where your content goes. Call it as the LAST ' +
@@ -374,6 +377,8 @@ export function buildPeerPrompt(ctx: {
   peers: { label: string; type: string; status: string }[];
   /** A chat thread on a hosted box: no status tool; the reply rule for a person who reads only the reply (HOSTED_REPLY_RULE). */
   hosted?: boolean;
+  /** False for a thread the owner started: no report_status line (see reportsStatus). Default true. */
+  reportStatus?: boolean;
 }): string {
   const roster = ctx.peers.length
     ? 'Other threads in this project right now (a snapshot from when you started — threads come ' +
@@ -402,7 +407,7 @@ export function buildPeerPrompt(ctx: {
     'loop: polling burns tokens for no benefit, while a watch costs nothing until it fires. If the peer ' +
     'already settled during your turn, the result has firedNow and a wake text: act on it now, no message follows.\n' +
     '- unwatch_thread({ watchId }) / list_watches() — cancel or inspect your own subscriptions.\n' +
-    (ctx.hosted ? HOSTED_REPLY_RULE : REPORT_STATUS_RULE) +
+    (ctx.hosted ? HOSTED_REPLY_RULE : ctx.reportStatus === false ? '\n' : REPORT_STATUS_RULE) +
     'Etiquette and limits, so you fail informed rather than surprised:\n' +
     '- Don\'t ping-pong messages with a peer — messaging a thread is rate-limited per pair, per hour.\n' +
     '- If you create sub-threads of your own, that chain has a fixed depth cap.\n' +

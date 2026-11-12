@@ -1343,10 +1343,12 @@ function isNotification(id: JsonRpcRequest['id']): boolean {
  * from the platform, and a status call at the end of a turn drew the answer away from the reply). The
  * spawner sets DISPATCH_NO_STATUS_TOOL=1 (sessions/spawn-injection.ts). The thread's status then comes
  * from the turn's own frames: its result, a permission request, a question (status/question.ts).
+ * A thread the owner started (any install) also has no status tool: the spawner sets
+ * DISPATCH_REPORT_STATUS=0 for it (owner, 2026-11-12; sessions/thread-config.ts reportsStatus).
  */
 export const STATUS_TOOLS: readonly string[] = ['report_status'];
 export function statusToolHidden(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.DISPATCH_NO_STATUS_TOOL === '1';
+  return env.DISPATCH_NO_STATUS_TOOL === '1' || env.DISPATCH_REPORT_STATUS === '0';
 }
 export function listedTools(env: NodeJS.ProcessEnv = process.env): ReadonlyArray<(typeof TOOLS)[number]> {
   return statusToolHidden(env) ? TOOLS.filter((t) => !STATUS_TOOLS.includes(t.name)) : TOOLS;
@@ -1363,6 +1365,7 @@ export async function handleRequest(req: JsonRpcRequest): Promise<JsonRpcRespons
       case 'initialize':
         return { jsonrpc: '2.0', id: id ?? null, result: { protocolVersion: PROTOCOL_VERSION, capabilities: { tools: {} }, serverInfo: SERVER_INFO } };
       case 'tools/list':
+        // No report_status for a hosted chat thread or a thread the owner started (see statusToolHidden).
         return { jsonrpc: '2.0', id: id ?? null, result: { tools: listedTools() } };
       case 'tools/call': {
         const result = await callTool(params?.name, params?.arguments);
