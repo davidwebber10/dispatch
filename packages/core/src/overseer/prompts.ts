@@ -318,6 +318,24 @@ function coordinatorPromptBase(harness: string): string {
   return out;
 }
 
+/** The report_status line of the peer prompt: for threads that another thread or a role started (see reportsStatus). */
+const REPORT_STATUS_LINE =
+  '- report_status({ state, summary, ask?, blocker? }) — a STATUS signal for how your turn is ' +
+  'ending, NOT a message to the human, and NOT where your content goes. Call it as the LAST ' +
+  'thing you do every turn: `done` when the work is finished, `needs_you` when you cannot ' +
+  'proceed without the human, `blocked` when you are waiting on another agent or a timer. When it ' +
+  'returns, your turn ends: call no other tool, and do not start new work or answer a question nobody ' +
+  'asked. If you have not written your reply yet, write it now. If you already wrote it, end with one ' +
+  'short closing line; never repeat the reply, and never end with an empty message (an empty one ' +
+  'makes the CLI ask you to continue). The human speaks next. Your ' +
+  'findings, answer, and any question ALWAYS go in your normal reply text — that is what the ' +
+  'human reads. A tool call\'s arguments are collapsed out of sight in the reader\'s view (in ' +
+  'the terminal they must press Ctrl+O to even see them), so anything you put ONLY inside ' +
+  'report_status — or any other tool — is effectively invisible to them. `summary` and `ask` ' +
+  'are just a short COPY for the board and alerts, never the place to say something you did not ' +
+  'also write in your reply. Skipping report_status leaves a turn you ended by asking a ' +
+  'question indistinguishable from one where you finished.\n\n';
+
 /**
  * Peer/watch context injected into every eligible thread's system prompt — every
  * claude-code/codex thread (plain, agent, or coordinator alike; see
@@ -337,6 +355,8 @@ export function buildPeerPrompt(ctx: {
   selfLabel: string;
   selfId: string;
   peers: { label: string; type: string; status: string }[];
+  /** False for a thread the owner started: no report_status line (see reportsStatus). Default true. */
+  reportStatus?: boolean;
 }): string {
   const roster = ctx.peers.length
     ? 'Other threads in this project right now (a snapshot from when you started — threads come ' +
@@ -365,21 +385,7 @@ export function buildPeerPrompt(ctx: {
     'loop: polling burns tokens for no benefit, while a watch costs nothing until it fires. If the peer ' +
     'already settled during your turn, the result has firedNow and a wake text: act on it now, no message follows.\n' +
     '- unwatch_thread({ watchId }) / list_watches() — cancel or inspect your own subscriptions.\n' +
-    '- report_status({ state, summary, ask?, blocker? }) — a STATUS signal for how your turn is ' +
-    'ending, NOT a message to the human, and NOT where your content goes. Call it as the LAST ' +
-    'thing you do every turn: `done` when the work is finished, `needs_you` when you cannot ' +
-    'proceed without the human, `blocked` when you are waiting on another agent or a timer. When it ' +
-    'returns, your turn ends: call no other tool, and do not start new work or answer a question nobody ' +
-    'asked. If you have not written your reply yet, write it now. If you already wrote it, end with one ' +
-    'short closing line; never repeat the reply, and never end with an empty message (an empty one ' +
-    'makes the CLI ask you to continue). The human speaks next. Your ' +
-    'findings, answer, and any question ALWAYS go in your normal reply text — that is what the ' +
-    'human reads. A tool call\'s arguments are collapsed out of sight in the reader\'s view (in ' +
-    'the terminal they must press Ctrl+O to even see them), so anything you put ONLY inside ' +
-    'report_status — or any other tool — is effectively invisible to them. `summary` and `ask` ' +
-    'are just a short COPY for the board and alerts, never the place to say something you did not ' +
-    'also write in your reply. Skipping report_status leaves a turn you ended by asking a ' +
-    'question indistinguishable from one where you finished.\n\n' +
+    (ctx.reportStatus === false ? '\n' : REPORT_STATUS_LINE) +
     'Etiquette and limits, so you fail informed rather than surprised:\n' +
     '- Don\'t ping-pong messages with a peer — messaging a thread is rate-limited per pair, per hour.\n' +
     '- If you create sub-threads of your own, that chain has a fixed depth cap.\n' +

@@ -1347,7 +1347,8 @@ export async function handleRequest(req: JsonRpcRequest): Promise<JsonRpcRespons
       case 'initialize':
         return { jsonrpc: '2.0', id: id ?? null, result: { protocolVersion: PROTOCOL_VERSION, capabilities: { tools: {} }, serverInfo: SERVER_INFO } };
       case 'tools/list':
-        return { jsonrpc: '2.0', id: id ?? null, result: { tools: TOOLS } };
+        // A thread the owner started gets no report_status (DISPATCH_REPORT_STATUS=0, see reportsStatus).
+        return { jsonrpc: '2.0', id: id ?? null, result: { tools: process.env.DISPATCH_REPORT_STATUS === '0' ? TOOLS.filter((t) => t.name !== 'report_status') : TOOLS } };
       case 'tools/call': {
         const result = await callTool(params?.name, params?.arguments);
         return { jsonrpc: '2.0', id: id ?? null, result };

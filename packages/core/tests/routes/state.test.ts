@@ -29,7 +29,8 @@ describe('GET /api/state/status-quality', () => {
       sessionId: 'proj',
       type: 'claude-code',
       label: id,
-      config: outcome ? { lastOutcome: outcome } : {},
+      // An agent: only threads that have report_status count (owner, 2026-11-12; see reportsStatus).
+      config: outcome ? { role: 'agent', lastOutcome: outcome } : {},
     });
   }
 
@@ -85,6 +86,13 @@ describe('GET /api/state/status-quality', () => {
       needsHelpDeclared: 1,
       needsHelpInferred: 3,
     });
+  });
+
+  it('does not count a thread the owner started: it has no report_status to declare with', async () => {
+    terminalsDb.create(db, { id: 'mine', sessionId: 'proj', type: 'claude-code', label: 'mine', config: { lastOutcome: { summary: 'x', needsHelp: true, inferred: true, at: 'x' } } });
+    withOutcome('agent', { summary: 'y', needsHelp: false, inferred: false, at: 'x' });
+    const res = await request(app).get('/api/state/status-quality');
+    expect(res.body).toEqual({ declared: 1, inferred: 0, total: 1, needsHelpDeclared: 0, needsHelpInferred: 0 });
   });
 
   it('reports all zeros when no terminal has a lastOutcome', async () => {

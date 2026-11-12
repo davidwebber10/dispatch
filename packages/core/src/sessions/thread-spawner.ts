@@ -29,7 +29,7 @@ import { OPENCODE_DEFAULT_MODEL } from '../providers/opencode.js';
 import { readHarnessSettings } from '../settings/harness-settings.js';
 import { TERMINAL_ID_ENV_VAR } from '../auth/shim.js';
 import { LOGIN_ARGV, isProviderName } from '../setup/install.js';
-import { ThreadConfigStore, type ConfigPatch } from './thread-config.js';
+import { reportsStatus, ThreadConfigStore, type ConfigPatch } from './thread-config.js';
 import type { SessionWiring } from './session-wiring.js';
 import { AGENCY_MCP_SERVER, type SpawnInjection } from './spawn-injection.js';
 
@@ -210,7 +210,7 @@ export class ThreadSpawner {
       const intgSpecs = this.wiring.integrationsSpecs?.() ?? [];
       specs.push(...intgSpecs);
       if (this.isPeerEligible(terminal.type)) {
-        specs.push(this.agencyServerSpec(terminalId, terminal.session_id, effectiveSpawnDepth(config), !!sk));
+        specs.push(this.agencyServerSpec(terminalId, terminal.session_id, effectiveSpawnDepth(config), !!sk, reportsStatus(config)));
         prompts.push(this.peerPromptFor(terminal));
       }
       this.applyPluginInjection(terminalId, terminal.type, specs, prompts);
@@ -373,7 +373,7 @@ export class ThreadSpawner {
     const intgSpecs = this.wiring.integrationsSpecs?.() ?? [];
     specs.push(...intgSpecs);
     if (this.isPeerEligible(terminal.type)) {
-      specs.push(this.agencyServerSpec(terminal.id, terminal.session_id, effectiveSpawnDepth(config), !!sk));
+      specs.push(this.agencyServerSpec(terminal.id, terminal.session_id, effectiveSpawnDepth(config), !!sk, reportsStatus(config)));
       prompts.push(this.peerPromptFor(terminal));
     }
     this.applyPluginInjection(terminal.id, terminal.type, specs, prompts);

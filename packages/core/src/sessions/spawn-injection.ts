@@ -14,7 +14,7 @@ import { claudeMemoryProjectDir, prepareOverseerMemory } from '../overseer/memor
 import { isAgentType } from '../providers/agent-types.js';
 import { writeGrokHome, type McpServerEntry } from '../providers/grok-home.js';
 import { claudeSpinnerVerbs } from '../settings/harness-settings.js';
-import { ThreadConfigStore } from './thread-config.js';
+import { reportsStatus, ThreadConfigStore } from './thread-config.js';
 import type { SessionWiring } from './session-wiring.js';
 
 /** The MCP server name every eligible thread gets its Dispatch (agency) tools under. */
@@ -289,7 +289,7 @@ export class SpawnInjection {
    * written to a PER-TERMINAL path (see `perTerminalMcpConfigPath`), never the
    * shared daemon-wide one.
    */
-  agencyServerSpec(terminalId: string, sessionId: string, spawnDepth: number, authEnv = false): McpServerSpec {
+  agencyServerSpec(terminalId: string, sessionId: string, spawnDepth: number, authEnv = false, reportStatus = true): McpServerSpec {
     const agencyPath = fileURLToPath(new URL('../overseer/agency-mcp.js', import.meta.url));
     const api = this.apiUrl();
     return {
@@ -301,6 +301,8 @@ export class SpawnInjection {
         DISPATCH_PORT: String(this.wiring.daemonPort ?? process.env.PORT ?? 3456),
         DISPATCH_TERMINAL: terminalId,
         DISPATCH_SPAWN_DEPTH: String(spawnDepth),
+        // A thread the owner started gets no report_status tool (owner, 2026-11-12; see reportsStatus).
+        ...(reportStatus ? {} : { DISPATCH_REPORT_STATUS: '0' }),
         ...(api ? { DISPATCH_API: api } : {}),
       },
       ...(authEnv ? { authEnv: true } : {}),
@@ -322,6 +324,7 @@ export class SpawnInjection {
       .filter((t) => t.id !== terminal.id)
       .map((t) => ({ label: t.label, type: t.type, status: t.status }));
     return buildPeerPrompt({
+      reportStatus: reportsStatus(terminalsDb.rowToTerminal(terminal).config),
       projectName: session?.name || terminal.session_id,
       workingDir,
       selfLabel: terminal.label,
