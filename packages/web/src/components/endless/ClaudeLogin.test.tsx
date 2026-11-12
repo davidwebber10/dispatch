@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import { ClaudeLogin, isClaudeAuthError } from './ClaudeLogin';
+import { ClaudeLogin, isClaudeAuthError, plainLoginError } from './ClaudeLogin';
 import { api } from '../../api/client';
 import type { ClaudeLoginSession } from '../../api/types';
 
@@ -143,5 +143,39 @@ describe('ClaudeLogin notices how the login ended', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Submit code' }));
     await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
     expect(screen.queryByText(/no login in progress/)).not.toBeInTheDocument();
+  });
+});
+
+describe('the person reads plain words, never the API call', () => {
+  it('plainLoginError keeps the daemon\'s reason and drops the request line', () => {
+    expect(plainLoginError(new Error("POST /api/claude-auth/login/code failed: 400 — Claude did not accept that code. Start the sign-in again and use the new code.")))
+      .toBe('Claude did not accept that code. Start the sign-in again and use the new code.');
+    expect(plainLoginError(new Error('POST /api/claude-auth/login/code failed: 400 — no login in progress'))).toBe('This sign-in ended. Start it again.');
+    expect(plainLoginError(new Error('POST /api/claude-auth/login/code: Reconnecting…'))).toBe('This sign-in ended. Start it again.');
+  });
+
+  it('a code Claude refused shows Claude\'s reason without "POST" or a status code', async () => {
+    vi.spyOn(api, 'claudeLoginStart').mockResolvedValue(session());
+    vi.spyOn(api, 'claudeLoginCode').mockRejectedValue(new Error('POST /api/claude-auth/login/code failed: 400 — The sign-in did not finish. Claude said: network error. Start it again.'));
+    vi.spyOn(api, 'claudeAuthStatus').mockResolvedValue({ authenticated: false, session: session({ status: 'error', url: null }) });
+    render(<ClaudeLogin onDone={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Log in to Claude' }));
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Login code' }), { target: { value: 'a#b' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit code' }));
+    const shown = await screen.findByText(/Claude said: network error/);
+    expect(shown.textContent).not.toMatch(/POST|400|\/api\//);
+  });
+
+  it('a sign-in that ended by itself (a timeout) says why', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.spyOn(api, 'claudeLoginStart').mockResolvedValue(session());
+      vi.spyOn(api, 'claudeAuthStatus').mockResolvedValue({ authenticated: false, session: session({ status: 'error', url: null, error: 'The sign-in took too long and was stopped. Start it again.' }) });
+      render(<ClaudeLogin onDone={() => {}} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Log in to Claude' }));
+      await screen.findByRole('textbox', { name: 'Login code' });
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      expect(await screen.findByText(/took too long/)).toBeInTheDocument();
+    } finally { vi.useRealTimers(); }
   });
 });

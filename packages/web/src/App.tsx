@@ -30,7 +30,9 @@ import { useAnalyticsFeed } from './stores/analytics';
 import { useOsConnections } from './stores/osConnections';
 import { BoxRestartPill } from './components/common/BoxRestartPill';
 import { watchHostContext } from './lib/hostContext';
-import { probeBox } from './lib/boxRestart';
+import { probeBox, setBoxBackHandler } from './lib/boxRestart';
+import { reconnectStructuredSockets } from './api/structured-socket';
+import { reconnectTerminalSockets } from './api/terminal-socket';
 import { useReconnect } from './stores/reconnect';
 import { useResume } from './hooks/useResume';
 import { resumeSockets } from './lib/resumeSockets';
@@ -157,7 +159,11 @@ export default function App() {
       },
     });
     sockRef.current = sock;
-    return () => { clearTimeout(laterViews); unsubSnapProjects(); unsubSnapTabs(); clearTimeout(snapTimer); sock.close(); sockRef.current = null; document.removeEventListener('visibilitychange', onVisible); navigator.serviceWorker?.removeEventListener('message', onSwMessage); };
+    // Hosted: the workspace is back on the same build after a restart (lib/boxRestart.ts). New
+    // sockets for events, chats and terminals, no page load: the events socket's reopen above
+    // reloads the state in place, and drafts, tabs and the grid stay as they are.
+    const offBack = setBoxBackHandler(() => { sock.reconnect(); reconnectStructuredSockets(); reconnectTerminalSockets(); });
+    return () => { offBack(); clearTimeout(laterViews); unsubSnapProjects(); unsubSnapTabs(); clearTimeout(snapTimer); sock.close(); sockRef.current = null; document.removeEventListener('visibilitychange', onVisible); navigator.serviceWorker?.removeEventListener('message', onSwMessage); };
   }, []);
 
   // Hosted: a profile change from OS reloads the page once (lib/hostContext.ts). Local: nothing.

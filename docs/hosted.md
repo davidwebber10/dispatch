@@ -37,10 +37,21 @@ of a business person). See `packages/core/src/os/approvals.ts`.
 - **Usage figures.** From `rate_limit_event` frames and one `get_usage` control request; never a token.
 - **Continuity.** Mid-turn chat threads (Claude, Codex) resume after a restart; Grok/OpenCode show a
   Continue card; a thread whose process the restart replaced is idle, not `error`; SIGTERM exits after
-  the kill grace. The web client treats the router's 503/redirect as "Reconnecting…" and reloads once
-  at `/dispatch/`.
+  the kill grace. The web client treats the router's 503/redirect as a quiet "Reconnecting…" and never
+  reloads or navigates while the box is down (a page load then lands on the OS launcher). It probes
+  `/api/host-context` (redirects not followed) from 1.5 s up to 5 s, with no time limit; after 3 minutes
+  it adds "This takes longer than usual." Back on the same build (the page's content-hashed entry
+  script against the shell served now): new sockets and a state reload in place, so drafts, tabs and
+  the grid stay. Back on a new build: one reload, only after the shell answered 200 HTML
+  (`web/src/lib/boxRestart.ts`).
 - **Updates.** From OS (`/api/dispatch/box/update`), one step: the workspace moves to the new image.
 - **Projects.** A name alone makes `~/projects/<name>`.
+- **Box log.** One JSON line per event on stdout (`os/box-log.ts`): `daemon.start` (version, profile,
+  base path, capabilities), `daemon.shutdown` (signal), `os.connections` (reachable, counts; a line
+  only when the answer changes), `thread.start` / `thread.exit` (harness, exit code), and each step of
+  the Claude sign-in (`claude.signin.*`: start, URL host, code length and shape, CLI exit code, the
+  CLI's error text, `claude auth status`). Every string is redacted: no code, token, e-mail, cookie or
+  URL query. A local install writes none of these lines.
 - **Capabilities.** `platform/capabilities.ts` (`base-path`, `os-tools-proxy`, `profile`) rides the
   heartbeat and `GET /api/os/connections`.
 

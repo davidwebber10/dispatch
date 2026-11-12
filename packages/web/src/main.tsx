@@ -4,6 +4,7 @@ import App from './App';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { loadPlugins } from './plugins/host';
 import { reloadForSignIn } from './lib/signInReload';
+import { isBoxDown } from './lib/boxRestart';
 import { reloadFresh } from './lib/shellCache';
 // Fonts ship with the app (cached forever) instead of Google Fonts, which blocked the first paint on
 // a third-party round trip. Latin only, the three weights the app uses.
@@ -76,8 +77,8 @@ function watchForUpdates() {
   let waiting: ReturnType<typeof setTimeout> | undefined;
   const stopWaiting = () => { clearTimeout(waiting); waiting = undefined; };
   // The new build is saved: this reload needs no network.
-  const reloadSaved = () => { if (reloading) return; reloading = true; stopWaiting(); location.reload(); };
-  const reloadNetwork = () => { if (reloading) return; reloading = true; stopWaiting(); void reloadFresh(); };
+  const reloadSaved = () => { if (reloading || isBoxDown()) return; reloading = true; stopWaiting(); location.reload(); };
+  const reloadNetwork = () => { if (reloading || isBoxDown()) return; reloading = true; stopWaiting(); void reloadFresh(); };
   /** The entry script a shell names, as an absolute address (the same form as `current`). */
   const entryOf = (html: string): string | null => {
     const m = html.match(/<script\b[^>]*\btype="module"[^>]*\bsrc="([^"]+)"/);
@@ -89,7 +90,9 @@ function watchForUpdates() {
     else if (d?.type === 'shell-refresh-failed' && waiting) reloadNetwork();
   });
   const check = async () => {
-    if (reloading || waiting || document.hidden) return;
+    // A hosted workspace that is restarting: no reload now (a page load would land on the OS
+    // launcher). lib/boxRestart.ts reloads once itself when the workspace is back on a new build.
+    if (reloading || waiting || document.hidden || isBoxDown()) return;
     try {
       const shell = await fetch(document.baseURI, { cache: 'no-store' });
       if (shell.status === 401) { reloadForSignIn(); return; }
