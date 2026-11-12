@@ -87,9 +87,9 @@ rl.on('line', (line) => {
     // CODEX_FAKE_START_HANG_ONCE=<marker file>: same as the resume variant below, for a fresh start.
     const startMarker = process.env.CODEX_FAKE_START_HANG_ONCE;
     if (startMarker && !fs.existsSync(startMarker)) { fs.writeFileSync(startMarker, '1'); return; }
-    // CODEX_FAKE_REJECT_TIER=1: thread/start refuses any service tier, as an account without it would.
+    // CODEX_FAKE_REJECT_TIER=1: thread/start answers an error to any request with a service tier.
     if (process.env.CODEX_FAKE_REJECT_TIER && msg.params?.serviceTier) {
-      send({ jsonrpc: '2.0', id: msg.id, error: { code: -32600, message: `service tier ${msg.params.serviceTier} is not available for this account` } });
+      send({ jsonrpc: '2.0', id: msg.id, error: { code: -32600, message: 'request rejected' } });
       return;
     }
     // CODEX_FAKE_START_REJECT_MODEL=<id>: thread/start refuses that model, as an account that cannot use it does.
@@ -97,7 +97,10 @@ rl.on('line', (line) => {
       send({ jsonrpc: '2.0', id: msg.id, error: { code: -32600, message: `The '${msg.params.model}' model is not supported when using Codex with a ChatGPT account.` } });
       return;
     }
-    respond(msg.id, { thread: { id: THREAD, turns: [] }, model: msg.params?.model ?? 'gpt-5.6-sol' });
+    // The tier in effect, as codex-cli 0.167.2 reports it: the one asked for, or null. CODEX_FAKE_NO_TIER=1: a tier the
+    // account does not offer is dropped silently (no error), as live.
+    const tier = process.env.CODEX_FAKE_NO_TIER ? null : (msg.params?.serviceTier ?? null);
+    respond(msg.id, { thread: { id: THREAD, turns: [] }, model: msg.params?.model ?? 'gpt-5.6-sol', serviceTier: tier });
     notify('thread/started', { thread: { id: THREAD, sessionId: THREAD, turns: [] } });
     return;
   }
@@ -113,7 +116,11 @@ rl.on('line', (line) => {
     respond(msg.id, { thread: { id: tid, turns: [{ id: 'prev', items: [
       { type: 'userMessage', id: 'u0', content: [{ type: 'text', text: 'earlier question' }] },
       { type: 'agentMessage', id: 'a0', text: 'earlier answer' },
-    ], status: 'completed' }] }, model: 'gpt-5.6-sol' });
+      // CODEX_FAKE_CONTEXT_ITEM=1: Codex's own environment block as a user item in the history.
+      ...(process.env.CODEX_FAKE_CONTEXT_ITEM ? [{ type: 'userMessage', id: 'u-env', content: [{ type: 'text', text: '<environment_context>\n  <cwd>/work</cwd>\n</environment_context>' }] }] : []),
+    ], status: 'completed' }] }, model: 'gpt-5.6-sol',
+    // A resume keeps the thread's saved tier when the field is left out (live: omitted kept `priority`).
+    serviceTier: msg.params?.serviceTier === undefined ? (process.env.CODEX_FAKE_SAVED_TIER ?? null) : msg.params.serviceTier });
     notify('thread/started', { thread: { id: tid, sessionId: tid, turns: [] } });
     return;
   }

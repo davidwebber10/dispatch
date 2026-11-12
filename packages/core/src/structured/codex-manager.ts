@@ -37,17 +37,23 @@ import { JsonRpcStdioClient, METHOD_NOT_FOUND, type RpcId } from './shared/jsonr
 import { settleTurn, type SettleDeps } from './shared/settle-turn.js';
 import { StructuredEmitter } from './shared/events.js';
 import { logThreadModel } from './model-log.js';
-import { codexServiceTier, isTierRefusal } from './codex-fast.js';
+import { codexServiceTier, CODEX_STANDARD_TIER } from './codex-fast.js';
+import { isHostedBox } from '../os/hosted-mode.js';
+import { SENT_MARK, isHarnessContext, CONTEXT_NOTICE } from '../conversation/task-notification.js';
 import { boxLog } from '../os/box-log.js';
-import { refusedModelMessage } from '../providers/catalog.js';
 
 /** A refusal said in plain words for the person: shown as its message alone, with no "Error:" in front. */
 class PlainRefusal extends Error {}
 const shown = (err: unknown): string => (err instanceof PlainRefusal ? err.message : String(err));
 
-/** An app-server ANSWER that refuses a model (its message names the model), not a dead connection. */
-function isModelRefusal(err: unknown): boolean {
-  return err instanceof CodexRpcError && /model/i.test(err.message);
+/**
+ * A refusal ANSWER we cannot read further, for the person: "Codex refused this request: <short detail>".
+ * Only a refusal Codex labels (a turn error with codexErrorInfo `modelNotFound`, codex-translate.ts) becomes
+ * "This account cannot use <model>"; an RPC error text is never guessed into that sentence.
+ */
+function refusedRequest(err: unknown): PlainRefusal {
+  const detail = (err instanceof Error ? err.message : String(err)).replace(/\s+/g, ' ').trim().slice(0, 200);
+  return new PlainRefusal(`Codex refused this request: ${detail}`);
 }
 
 /**
@@ -79,8 +85,10 @@ function openAppServer(spec: { command: string; args: string[]; cwd: string; env
 interface CodexSession {
   /** The app-server refused the service tier once: this session asks for none again (codex-fast.ts). */
   tierRefused?: boolean;
-  /** The service tier the thread was started or resumed with (undefined: standard speed). */
+  /** The service tier the app-server reported at start or resume (undefined: none reported, standard speed). */
   serviceTier?: string;
+  /** The service tier the last start or resume asked for. */
+  serviceTierAsked?: string;
   /** Smart approvals (os/approvals.ts): on-request + workspace-write + the auto_review reviewer. */
   smart?: boolean;
   /** Reviewer denials nobody answered yet (the in-thread cards), with the raw notification for approveGuardianDeniedAction. */
@@ -288,7 +296,7 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
   private async startThread(session: CodexSession, conn: JsonRpcStdioClient): Promise<void> {
     await conn.ready;
     if (session.resumeId) {
-      const res = await this.withTier(session, (tier) => conn.request('thread/resume', {
+      const res = await this.withTier(session, true, (tier) => conn.request('thread/resume', {
         threadId: session.resumeId,
         cwd: session.cwd,
         model: session.model ?? null,
@@ -310,7 +318,7 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
       this.bindThread(session, threadId, res?.model);
       await this.backfill(session, conn, res?.thread?.turns).catch(() => { /* backfill is best-effort */ });
     } else {
-      const res = await this.withTier(session, (tier) => conn.request('thread/start', {
+      const res = await this.withTier(session, false, (tier) => conn.request('thread/start', {
         cwd: session.cwd,
         model: session.model ?? null,
         ...(tier ? { serviceTier: tier } : {}),
@@ -320,8 +328,8 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
         // spelling is silently ignored by codex-cli; verified live on codex-cli 0.155.1).
         ...(session.systemPrompt ? { developerInstructions: session.systemPrompt } : {}),
       })).catch((err) => {
-        // A new thread on a model this account cannot use fails with a plain sentence (spawn_error), never on another model.
-        if (session.model && isModelRefusal(err)) throw new PlainRefusal(refusedModelMessage(session.model));
+        // A refusal answer fails the start in plain words (spawn_error), never on another model.
+        if (err instanceof CodexRpcError) throw refusedRequest(err);
         throw err;
       });
       const threadId = res?.thread?.id;
@@ -332,22 +340,38 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
   }
 
   /**
-   * Run a thread/start or thread/resume with the session's service tier (codex-fast.ts). When the app-server
-   * refuses the TIER (an account without it), say so in the box log and run it again without one: the thread
-   * runs at standard speed rather than not at all. Any other error is the caller's.
+   * Run a thread/start or thread/resume with the session's service tier (codex-fast.ts), and record the tier
+   * the app-server REPORTS (its answer's `serviceTier`), not the one asked for.
+   *  - A resumed thread keeps the tier saved with it when the field is left out (verified on codex-cli
+   *    0.167.2: omitted kept `priority`; `default` answered `default`). So on a hosted box a resume that
+   *    asks for no tier (switched off, or refused before) asks for `default` explicitly.
+   *  - A refusal answer to a request that carried a tier: the same request once more without it; the thread
+   *    runs at standard speed rather than not at all. An answer with another tier (Codex drops a tier it
+   *    does not offer, it does not refuse it) also marks the tier refused for this session.
+   * Both log `thread.fast.refused`. Any other error is the caller's.
    */
-  private async withTier<T>(session: CodexSession, call: (tier: string | undefined) => Promise<T>): Promise<T> {
-    const tier = this.serviceTierFor(session);
-    session.serviceTier = tier;
+  private async withTier<T>(session: CodexSession, resume: boolean, call: (tier: string | undefined) => Promise<T>): Promise<T> {
+    const asked = this.serviceTierFor(session);
+    const standard = resume && isHostedBox() ? CODEX_STANDARD_TIER : undefined;
+    const send = asked ?? standard;
+    session.serviceTierAsked = send;
+    let res: T;
     try {
-      return await call(tier);
+      res = await call(send);
     } catch (err) {
-      if (!tier || !(err instanceof CodexRpcError) || !isTierRefusal(err.message)) throw err;
+      if (!asked || !(err instanceof CodexRpcError)) throw err;
       session.tierRefused = true;
-      session.serviceTier = undefined;
-      boxLog('thread.fast.refused', { thread: session.terminalId, tier, reason: err.message }, 'warn');
-      return call(undefined);
+      session.serviceTierAsked = standard;
+      boxLog('thread.fast.refused', { thread: session.terminalId, tier: asked, reason: err.message }, 'warn');
+      res = await call(standard);
     }
+    const reported = (res as { serviceTier?: unknown } | undefined)?.serviceTier;
+    session.serviceTier = typeof reported === 'string' && reported ? reported : undefined;
+    if (asked && session.serviceTier !== asked && !session.tierRefused) {
+      session.tierRefused = true;
+      boxLog('thread.fast.refused', { thread: session.terminalId, tier: asked, reported: session.serviceTier ?? null, reason: 'the app-server answered another tier' }, 'warn');
+    }
+    return res;
   }
 
   /** A session killed while its thread/start|resume was in flight never got a threadId, so kill()
@@ -387,7 +411,7 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
       throw new Error(`Codex thread ${threadId} is already open in another Dispatch thread`);
     }
     session.threadId = threadId;
-    logThreadModel(session.terminalId, 'codex', session.model ?? null, model ?? null, { serviceTier: session.serviceTier ?? null });
+    logThreadModel(session.terminalId, 'codex', session.model ?? null, model ?? null, { serviceTier: session.serviceTier ?? null, serviceTierAsked: session.serviceTierAsked ?? null });
     if (model) session.model = model;
     this.threadToTerminal.set(threadId, session.terminalId);
     if (!session.sessionId) {
@@ -627,7 +651,8 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
     // Synthetic user echo (reproduce the Claude manager's behavior): the app-server does not
     // echo the user's turn as a renderable event, so buffer one so the bubble shows + replays.
     const echoContent: ContentBlock[] = typeof content === 'string' ? [{ type: 'text', text: content }] : content;
-    const ev: any = { type: 'user', message: { role: 'user', content: echoContent } };
+    // SENT_MARK: a sent message, never classified as harness context (journal/recorder.ts).
+    const ev: any = { type: 'user', message: { role: 'user', content: echoContent }, [SENT_MARK]: true };
     if (source) ev.meta = { source };
     this.pushEvent(session, ev);
     this.fire('busy', terminalId);
@@ -654,7 +679,7 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
       } catch (err) {
         if (model || effort) this.dropRefusedPick(session, model, effort, err);
         // The turn's error result says the same plain sentence (the view shows it on the failed turn).
-        if (model && !effort && isModelRefusal(err)) throw new PlainRefusal(refusedModelMessage(model));
+        if (err instanceof CodexRpcError) throw refusedRequest(err);
         throw err;
       }
       if (session.nextTurnModel === model) { session.nextTurnModel = undefined; session.modelBeforePick = undefined; }
@@ -688,12 +713,7 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
       session.modelBeforePick = undefined;
     }
     const what = [dropModel ? `model ${model}` : '', dropEffort ? `effort ${effort}` : ''].filter(Boolean).join(' and ');
-    // A refused model: a plain sentence the view shows as it is (the account cannot use it), never a silent switch back.
-    // Codex's own words stay in `detail`.
-    const message = dropModel && model && !dropEffort
-      ? refusedModelMessage(model)
-      : `Codex refused the ${what}: ${msg}. It will not be sent again.`;
-    this.pushEvent(session, { type: 'system', subtype: 'settings_refused', message, ...(message !== msg ? { detail: msg } : {}) });
+    this.pushEvent(session, { type: 'system', subtype: 'settings_refused', message: `Codex refused the ${what}: ${msg}. It will not be sent again.` });
     // The chip shows the newest model frame, which beats the saved config: tell connected clients (and the replay) which model
     // the thread runs again. No `switched`, so no "Model switched" line.
     if (info.restoredModel) this.pushEvent(session, { type: 'system', subtype: 'model', model: info.restoredModel });
@@ -978,10 +998,12 @@ function toUserInput(content: string | ContentBlock[]): unknown[] {
 
 /** Turn a completed Codex ThreadItem from thread/read history into whole Claude events for the
  *  resume backfill. Emitted before any live stream_event so the reducer renders them plainly. */
-function backfillItem(item: any): unknown[] {
+export function backfillItem(item: any): unknown[] {
   switch (item?.type) {
     case 'userMessage': {
       const text = (Array.isArray(item.content) ? item.content : []).filter((c: any) => c?.type === 'text').map((c: any) => c.text ?? '').join('');
+      // Codex's own context in a user item (its environment, the AGENTS.md block): a muted notice, never a bubble.
+      if (text && isHarnessContext(text)) return [{ type: 'system', subtype: 'dispatch_notice', level: 'info', message: CONTEXT_NOTICE }];
       return text ? [{ type: 'user', message: { role: 'user', content: text } }] : [];
     }
     case 'agentMessage':

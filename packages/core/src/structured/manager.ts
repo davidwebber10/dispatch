@@ -17,6 +17,7 @@ import { settleTurn, type SettleDeps } from './shared/settle-turn.js';
 import { blockedEvent, blockedResolvedEvent, approvalTitle, allowedOnceMessage, sameToolCall, inputDetail, SMART_FALLBACK_NOTICE, ALLOW_ONCE_MS, type BlockedAction, type Approvals } from '../os/approvals.js';
 import { boxLog } from '../os/box-log.js';
 import { logThreadModel } from './model-log.js';
+import { SENT_MARK } from '../conversation/task-notification.js';
 import { isHostedBox } from '../os/hosted-mode.js';
 import { forbiddenInitTools, initServerNames, unexpectedInitMcpTools, unexpectedServers, unexpectedServersNotice, NO_SERVER_LIST_NOTICE } from '../os/hosted-mcp-policy.js';
 import { StructuredEmitter, type AnyStructuredListener, type StructuredListener, type StructuredManagerEventName, type StructuredManagerEvents } from './shared/events.js';
@@ -772,8 +773,9 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
     // Mirror the wire shape: a string becomes a single text block; blocks pass through
     // unchanged (so an image block re-renders inline via the chat's image parser).
     const echoContent: ContentBlock[] = typeof content === 'string' ? [{ type: 'text', text: content }] : content;
-    const ev: { type: 'user'; message: { role: 'user'; content: ContentBlock[] }; meta?: { source: MessageSource } } =
-      { type: 'user', message: { role: 'user', content: echoContent } };
+    // SENT_MARK: a sent message, never classified as harness context (journal/recorder.ts).
+    const ev: { type: 'user'; message: { role: 'user'; content: ContentBlock[] }; meta?: { source: MessageSource }; [SENT_MARK]: true } =
+      { type: 'user', message: { role: 'user', content: echoContent }, [SENT_MARK]: true };
     if (source) ev.meta = { source };
     const s = this.sessions.get(terminalId);
     if (s) {

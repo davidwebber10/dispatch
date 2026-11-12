@@ -100,3 +100,22 @@ it('modelMatches: an alias matches its family, a context suffix is ignored, no r
   expect(modelMatches('gpt-5.6-sol', 'gpt-5.6-terra')).toBe(false);
   expect(modelMatches(null, 'gpt-5.6-sol')).toBe(true);
 });
+
+it('F4: the hosted Sol default effort is low, another word is used only when the model takes it, OFF leaves the default', () => {
+  const saved = { a: process.env.OS_BASE_URL, b: process.env.OS_BOX_TOKEN, c: process.env.DISPATCH_CODEX_SOL_EFFORT };
+  Object.assign(process.env, { OS_BASE_URL: 'https://os.example.com', OS_BOX_TOKEN: 'box-token-for-test' });
+  try {
+    const effort = (v?: string) => {
+      if (v === undefined) delete process.env.DISPATCH_CODEX_SOL_EFFORT; else process.env.DISPATCH_CODEX_SOL_EFFORT = v;
+      return (svc as any).codexEffortFor({}, 'gpt-6.1-sol');
+    };
+    expect(effort()).toBe('low');
+    expect(effort('medium')).toBe('medium');
+    expect(effort('turbo')).toBeUndefined();
+    expect(effort('off')).toBeUndefined();
+    expect(effort('0')).toBeUndefined();
+    expect((svc as any).codexEffortFor({ effort: 'high' }, 'gpt-6.1-sol')).toBe('high');
+  } finally {
+    for (const [k, v] of [['OS_BASE_URL', saved.a], ['OS_BOX_TOKEN', saved.b], ['DISPATCH_CODEX_SOL_EFFORT', saved.c]] as const) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+});

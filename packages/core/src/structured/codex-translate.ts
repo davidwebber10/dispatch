@@ -22,6 +22,7 @@
 import { detectCodexLimit, type UsageLimit } from '../limits/detect.js';
 import type { PendingPermission, PermissionDecision } from './manager.js';
 import { looksLikeQuestion } from '../status/question.js';
+import { refusedModelMessage } from '../providers/catalog.js';
 
 /** The ServerRequest approval methods this layer understands (spec mapping table). An
  *  `mcpServer/elicitation/request` counts only when it is an MCP TOOL-CALL approval (see
@@ -433,9 +434,14 @@ export class CodexTranslator {
 
   private errorNotif(params: any): TranslatedAction[] {
     const err = params?.error ?? params;
-    const message = typeof err?.message === 'string' ? err.message : (typeof params === 'string' ? params : 'Codex error');
-    const event = { kind: 'event' as const, event: { type: 'result', subtype: 'error', is_error: true, result: message } };
-    const limit = params?.willRetry === true ? null : detectCodexLimit({ message, codexErrorInfo: err?.codexErrorInfo }, Date.now());
+    const raw = typeof err?.message === 'string' ? err.message : (typeof params === 'string' ? params : 'Codex error');
+    // A model the account cannot use: Codex labels it (codexErrorInfo `modelNotFound`, seen live on codex-cli
+    // 0.167.2 with a ChatGPT sign-in). Said in plain words with what to do; Codex's own words stay in `detail`.
+    const notFound = err?.codexErrorInfo === 'modelNotFound';
+    const named = notFound ? (/'([^']{1,120})' model/.exec(raw)?.[1] ?? this.model) : undefined;
+    const message = notFound && named ? refusedModelMessage(named) : raw;
+    const event = { kind: 'event' as const, event: { type: 'result', subtype: 'error', is_error: true, result: message, ...(message !== raw ? { detail: raw } : {}) } };
+    const limit = params?.willRetry === true ? null : detectCodexLimit({ message: raw, codexErrorInfo: err?.codexErrorInfo }, Date.now());
     if (limit) {
       this.limitThisTurn = true;
       return [event, { kind: 'usage-limit', limit }];

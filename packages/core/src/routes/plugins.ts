@@ -230,6 +230,9 @@ function writerOf(req: Request): pluginData.Writer | null {
   return { terminalId: p.terminalId, sessionId: c?.sessionId ?? '', label: c?.label ?? null };
 }
 
+/** The drop kinds of the Inbox tool (packages/plugins/previews/mcp/kinds.mjs): only these are logged by name. */
+const INBOX_KINDS = new Set(['command', 'link', 'code', 'secret', 'steps', 'diff', 'table', 'doc', 'text', 'images', 'files']);
+
 /** An Inbox drop's storage key: `preview:<id>`. */
 const INBOX_DROP_PREFIX = 'preview:';
 
@@ -248,7 +251,7 @@ function logInboxPut(key: string, value: unknown, writer: pluginData.Writer | nu
   boxLog('plugin.data.put', {
     plugin: INBOX_PLUGIN,
     drop: key.slice(INBOX_DROP_PREFIX.length),
-    kind: typeof v.kind === 'string' ? v.kind : null,
+    kind: typeof v.kind === 'string' ? (INBOX_KINDS.has(v.kind) ? v.kind : 'other') : null,
     files: Array.isArray(v.files) ? v.files.length : 0,
     seen: Boolean(v.seenAt),
     by: callerKind(req),

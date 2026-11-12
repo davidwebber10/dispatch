@@ -16,7 +16,8 @@ export function modelMatches(requested: string | null, reported: string | null):
   if (requested === reported) return true;
   const bare = (m: string) => m.replace(/\[\w+\]$/, '');
   if (bare(requested) === bare(reported)) return true;
-  if (CLAUDE_ALIAS.test(requested)) return new RegExp(`^claude-${requested}-`).test(reported);
+  // An alias may carry the context suffix too (`opus[1m]`): match the family on the bare names.
+  if (CLAUDE_ALIAS.test(bare(requested))) return new RegExp(`^claude-${bare(requested)}-`).test(bare(reported));
   return false;
 }
 

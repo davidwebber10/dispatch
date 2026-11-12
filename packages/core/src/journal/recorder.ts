@@ -23,7 +23,7 @@
 //
 // A journal failure never stops a session: `commit` logs once and goes on.
 
-import { classifyUserText, isHarnessContext, personText } from '../conversation/task-notification.js';
+import { classifyUserText, isHarnessContext, SENT_MARK } from '../conversation/task-notification.js';
 import type { JournalKind, MessageJournal } from './journal.js';
 import { createJournalReplay, type JournalReplay, type JournalReplayOptions, type JournalReplaySource } from './replay.js';
 
@@ -76,27 +76,15 @@ function isFrame(v: unknown): v is Frame { return typeof v === 'object' && v !==
 export const CONTEXT_MARK = 'dispatch_context';
 
 /**
- * The user event without its harness context blocks (see isHarnessContext / personText), or the same
- * event when it has none. A copy: the event the manager emits keeps its blocks.
+ * The user event without the text blocks that are WHOLLY harness context (Claude Code sends a reminder
+ * as its own block next to the person's), or the same event when it has none. Text inside a block is
+ * never cut: a person's pasted block stays as written. A copy: the event the manager emits keeps its blocks.
  */
-function withoutContext(e: Frame): Frame {
+function withoutContextBlocks(e: Frame): Frame {
   const content = e.message?.content;
-  if (typeof content === 'string') {
-    const kept = personText(content);
-    return kept === content ? e : { ...e, message: { ...e.message, content: kept } };
-  }
   if (!Array.isArray(content)) return e;
-  let changed = false;
-  const blocks: unknown[] = [];
-  for (const b of content) {
-    if (isFrame(b) && b.type === 'text' && typeof b.text === 'string') {
-      if (isHarnessContext(b.text)) { changed = true; continue; }
-      const kept = personText(b.text);
-      if (kept !== b.text) { changed = true; blocks.push({ ...b, text: kept }); continue; }
-    }
-    blocks.push(b);
-  }
-  return changed ? { ...e, message: { ...e.message, content: blocks } } : e;
+  const blocks = content.filter((b) => !(isFrame(b) && b.type === 'text' && typeof b.text === 'string' && isHarnessContext(b.text)));
+  return blocks.length === content.length ? e : { ...e, message: { ...e.message, content: blocks } };
 }
 
 function streamFrame(event: Frame, parent: string): Frame {
@@ -362,6 +350,9 @@ export class ThreadRecorder {
       this.write('tool', native, e, e);
       return;
     }
+    // A message someone sent (the person, a peer, an automation) is the sender's words, shown as written:
+    // no classification can turn it into context or a notice, whatever its text looks like.
+    if (e[SENT_MARK] === true) { this.write('user', uuid, e, e); return; }
     const classes = texts.filter((t) => t.trim()).map((t) => classifyUserText(t).kind);
     const shown = classes.filter((k) => k !== 'drop' && k !== 'context');
     if (!shown.length && !other) {
@@ -376,8 +367,8 @@ export class ThreadRecorder {
       return; // otherwise nothing a client renders
     }
     const kind: JournalKind = shown.includes('user') || other ? 'user' : 'notice';
-    // A person's message with context appended (a reminder block): the journal keeps the person's words only.
-    this.write(kind, uuid, kind === 'user' ? withoutContext(e) : e, e);
+    // A harness item with a reminder block next to the person's block: the reminder block is not kept.
+    this.write(kind, uuid, kind === 'user' ? withoutContextBlocks(e) : e, e);
   }
 
   private assistant(e: Frame): void {

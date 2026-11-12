@@ -45,7 +45,10 @@ describe('Inbox box log lines', () => {
     const lists = lines.filter((l) => l.event === 'inbox.list');
     expect(lists).toHaveLength(1);
     expect(lists[0]).toMatchObject({ count: 1, values: true });
+    // A kind that is not one of the tool's is logged as `other`, never as its free text.
+    await request(app).put('/api/plugins/previews/data/preview:1f8e2b1c-4d5a-4e6f-9a7b-1c2d3e4f5a6b').send({ value: { kind: 'please read this note', files: [] } });
+    expect(lines.filter((l) => l.event === 'plugin.data.put').pop()).toMatchObject({ kind: 'other' });
     const all = JSON.stringify(lines);
-    for (const s of ['A private title', 'a private note', 'private text', 'a.png', 'example.com']) expect(all).not.toContain(s);
+    for (const s of ['A private title', 'a private note', 'private text', 'a.png', 'example.com', 'please read']) expect(all).not.toContain(s);
   });
 });

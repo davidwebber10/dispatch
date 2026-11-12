@@ -103,29 +103,43 @@ function collapseWs(s: string): string {
  *   Claude Code  `<system-reminder>`, `<local-command-caveat>`
  *   Codex        `<environment_context>`, `<user_instructions>`, `<turn_aborted>`, and the AGENTS.md
  *                injection (`# AGENTS.md instructions for <dir>` … `</INSTRUCTIONS>`)
- * A body is context only when it is ENTIRELY such blocks (like the command-echo match), so a person
- * who quotes one of the tags in a sentence keeps their message. `personText` cuts the blocks out of a
- * mixed body (a person's message with a reminder appended).
+ * A body is context only when it is ENTIRELY such blocks, one after another. Each block runs to the
+ * LAST closing tag of its name, so a block that quotes its own closing tag stays whole. A person who
+ * quotes a tag in a sentence keeps their message.
+ *
+ * A message someone SENT (the person, a peer thread, an automation: the echo carries SENT_MARK) is
+ * never classified by this rule: a sender cannot make their words look like harness context.
  */
 const CONTEXT_TAGS = ['system-reminder', 'local-command-caveat', 'environment_context', 'user_instructions', 'turn_aborted'] as const;
-const CONTEXT_BLOCK_G = new RegExp(`<(${CONTEXT_TAGS.join('|')})>[\\s\\S]*?</\\1>`, 'g');
-const AGENTS_MD_G = /(^|\n)\s*# AGENTS\.md instructions for[^\n]*\n[\s\S]*?<\/INSTRUCTIONS>/gi;
+const CONTEXT_OPEN = new RegExp(`^<(${CONTEXT_TAGS.join('|')})>`);
+const AGENTS_MD_HEAD = /^# AGENTS\.md instructions for[^\n]*\n/i;
+const AGENTS_MD_END = '</INSTRUCTIONS>';
 
-function stripContext(text: string): string {
-  return text.replace(AGENTS_MD_G, '$1').replace(CONTEXT_BLOCK_G, '');
-}
+/** Set (true) by a manager on the echo of a message that was sent to the thread (sendMessage). */
+export const SENT_MARK = 'dispatch_sent';
 
 /** Whether `text` is harness-injected context and nothing else (see CONTEXT_TAGS). */
 export function isHarnessContext(text: string): boolean {
-  const rest = stripContext(text);
-  return rest !== text && rest.trim() === '';
+  let rest = text.trim();
+  let blocks = 0;
+  while (rest) {
+    let close: string;
+    if (AGENTS_MD_HEAD.test(rest)) close = AGENTS_MD_END;
+    else {
+      const open = CONTEXT_OPEN.exec(rest);
+      if (!open) return false;
+      close = `</${open[1]}>`;
+    }
+    const at = rest.lastIndexOf(close);
+    if (at <= 0) return false;
+    rest = rest.slice(at + close.length).trim();
+    blocks += 1;
+  }
+  return blocks > 0;
 }
 
-/** The person's words of a `user` body: the text without any harness context block. */
-export function personText(text: string): string {
-  const rest = stripContext(text);
-  return rest === text ? text : rest.trim();
-}
+/** The muted line shown where a harness context item was (a view never drops text without a trace). */
+export const CONTEXT_NOTICE = 'Harness context';
 
 /**
  * Classify one `user`-role text body for the renderer: an ordinary human turn, an injected
@@ -139,8 +153,7 @@ export function classifyUserText(text: string): UserTextClass {
   const summary = taskNotificationSummary(text);
   if (summary) return { kind: 'notice', text: summary };
   if (isHarnessContext(text)) return { kind: 'context' };
-  // A command echo may carry a caveat block next to its tags: judge the echo without it.
-  const echo = commandEchoSummary(personText(text));
+  const echo = commandEchoSummary(text);
   if (echo !== null) return echo ? { kind: 'notice', text: echo } : { kind: 'drop' };
   return { kind: 'user' };
 }

@@ -5,14 +5,19 @@
 // "Fast"). No switch for the person. A local install is unchanged.
 //
 // Kill switch without an image build, like Ask's FAST_MODE_MODELS: the task environment
-//   DISPATCH_CODEX_SERVICE_TIER=off   (or empty)  no tier is sent: standard speed
+//   DISPATCH_CODEX_SERVICE_TIER=off   (or empty, 0, false, none, default)  standard speed
 //   DISPATCH_CODEX_SERVICE_TIER=<id>              another tier id from model/list (e.g. ultrafast)
 // And Sol's reasoning effort when the person picked none (parity with Ask: low):
-//   DISPATCH_CODEX_SOL_EFFORT=medium              another default for Sol threads (a test subset)
+//   DISPATCH_CODEX_SOL_EFFORT=medium              another default for Sol threads (a test subset);
+//                                                 off (or empty, 0, false) leaves Codex's own default
 import { isHostedBox } from '../os/hosted-mode.js';
 
 /** The fast tier's id in Codex's model/list (`serviceTiers[].id`, name "Fast"). */
 export const CODEX_FAST_TIER = 'priority';
+/** The standard tier, asked for explicitly where leaving the field out keeps a thread's saved tier (a resume). */
+export const CODEX_STANDARD_TIER = 'default';
+/** The values that turn a switch off: empty, off, default, none, standard, 0, false, no. */
+const OFF = /^(|off|default|none|standard|0|false|no)$/i;
 /** A Sol model id: gpt-6.1-sol, gpt-6-sol, gpt-5.6-sol. */
 const SOL = /^gpt-[\d.]+-sol$/;
 
@@ -30,7 +35,7 @@ export function codexServiceTier(
   if (!hosted) return undefined;
   const raw = env.DISPATCH_CODEX_SERVICE_TIER;
   const tier = raw === undefined ? CODEX_FAST_TIER : raw.trim();
-  if (!tier || /^(off|default|none|standard)$/i.test(tier)) return undefined;
+  if (OFF.test(tier)) return undefined;
   if (model) {
     const offered = tiersOf(model);
     if (offered && !offered.includes(tier)) return undefined;
@@ -38,18 +43,18 @@ export function codexServiceTier(
   return tier;
 }
 
-/** The effort a hosted Sol thread runs at when the person picked none: low (DISPATCH_CODEX_SOL_EFFORT changes it). */
+/**
+ * The effort a hosted Sol thread runs at when the person picked none: low. DISPATCH_CODEX_SOL_EFFORT sets
+ * another (the caller checks it against the model's efforts); an OFF value means no default (Codex's own).
+ */
 export function codexDefaultEffort(
   model: string | undefined,
   env: NodeJS.ProcessEnv = process.env,
   hosted: boolean = isHostedBox(env),
 ): string | undefined {
   if (!hosted || !model || !SOL.test(model)) return undefined;
-  const e = (env.DISPATCH_CODEX_SOL_EFFORT ?? 'low').trim().toLowerCase();
-  return /^[a-z]+$/.test(e) ? e : 'low';
-}
-
-/** An app-server answer that refuses the service tier (its message names it). */
-export function isTierRefusal(message: string): boolean {
-  return /service[ _-]?tier|serviceTier|priority|fast mode/i.test(message);
+  const raw = env.DISPATCH_CODEX_SOL_EFFORT;
+  const e = raw === undefined ? 'low' : raw.trim().toLowerCase();
+  if (OFF.test(e)) return undefined;
+  return /^[a-z]+$/.test(e) ? e : undefined;
 }

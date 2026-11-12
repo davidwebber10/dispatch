@@ -292,7 +292,12 @@ export class ThreadSettings {
   codexEffortFor(config: Record<string, any>, model?: string): string | undefined {
     const e = config.effort;
     // No pick: a hosted Sol thread runs at low, as Ask does (structured/codex-fast.ts); every other thread at the model's default.
-    if (typeof e !== 'string') return codexDefaultEffort(typeof (model ?? config.model) === 'string' ? (model ?? config.model) : undefined);
+    if (typeof e !== 'string') {
+      const m0 = typeof (model ?? config.model) === 'string' ? (model ?? config.model) as string : undefined;
+      const d = codexDefaultEffort(m0);
+      // Only an effort the model takes: a wrong value in the environment must not fail every first turn.
+      return d && m0 && this.codexEffortsFor(m0).includes(d) ? d : undefined;
+    }
     const m = model ?? config.model;
     // No model known yet (the thread runs the app-server's default): the effort was checked against the model the thread
     // ran when it was picked, so keep it; if the default model does not take it, Codex refuses it on the first turn and the

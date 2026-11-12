@@ -50,6 +50,7 @@ import { BlockDeltaCoalescer } from './shared/stream-compaction.js';
 import { JsonRpcStdioClient, METHOD_NOT_FOUND, type RpcId } from './shared/jsonrpc-client.js';
 import { settleTurn, type SettleDeps } from './shared/settle-turn.js';
 import { StructuredEmitter } from './shared/events.js';
+import { SENT_MARK } from '../conversation/task-notification.js';
 
 /**
  * Open one newline-delimited JSON-RPC channel to one ACP agent child (`grok agent stdio`,
@@ -385,7 +386,8 @@ export class AcpStructuredSessionManager extends StructuredEmitter implements IS
     // Synthetic user echo (same as the other managers): the live user_message_chunk is
     // deliberately ignored by the translator, so this is the one user bubble that renders.
     const echoContent: ContentBlock[] = typeof content === 'string' ? [{ type: 'text', text: content }] : content;
-    const ev: any = { type: 'user', message: { role: 'user', content: echoContent } };
+    // SENT_MARK: a sent message, never classified as harness context (journal/recorder.ts).
+    const ev: any = { type: 'user', message: { role: 'user', content: echoContent }, [SENT_MARK]: true };
     if (source) ev.meta = { source };
     this.pushEvent(session, ev);
     // Serialize turns: session/prompt blocks until the turn ends, and ACP has no steer — a

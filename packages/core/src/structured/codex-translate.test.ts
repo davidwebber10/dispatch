@@ -365,6 +365,13 @@ describe('CodexTranslator — usage limits', () => {
     expect(kinds(out)).toEqual(['event', 'failed']);
     expect(events(out)[0].result).toBe('boom');
   });
+  it('a model the account cannot use (codexErrorInfo modelNotFound, the shape seen live on a ChatGPT sign-in) reads in plain words', () => {
+    const t = new CodexTranslator();
+    const message = "The 'gpt-6.1-terra' model is not supported when using Codex with a ChatGPT account.";
+    const out = t.translate({ method: 'error', params: { threadId: 'th', turnId: 'tu', willRetry: false, error: { message, codexErrorInfo: 'modelNotFound', additionalDetails: null, misalignment: null } } } as any);
+    expect(kinds(out)).toEqual(['event', 'failed']);
+    expect(events(out)[0]).toMatchObject({ result: 'This account cannot use GPT-6.1 Terra. Pick another model.', detail: message });
+  });
   it('the flag does not leak into the next turn: a later failed turn is failed', () => {
     const t = new CodexTranslator();
     t.translate(limitErr as any); t.translate(failedTurn as any);

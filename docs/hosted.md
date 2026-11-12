@@ -207,10 +207,13 @@ about 940 MB on disk and 290 MB more to pull (compressed), most of it pyarrow, d
 **Codex fast mode.** A Codex thread on a hosted box always asks for the fast service tier (`priority`,
 "Fast" in Codex's model list) on thread start and resume, for every model that offers it, and a Sol
 thread with no effort picked runs at `low` (as Ask does). There is no switch for the person. The task
-environment can change both without an image build: `DISPATCH_CODEX_SERVICE_TIER=off` (standard speed
-for the whole fleet) or another tier id, and `DISPATCH_CODEX_SOL_EFFORT=medium`. When an account
-refuses the tier, the thread starts again at standard speed and the box log has `thread.fast.refused`.
-The `thread.model` line names the tier each thread runs with. Claude Code's fast mode (`--fast-mode`) is
+environment can change both without an image build: `DISPATCH_CODEX_SERVICE_TIER=off` (also empty, `0`,
+`false`, `none`, `default`: standard speed for the whole fleet) or another tier id, and
+`DISPATCH_CODEX_SOL_EFFORT=medium` (the same values switch the Sol default off; a value the model does
+not take is ignored). A resumed thread keeps the tier saved with it, so with the switch off a resume asks
+for `default` explicitly. When a request with the tier is refused, or Codex answers without it, the
+thread runs at standard speed and the box log has `thread.fast.refused`. The `thread.model` line names
+the tier Codex reports (`serviceTier`) and the one asked for (`serviceTierAsked`). Claude Code's fast mode (`--fast-mode`) is
 not turned on.
 
 **No program gains rights.** Every setuid and setgid bit is removed at build (`su`, `mount`, `umount`,
