@@ -655,6 +655,22 @@ describe('replay from the message journal', () => {
     expect(JSON.stringify(sent)).not.toContain('content_block_delta');
   });
 
+  it('`window=n` sets the first window alone: the newest n items, with hasMore', () => {
+    const t = thread();
+    t.turn(1); t.turn(2); t.turn(3);
+    const sent = connect(t, JOURNAL_REQ('&window=3'));
+    expect(sent[0]).toMatchObject({ type: 'journal', reset: true, firstSeq: 1, lastSeq: 12, hasMore: true });
+    expect(sent[0].items.map((i: any) => i.seq)).toEqual([10, 11, 12]);
+  });
+
+  it('`window` does not bound the ring replay of a thread the journal cannot serve: `tail` does', () => {
+    const t = thread();
+    t.turn(1);
+    t.manager.journal = { replay: () => null }; // the journal has nothing for the thread: the ring answers
+    const sent = connect(t, { url: '/api/terminals/t1/structured-ws?tail=200&journal=1&window=2' } as any);
+    expect(sent).toEqual(t.ring.snapshot());
+  });
+
   it('an older client (no journal parameter) gets the ring as before, and its finished events carry seq', () => {
     const t = thread();
     t.turn(1);

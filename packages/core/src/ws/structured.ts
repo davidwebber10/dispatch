@@ -158,12 +158,16 @@ export function handleStructuredConnection(
   //   - A thread whose history REST owns (Codex) gets no first window from the journal, so the REST page and
   //     the journal never show one item twice. Its reconnect with a cursor is served: the items after a
   //     cursor are the journal's alone.
+  //   - `window=<n>` sets the size of the first window alone (the newest n items, at most 200). `tail` then
+  //     bounds only the ring replay of a thread the journal cannot serve. Without `window`, `tail` sets both.
   let fromJournal: unknown[] | null = null;
   if (manager.journal && query.get('journal') === '1') {
     const afterParam = query.get('after');
     const after = afterParam !== null && /^\d+$/.test(afterParam) ? Number(afterParam) : undefined;
+    const windowParam = Number(query.get('window'));
+    const firstWindow = Number.isFinite(windowParam) && windowParam > 0 ? windowParam : tailParam;
     try {
-      const replay = manager.journal.replay(id, { after, allowReset: !restOwned, ...(Number.isFinite(tailParam) && tailParam > 0 ? { limit: tailParam } : {}) });
+      const replay = manager.journal.replay(id, { after, allowReset: !restOwned, ...(Number.isFinite(firstWindow) && firstWindow > 0 ? { limit: firstWindow } : {}) });
       if (replay) {
         // The journal frame holds finished items only, and they do not move an older fold's busy flag. A thread
         // that works with no block open right now (a tool runs) would show no spinner: a message start says a

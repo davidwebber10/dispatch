@@ -114,10 +114,15 @@ while a turn runs is queued by the harness as the next turn. There is no hard de
 The web client then sends an image as an `image` block (above) and any other file as a line
 `Attached file: <path>` in the message text; the model reads it from the project folder.
 
-## 5. The chat stream: `WS /api/terminals/:id/structured-ws?journal=1[&after=<seq>][&tail=<n>]`
+## 5. The chat stream: `WS /api/terminals/:id/structured-ws?journal=1[&after=<seq>][&tail=<n>][&window=<n>]`
 
 There is no subscribe message: connecting IS the subscription to that one thread. Open one socket per
 visible thread. Connecting also starts a thread whose process a restart ended (with its history).
+
+`window=<n>` (1 to 200): the first journal frame holds the newest `n` items. Ask for a small window
+for a fast first paint, then read the items above it with the journal route below. `tail=<n>` then
+bounds only the replay of a thread that has no journal yet. Without `window`, `tail` sets both. A
+daemon from before this parameter ignores it and sends `tail` items.
 
 **First frames, in this order**
 
