@@ -7,7 +7,7 @@
 import { Modal } from '../common/Modal';
 import { IconButton } from '../ui/IconButton';
 import { Children, useState } from 'react';
-import { CaretDown, CaretLeft, CaretRight, type Icon as PhosphorIcon } from '@phosphor-icons/react';
+import { ArrowCounterClockwise, CaretDown, CaretLeft, CaretRight, type Icon as PhosphorIcon } from '@phosphor-icons/react';
 import { fontVar, fontVarInput } from '../../lib/fontSize';
 
 export const sectionLabel: React.CSSProperties = { font: `500 ${fontVar(10)} var(--font-mono)`, letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
@@ -306,7 +306,7 @@ export function Slider({ value, min, max, step, label, display, onChange, onRese
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <input type="range" aria-label={label} min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} style={{ width: 160, maxWidth: '40vw', accentColor: 'var(--color-accent)', cursor: 'pointer' }} />
       <div style={{ height: 28, minWidth: 52, background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 8px', font: `400 ${fontVar(11.5)} var(--font-mono)`, color: 'var(--color-text-body)' }}>{display}</div>
-      <button type="button" aria-label={`Reset ${label}`} title={`Reset ${label}`} disabled={atDefault} onClick={onReset} style={{ ...iconBtn, width: 28, height: 28, font: `500 ${fontVar(14)} var(--font-sans)`, cursor: atDefault ? 'default' : 'pointer', opacity: atDefault ? 0.4 : 1 }}>↺</button>
+      <IconButton label={`Reset ${label}`} size="sm" icon={<ArrowCounterClockwise size={14} />} disabled={atDefault} onClick={onReset} style={{ color: 'var(--color-text-secondary)' }} />
     </div>
   );
 }
