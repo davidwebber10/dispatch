@@ -10,6 +10,7 @@ import path from 'path';
 import type { ClaudeLoginService } from './auth/claude-login.js';
 import { CodexLoginService } from './auth/codex-login.js';
 import { createThreadSecretsRouter } from './routes/thread-secrets.js';
+import { createInboxSecretsRouter } from './routes/inbox-secrets.js';
 import type { SecretsService } from './secrets/service.js';
 import type { IntegrationsService } from './integrations/service.js';
 import type { PushService } from './push/service.js';
@@ -202,6 +203,12 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   if (d.journal) mount('/api', createJournalRouter(d.journal, (id) => !!d.sessionService.getTerminal(id))); // W3-D
   mount('/api', createThreadSecretsRouter(d.db, { broadcast: (e) => d.terminalsBroadcaster?.broadcast(e) }));
   mount('/api', createLedgerRouter(d.ledgerService));
+  // Inbox → Send a secret (2026-11-12): the owner's secrets for a thread, by a short ID. Under the Inbox plugin's path
+  // (/api/plugins/previews/secrets), mounted before the plugins router.
+  mount('/api', createInboxSecretsRouter(d.db, {
+    dataDir: d.dataDir, secrets: d.secretsService, secretRoots: defaultSecretRoots(d.dataDir),
+    broadcast: (e) => d.broadcaster.broadcast(e),
+  }));
   const accountsForAssist = d.assistAccounts ?? d.accounts;
   mount('/api', createPluginsRouter(d.plugins, d.db, d.assistRunner ?? null, {
     summary: d.usageLimits?.summary,

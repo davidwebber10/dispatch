@@ -76,7 +76,7 @@ describe('the Previews plugin MCP server', () => {
     const init = await rpc('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '0' } });
     expect(init.result.serverInfo.name).toBe('dispatch-previews');
     const list = await rpc('tools/list');
-    expect(list.result.tools.map((t: any) => t.name)).toEqual(['preview']);
+    expect(list.result.tools.map((t: any) => t.name)).toEqual(['preview', 'inbox_secret']);
     const r = await callPreview({ paths: ['shot.png', path.join(proj, 'notes.md')], text: 'copy me', title: 'A shot', note: 'the login page' });
     expect(r.isError).toBe(false);
     expect(r.parsed).toMatchObject({ ok: true, files: ['shot.png', 'notes.md'] });
@@ -145,6 +145,43 @@ describe('the Previews plugin MCP server', () => {
     for (let i = 0; i < 50 && read('preview:old').text !== null; i++) await new Promise((r) => setTimeout(r, 20));
     expect(read('preview:old')).toMatchObject({ text: null, expired: true });
     expect(read('preview:fresh')).toMatchObject({ text: 'tok-NEW' });
+  });
+
+  // Inbox → Send a secret (2026-11-12): the owner sends a secret, the thread uses it by its ID; the daemon writes it.
+  it('inbox_secret writes the value into a project file; the tool result never has the value; reveal is refused unless allowed', async () => {
+    const VALUE = 'sk_live_MCP_SECRET_42';
+    const key = app.locals.keys.mint({ kind: 'thread', terminalId: 'tA' }).key as string;
+    start({ DISPATCH_AUTH: key, DISPATCH_API: `http://127.0.0.1:${port}`, DISPATCH_PLUGIN: 'previews' });
+    const tools = (await rpc('tools/list')).result.tools;
+    const tool = tools.find((t: any) => t.name === 'inbox_secret');
+    expect(tool.inputSchema.required).toEqual(['id']);
+    expect(Object.keys(tool.inputSchema.properties)).toEqual(['id', 'file', 'doppler', 'reveal']);
+    expect(tool.description).toMatch(/Send a secret/);
+    expect(tools.find((t: any) => t.name === 'preview').description).toMatch(/inbox_secret/);
+    const call = async (args: unknown) => {
+      const r = await rpc('tools/call', { name: 'inbox_secret', arguments: args });
+      return { text: r.result?.content?.map((c: any) => c.text).join('\n') ?? '', isError: r.result?.isError === true };
+    };
+    const made = await request(app).post('/api/plugins/previews/secrets').send({ name: 'Stripe key', value: VALUE, sessionId: 'A' });
+    const wrote = await call({ id: made.body.id, file: { path: '.env.local', name: 'STRIPE_KEY' } });
+    expect(wrote.isError).toBe(false);
+    expect(wrote.text).toMatch(/Wrote STRIPE_KEY to \.env\.local \(0600\)\. The value was removed from the Inbox\./);
+    expect(wrote.text).not.toContain(VALUE);
+    expect(fs.readFileSync(path.join(proj, '.env.local'), 'utf8')).toBe(`STRIPE_KEY=${VALUE}\n`);
+    const again = await call({ id: made.body.id, file: { path: '.env.local', name: 'STRIPE_KEY' } });
+    expect(again.isError).toBe(true);
+    expect(again.text).toMatch(/already used/);
+
+    const hidden = await request(app).post('/api/plugins/previews/secrets').send({ name: 'k', value: VALUE, sessionId: 'A' });
+    const no = await call({ id: hidden.body.id, reveal: true });
+    expect(no.isError).toBe(true);
+    expect(no.text).toMatch(/owner did not allow/);
+    const open = await request(app).post('/api/plugins/previews/secrets').send({ name: 'k', value: VALUE, sessionId: 'A', allowReveal: true });
+    const yes = await call({ id: open.body.id, reveal: true });
+    expect(yes.isError).toBe(false);
+    expect(yes.text).toContain(VALUE);
+    expect((await call({ id: 'ZZZZZZ', reveal: true })).text).toMatch(/No secret with the ID ZZZZZZ/);
+    expect((await call({ file: { path: '.env' } })).text).toMatch(/`id`/);
   });
 
   it('refuses a path outside the project with the plain message, and a disabled plugin answers a plain error', async () => {

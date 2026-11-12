@@ -47,6 +47,7 @@ const DATA_FILES = [
 const DATA_DIRS = [
   'keys',           // thread, plugin and shell keys
   'codex-accounts', // one CODEX_HOME for each saved Codex login, with its auth.json
+  'inbox-secrets',  // the values the owner sent through Inbox → Send a secret (inbox/secret-store.ts)
 ];
 /** SQLite files, at any depth in the data dir. */
 const DB_FILE = /\.db(-wal|-shm|-journal)?$/;
