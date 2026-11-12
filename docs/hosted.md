@@ -223,6 +223,12 @@ each at Debian 13's newest version on the build day (`apt-get upgrade` ran, so n
 (`libcurl3t64-gnutls`) and go only if git goes; `glibc` (2). Rebuild to take the fixes when Debian
 publishes them: the base digest and `apt-get upgrade` are the two places a rebuild picks them up.
 
+The image with privilege separation (`4.6.0-os.5`, the same day): 0 critical, 10 high, 16 medium,
+5 low. The ten are the same ten: `glibc` 2.41-12+deb13u4 (2), `krb5` 1.21.3-5+deb13u1 (6), `git`
+2.47.3-0+deb13u1 (1), `cyrus-sasl2` 2.1.28+dfsg1-9 (1). `apt list --upgradable` in the image names no
+package, so Debian 13 had published no fixed version of any of them. Privilege separation added no
+package to the image.
+
 ## Harness policy
 
 Root-owned files in each harness's system location (`docker/hosted/policy/`). A harness reads them above

@@ -465,6 +465,13 @@ platform and a stand-in for the Claude CLI. It prints:
   value): it starts as one user and does not report `privsep-v1`; and separated with one token value;
 - an existing box: a home made by an image from before this work is imported on the first start.
 
+The run of 2026-11-12 on the image `4.6.0-os.5` (the branch with the hardening work merged in, a
+read-only root file system, the seven capabilities dropped that the platform's task definition
+drops): 80 of 80 functional checks; 599 attacks stopped and none not stopped from a developer shell;
+602 and none from a business-profile harness process; 8 and none for a nested harness with the
+image's real programs (each flag that asks to skip approvals: Claude Code reports permission mode
+`default`, Codex reports approval `untrusted` and sandbox `read-only`).
+
 `docker exec` is not used to run the attacks: it makes a process the daemon never started, with the
 container's own environment. The unit tests (`tests/privsep/`) cover the chokepoint, the secrets
 hand-over, the path roots, the agent-side file operations, the local-peer rule, the migration and
