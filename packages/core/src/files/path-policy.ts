@@ -13,7 +13,9 @@
 //        developer   the home folder and the project folders;
 //        business    the folder of the project the request names, and that folder must be inside
 //                    `~/projects`.
-//      and never: the daemon's data folder (its database, keys, logs), the app folder of the image,
+//      and never: the daemon's data folder (its database, keys, logs; with privilege separation also
+//      the folder in the home that held it before, where the harness account folders stay), the app
+//      folder of the image,
 //      the configuration and credential folders of the harnesses, or a regular file with more than
 //      one name on the disk (a hard link can give a file outside these folders a name inside them;
 //      a path cannot tell). Dependency folders (`node_modules`) keep their hard links for a developer.
@@ -40,6 +42,12 @@ export interface PathPolicyContext {
   home: string;
   /** The daemon's data folder (`~/.dispatch`). */
   dataDir: string;
+  /**
+   * With privilege separation (privsep/config.ts): the folder in the home that was the data folder
+   * before the daemon's state moved out of the home (`~/.dispatch`). It still holds the account
+   * folders of the harnesses, with their sign-in files, so it stays refused like the data folder.
+   */
+  agentDataDir?: string | null;
   /** The folder the daemon's own code runs from, when it is not a folder of the person (the image's `/app`). */
   appDir: string | null;
   /** The folder of every live project. */
@@ -148,6 +156,7 @@ export class PathPolicy {
     const home = real(c.home);
     const dataDir = real(c.dataDir);
     if (within(dataDir, realPath)) return 'daemon';
+    if (c.agentDataDir && within(real(c.agentDataDir), realPath)) return 'daemon';
     if (c.appDir && within(real(c.appDir), realPath)) return 'daemon';
     const inHome = within(home, realPath) ? path.relative(home, realPath).split(path.sep).join('/').toLowerCase() : null;
     if (inHome !== null && HOSTED_HOME_DENY.some((d) => inHome === d || inHome.startsWith(`${d}/`))) return 'harness';

@@ -222,7 +222,11 @@ The daemon parses transcripts, lists skills, reads project files and harness con
 data, never authority:
 
 - The file routes serve the person's own folders only (the path policy of the file routes); the
-  state root and the agent run dir are outside them.
+  state root and the agent run dir are outside them. The agent data dir (`~/.dispatch`) is in the
+  home, and it holds the account folders of the harnesses with their sign-in files; the path policy
+  refuses it by name (`agentDataDir` in `files/path-policy.ts`), as it did when that folder was the
+  data folder. Without that rule the move of the state would have opened those files to the file
+  routes.
 - The daemon makes no change below the home with its own rights (`privsep/agent-fs.ts`). A file
   write, an upload, a new folder, a rename, a removal, a new project folder, a harness account
   folder: each runs as one small script under the agent's uid, so the kernel applies the agent's

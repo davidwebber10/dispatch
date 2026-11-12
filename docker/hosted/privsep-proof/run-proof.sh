@@ -147,6 +147,13 @@ type_in "$SHID" 'mkdir -p ~/.claude && (umask 077; echo "{\"proof\":true}" > ~/.
 wait_file /home/dispatch/proof-f3.done 15
 api GET /api/claude-auth | grep -qi 'person@example.com\|loggedIn\|"signedIn":true\|"authenticated":true' && fok "the daemon sees the harness sign-in (asked as the agent)" || fbad "the daemon sees the harness sign-in" "$(api GET /api/claude-auth | head -c 160)"
 
+# The file routes and the folder that was the data folder before the state moved out of the home: it
+# keeps the harness account folders, so the daemon still serves nothing from it, to the owner either.
+type_in "$SHID" 'mkdir -p ~/.dispatch/claude-accounts/a1 && echo "{\"account\":true}" > ~/.dispatch/claude-accounts/a1/.credentials.json && echo ok > ~/proof-f4.done'
+wait_file /home/dispatch/proof-f4.done 15
+R4="$(api GET "/api/sessions/$SID/files/read?path=/home/dispatch/.dispatch/claude-accounts/a1/.credentials.json")"
+[ "$(apic GET "/api/sessions/$SID/files/read?path=/home/dispatch/.dispatch/claude-accounts/a1/.credentials.json")" = 403 ] && ! echo "$R4" | grep -q '"account"' && [ "$(apic GET "/api/sessions/$SID/files/read?path=/home/dispatch/proof-pty.txt")" = 200 ] && fok "the file routes serve the home, but not an account folder of a harness in ~/.dispatch" "$(echo "$R4" | jget reason)" || fbad "the file routes do not serve an account folder of a harness in ~/.dispatch" "HTTP $(apic GET "/api/sessions/$SID/files/read?path=/home/dispatch/.dispatch/claude-accounts/a1/.credentials.json") $(echo "$R4" | head -c 120)"
+
 # ── The Inbox tool, end to end (the bundled plugin `previews`), and live tool changes ──────────────────────
 # A thread's harness starts the proof's MCP client (agent-work.mjs) with its own arguments and key. It
 # hands the person a CSV file and a secret through the Inbox tool, then waits for the tools of a system

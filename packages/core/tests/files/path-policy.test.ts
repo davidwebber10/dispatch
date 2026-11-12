@@ -94,6 +94,31 @@ describe('the policy itself', () => {
     expect(p.problem(path.join(w.home, '.claude.json'), q)).toBe('harness');
   });
 
+  test('privilege separation: the state is outside the home, and the old data folder in the home stays refused', () => {
+    // The daemon's state moved to a folder of its own; `~/.dispatch` keeps the harness account folders.
+    const state = path.join(path.dirname(w.home), 'state-gate', 'state');
+    fs.mkdirSync(path.join(w.dataDir, 'claude-accounts', 'a1'), { recursive: true });
+    fs.mkdirSync(state, { recursive: true });
+    fs.writeFileSync(path.join(w.dataDir, 'claude-accounts', 'a1', '.credentials.json'), 'an added account');
+    fs.writeFileSync(path.join(state, 'dispatch.db'), 'the database');
+    const q = { project: w.project, use: 'read' as const };
+    const separated = policyOf({ dataDir: state, agentDataDir: w.dataDir });
+    expect(separated.problem(path.join(w.dataDir, 'claude-accounts', 'a1', '.credentials.json'), q)).toBe('daemon');
+    expect(separated.problem(path.join(w.dataDir, 'chat', 'notes.md'), q)).toBe('daemon');
+    expect(separated.problem(w.dataDir, { project: w.project, use: 'write' })).toBe('daemon');
+    expect(separated.problem(path.join(state, 'dispatch.db'), q)).toBe('daemon');
+    expect(separated.problem(path.dirname(state), q)).toBe('outside');
+    // A link in a project that leads there is followed first.
+    fs.symlinkSync(path.join(w.dataDir, 'claude-accounts'), path.join(w.project, 'accounts'));
+    expect(separated.problem(path.join(w.project, 'accounts', 'a1', '.credentials.json'), q)).toBe('daemon');
+    // The rest of the home and the projects are as before.
+    expect(separated.problem(path.join(w.project, 'report.txt'), q)).toBeNull();
+    expect(separated.problem(path.join(w.home, 'notes', 'todo.txt'), q)).toBeNull();
+    // Without that folder named (the move was not announced to the policy) the account file would be served:
+    // this is what the field closes.
+    expect(policyOf({ dataDir: state }).problem(path.join(w.dataDir, 'claude-accounts', 'a1', '.credentials.json'), q)).toBeNull();
+  });
+
   test('business: the project of the request only, and nothing that configures an agent program', () => {
     const p = business();
     const q = { project: w.project, use: 'read' as const };
