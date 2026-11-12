@@ -127,7 +127,8 @@ RUN npm install -g "@openai/codex@${CODEX_VERSION}" "mcp-remote@${MCP_REMOTE_VER
 # of surfacing as "command not found" inside a user's first thread.
 RUN bash -lc 'command -v claude && command -v codex && command -v opencode && command -v mcp-remote && claude --version && codex --version && opencode --version'
 
-RUN chmod -R a+rX /app && chmod -R go-w /app
+# No chmod/chown -R over /app: a recursive mode or owner change copies every file into a new layer
+# (~380 MB). Root-owned files under the default umask are already readable and not writable by uid 1000.
 COPY --chown=root:root docker/hosted/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 755 /usr/local/bin/entrypoint.sh
 
