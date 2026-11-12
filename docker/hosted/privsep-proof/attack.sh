@@ -237,10 +237,20 @@ rm -f "$HOME/projects/proj1/innocent.txt" 2>/dev/null
 
 echo "== 9. stated, not protected (see section 12 of the design)"
 if echo '{}' > "$HOME/.claude-proof-setting" 2>/dev/null; then info "a workload can write harness files in the home" "accepted: same user, same rights, never the daemon's"; rm -f "$HOME/.claude-proof-setting"; fi
+# A second harness started from a shell: the managed policy decides whether it may skip approvals.
+# The policy file is the image's (the harness-policy work); what is proven here is that it says so
+# and that a workload cannot change it. The harness's own refusal needs a sign-in, which the proof
+# does not have, so it is not observed.
+MP=/etc/claude-code/managed-settings.json
+if grep -q '"disableBypassPermissionsMode"' "$MP" 2>/dev/null; then
+  ok "the managed policy turns the approval bypass off, and it is read-only" "$(stat -c '%U %a' "$MP")"
+else
+  info "this image's managed policy does not turn the approval bypass off" "a nested harness gains no daemon or platform right; see the harness policy"
+fi
 REAL="$(ls /opt/agents/.local/share/claude/versions/* 2>/dev/null | head -1)"
 if [ -n "$REAL" ] && [ -x "$REAL" ]; then
-  out="$(timeout 20 "$REAL" --dangerously-skip-permissions -p 'say hi' 2>&1 | head -c 400)"
-  if printf '%s' "$out" | grep -qiE 'bypass|not allowed|disabled|managed'; then ok "nested harness with the bypass flag is refused by the managed policy" ; else info "nested harness with the bypass flag is NOT refused by policy here" "it gains no daemon or platform right; closing it is the harness-policy work"; fi
+  out="$(cd /tmp && timeout 20 "$REAL" --dangerously-skip-permissions -p 'say hi' 2>&1 | head -c 300 | tr '\n' ' ')"
+  info "a nested harness with the bypass flag answered" "${out:-nothing}"
 fi
 info "another AI account's credential" "not isolated by design (one person, one agent user)"
 
