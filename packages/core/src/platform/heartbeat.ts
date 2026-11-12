@@ -2,6 +2,7 @@ import { BOX_CAPABILITIES } from './capabilities.js';
 import { currentProfile } from '../os/profile.js';
 import type Database from 'better-sqlite3';
 import { getRunningVersion } from '../update/version.js';
+import { collectIdleInfo, type IdleInfo, type PluginJobsInfo } from '../os/idle-info.js';
 
 /**
  * Publishes a small per-box state projection to OS.
@@ -32,8 +33,13 @@ export interface BoxHeartbeat {
     needsInput: number;
     error: number;
   };
-  /** Most recent activity across all threads, for the fleet view's "last active". */
+  /**
+   * The newest real activity (os/idle-info.ts): a person's message, a thread turn, an automation run.
+   * The heartbeat, the OS poll and an open page never move it. OS's idle sleep reads it.
+   */
   lastActivityAt: string | null;
+  /** Work this box starts by itself on a timer (os/idle-info.ts). OS never sleeps a box with work due. */
+  automations?: IdleInfo['automations'];
   /** Whether OS-brokered tools resolved on the last attempt (design §4.2.1). */
   toolsReachable: boolean;
   /** What this build enforces (platform/capabilities.ts): OS refuses an older image for a business person. */
@@ -74,7 +80,7 @@ export interface HeartbeatOptions {
 /** Collect the projection from the terminals table. Cheap: one small scan. */
 export function collectHeartbeat(
   db: Database.Database,
-  extra: { authenticated: boolean; toolsReachable: boolean; ownerEmail?: string; boxId?: string },
+  extra: { authenticated: boolean; toolsReachable: boolean; ownerEmail?: string; boxId?: string; pluginJobs?: PluginJobsInfo },
 ): BoxHeartbeat {
   let rows: Array<{ status: string; last_activity_at: string | null }> = [];
   try {
@@ -86,11 +92,7 @@ export function collectHeartbeat(
     rows = [];
   }
   const count = (s: string) => rows.filter((r) => r.status === s).length;
-  const lastActivityAt = rows
-    .map((r) => r.last_activity_at)
-    .filter((v): v is string => Boolean(v))
-    .sort()
-    .pop() ?? null;
+  const idle = collectIdleInfo(db, extra.pluginJobs);
 
   return {
     ownerEmail: extra.ownerEmail ?? null,
@@ -103,7 +105,8 @@ export function collectHeartbeat(
       needsInput: count('needs_input'),
       error: count('error'),
     },
-    lastActivityAt,
+    lastActivityAt: idle.lastActivityAt,
+    automations: idle.automations,
     toolsReachable: extra.toolsReachable,
     version: getRunningVersion(),
     capabilities: [...BOX_CAPABILITIES],
@@ -128,6 +131,7 @@ export class HeartbeatService {
       toolsReachable: boolean;
       usage7d?: BoxHeartbeat['usage7d'];
       usageByModel7d?: BoxHeartbeat['usageByModel7d'];
+      pluginJobs?: PluginJobsInfo;
     },
     opts: HeartbeatOptions = {},
   ) {
@@ -148,6 +152,7 @@ export class HeartbeatService {
       ...collectHeartbeat(this.db, {
         authenticated: probe.authenticated,
         toolsReachable: probe.toolsReachable,
+        pluginJobs: probe.pluginJobs,
         ownerEmail: this.ownerEmail,
         boxId: this.boxId,
       }),

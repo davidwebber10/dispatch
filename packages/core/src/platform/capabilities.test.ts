@@ -5,10 +5,18 @@ import { createOsToolsRouter } from '../os/tools-proxy.js';
 
 describe('the advertised capabilities are true of this tree', () => {
   test('the list', () => {
-    expect([...BOX_CAPABILITIES]).toEqual(['base-path', 'os-tools-proxy', 'profile']);
+    expect([...BOX_CAPABILITIES]).toEqual(['base-path', 'os-tools-proxy', 'profile', 'headless-v1', 'idle-info']);
   });
   test('base-path', () => {
     expect(normalizeBasePath('/dispatch/')).toBe('/dispatch');
+  });
+  test('headless-v1: the one-call chat list exists', async () => {
+    const { createChatsRouter } = await import('../routes/chats.js');
+    expect(typeof createChatsRouter).toBe('function');
+  });
+  test('idle-info: the heartbeat carries automations', async () => {
+    const { collectIdleInfo } = await import('../os/idle-info.js');
+    expect(typeof collectIdleInfo).toBe('function');
   });
   test('os-tools-proxy', () => {
     expect(typeof createOsToolsRouter).toBe('function');

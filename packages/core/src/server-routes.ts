@@ -72,6 +72,7 @@ import { createUsageLimitsRouter } from './routes/usage-limits.js';
 import { createBootstrapRouter } from './routes/bootstrap.js';
 import { businessProfileGate } from './profile/business-gate.js';
 import { hostContextResponse, type HostContext } from './profile/host-context.js';
+import { createChatsRouter } from './routes/chats.js';
 
 /** Everything the `/api` routes need. `createApp` (tests) and `startServer` (daemon) both build one. */
 export interface ApiRouteDeps {
@@ -189,6 +190,7 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   });
 
   for (const r of d.osRouters ?? []) app.use('/api', r);
+  app.use('/api', createChatsRouter(d.db)); // docs/headless-api.md
   app.use('/api/sessions', createSessionsRouter(d.sessionService, d.broadcaster, d.db));
   app.use('/api', createTerminalsRouter(d.sessionService, d.terminalsBroadcaster, d.statusService));
   if (d.journal) app.use('/api', createJournalRouter(d.journal, (id) => !!d.sessionService.getTerminal(id))); // W3-D

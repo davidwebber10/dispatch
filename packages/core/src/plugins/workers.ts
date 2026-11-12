@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import type { PluginRegistry, PluginRow } from './registry.js';
 import type { ThreadEvents, ThreadEvent } from './thread-events.js';
 import { redactThreadEvent } from './thread-events.js';
-import { parseCron, cronMatches, type CronSpec } from './cron.js';
+import { parseCron, cronMatches, nextCronRun, type CronSpec } from './cron.js';
 import { inheritedEnv } from '../platform/inherited-env.js';
 
 /**
@@ -164,6 +164,23 @@ export class PluginWorkers {
     const all = text.split('\n');
     if (all[all.length - 1] === '') all.pop();
     return all.slice(-Math.max(1, lines)).join('\n') + (all.length ? '\n' : '');
+  }
+
+  /** The jobs the running workers will fire by themselves, and the soonest next minute (idle info, os/idle-info.ts). */
+  scheduledJobs(now: Date = new Date()): { count: number; nextRunAt: string | null } {
+    let count = 0;
+    let next: number | null = null;
+    for (const [id, w] of this.workers) {
+      if (w.state !== 'running') continue;
+      for (const job of this.registry.get(id)?.worker?.jobs ?? []) {
+        const spec = specOf(job.cron);
+        if (!spec) continue;
+        count++;
+        const at = nextCronRun(spec, now);
+        if (at && (next === null || at.getTime() < next)) next = at.getTime();
+      }
+    }
+    return { count, nextRunAt: next === null ? null : new Date(next).toISOString() };
   }
 
   /** Fire the jobs whose cron matches this minute (once per minute per job). */

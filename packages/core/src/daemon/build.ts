@@ -44,7 +44,8 @@ import { jsonErrorHandler } from '../http/error-handler.js';
 import { createJsonBody } from '../http/json-body.js';
 import { jsonCompression } from '../http/compress.js';
 import { OsConnectionsProvider } from '../integrations/os-provider.js';
-import { createOsToolsRouter, osToolsServerSpec } from '../os/tools-proxy.js';
+import { notePersonMessage } from '../os/idle-info.js';
+import { createOsToolsRouter, OsToolCatalog, osSystemServerSpecs, systemsForSpawn } from '../os/tools-proxy.js';
 import { ClaudeCliLogin, planOf } from '../auth/claude-cli-login.js';
 import { useCleanClaudeLogin, isHostedBox } from '../os/hosted-mode.js';
 import { boxLog } from '../os/box-log.js';
@@ -531,6 +532,9 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   const integrationsService = new IntegrationsService(db, integrationLauncher(dataDir), () => { const st = secretsService.status(); return st.connected && st.enabled; });
   // Tools brokered by OS, resolved per spawn (design §4.2.1).
   const osConnections = new OsConnectionsProvider({ baseUrl: env.OS_BASE_URL, boxToken: env.OS_BOX_TOKEN, ownerEmail: env.DISPATCH_OWNER_EMAIL });
+  // OS's tool list: which company systems get a server (os/tools-proxy.ts). Follows every change of OS's answer.
+  const osToolCatalog = new OsToolCatalog({ provider: osConnections });
+  if (osConnections.enabled) osToolCatalog.start();
   // ONE profile for this daemon: OS's live answer (kept while OS is unreachable), else DISPATCH_PROFILE,
   // else business on a hosted box / developer locally. The gate, the sockets, the page and every spawn read it.
   const profileNow = () => resolveProfile(osConnections.snapshot().profile, env);
@@ -542,7 +546,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   const toolsAuth = new ToolAuthProber({ base: toolsBase });
   const providerOfType = (type: string): AccountProvider | null => (type === 'claude-code' ? 'claude' : type === 'codex' ? 'codex' : null);
   wireSessionService(sessionService, {
-    onUserPrompt: (id, text, source) => { if (source === 'user') threadAutoNamer.notifyPrompt(id, text); threadEvents.onPrompt(id, text, source); },
+    onUserPrompt: (id, text, source) => { if (source === 'user') { threadAutoNamer.notifyPrompt(id, text); notePersonMessage(db, new Date()); } threadEvents.onPrompt(id, text, source); },
     onSpawned: (id, tools) => threadEvents.onSpawned(id, tools),
     onStatusDeclared: (id, decl) => threadEvents.onStatus(id, decl),
     pluginInjection: (harness, sessionId) => { const inj = plugins.modelInjection(harness); return { ...inj, prompts: [...inj.prompts, ...skills.injection(sessionId, harness)] }; },
@@ -559,11 +563,12 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     // so every harness gets it the way it gets that one (Claude --append-system-prompt, Codex
     // developerInstructions, Grok --rules, OpenCode's rules file).
     secretsServerSpec: () => ({ spec: secretsService.getServerSpec(), prompt: [secretsService.getSystemPrompt(), osConnections.getSystemPrompt()].filter(Boolean).join('\n\n') || null }),
-    // The company tools (os/tools-proxy.ts): one `os-tools` server per thread when OS gives this
-    // person tools, reaching OS only through this daemon's loopback route.
+    // The company tools (os/os-servers.ts): one server per company system that has a tool for this
+    // person, reaching OS only through this daemon's loopback route (os/tools-proxy.ts). A running
+    // thread keeps the servers it started with; a change in OS reaches the next spawn.
     integrationsSpecs: () => {
       const specs = [...integrationsService.getServerSpecs(), ...osConnections.getServerSpecs()];
-      if (osConnections.osToolsUrl() && daemonApi) specs.push(osToolsServerSpec(daemonApi));
+      if (osConnections.osToolsUrl() && daemonApi) specs.push(...osSystemServerSpecs(daemonApi, systemsForSpawn(osConnections, osToolCatalog)));
       return specs;
     },
     toolsAwareness: () => {
@@ -603,14 +608,16 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     toolsReachable: osConnections.snapshot().reachable,
     usage7d: usage.total(7),
     usageByModel7d: usage.byModel(7),
+    pluginJobs: pluginWorkers.scheduledJobs(),
   }));
 
-  // Company tools (os/tools-proxy.ts): the loopback route a thread's os-tools bridge calls, and the
+  // Company tools (os/tools-proxy.ts): the loopback route of each company-system server, and the
   // state the Company connections panel reads. On a local install OS is not configured, so the routes
   // answer "not hosted" and inject nothing. Mounted by mountApiRoutes (osRouters) with approvals and continuity.
   const osRouters = [
     createOsToolsRouter({
       provider: osConnections,
+      catalog: osToolCatalog,
       onUnreachable: (terminalId, message) => {
         sessionService.structuredManagerForTerminal(terminalId)?.postEvent?.(terminalId, { type: 'system', subtype: 'dispatch_notice', level: 'warning', message });
       },
