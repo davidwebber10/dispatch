@@ -57,10 +57,11 @@ export function notConnectedOf(text: string | undefined): { system: string; labe
   try {
     const j = JSON.parse(text.trim());
     if (j?.error !== 'not_connected' && j?.code !== 'not_connected') return null;
-    const system = typeof j.system === 'string' ? j.system : '';
-    if (!system) return null;
-    const label = typeof j.label === 'string' && j.label ? j.label : system;
-    const connect = typeof j.connectUrl === 'string' ? j.connectUrl : typeof j.connectPath === 'string' ? j.connectPath : null;
+    const system = typeof j.system === 'string' ? j.system : typeof j.system_id === 'string' ? j.system_id : '';
+    // Contract 2026-11-11: `connect_url`. Older shapes: connectUrl, connectPath.
+    const connect = [j.connect_url, j.connectUrl, j.connectPath, j.connect_path].find((v): v is string => typeof v === 'string' && !!v) ?? null;
+    if (!system && !connect) return null;
+    const label = typeof j.label === 'string' && j.label ? j.label : system || 'this system';
     return { system, label, connect };
   } catch { return null; }
 }

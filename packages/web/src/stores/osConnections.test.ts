@@ -5,6 +5,8 @@ describe('company connections helpers', () => {
   test('reads not_connected from a tool result text', () => {
     expect(notConnectedOf('{"error":"not_connected","system":"google","label":"Google","connectPath":"/connections/google"}'))
       .toEqual({ system: 'google', label: 'Google', connect: '/connections/google' });
+    expect(notConnectedOf('{"code":"not_connected","system":"zendesk","connect_url":"https://os.example/ask/connections"}'))
+      .toEqual({ system: 'zendesk', label: 'zendesk', connect: 'https://os.example/ask/connections' });
     expect(notConnectedOf('{"error":"not_permitted","system":"x"}')).toBeNull();
     expect(notConnectedOf('plain text')).toBeNull();
   });

@@ -729,7 +729,7 @@ export interface OsConnections {
   reachable: boolean;
   error: string | null;
   fetchedAt: string | null;
-  entitled: boolean | null;
+  entitled: string[] | null;
   profile: 'business' | 'developer' | null;
   osPublicUrl: string | null;
   osToolsEnabled: boolean;

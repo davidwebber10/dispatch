@@ -13,7 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 const CONNECTIONS = {
-  servers: [], env: {}, systemPrompt: 'Use the company tools.', entitled: true, profile: 'business',
+  servers: [], env: {}, systemPrompt: 'Use the company tools.', entitled: ['google'], profile: 'business',
   osPublicUrl: 'https://os.example', osTools: { url: 'https://os.internal/api/dispatch/mcp' },
   needsConsent: [{ system: 'google', label: 'Google', connectUrl: 'https://os.example/connections/google' }],
 };
@@ -85,7 +85,7 @@ describe('os-tools proxy', () => {
   test('GET /api/os/connections shows the consent cards and profile, never env or tokens', async () => {
     const { base } = await setup(vi.fn());
     const body = await (await fetch(`${base}/api/os/connections`)).json();
-    expect(body).toMatchObject({ hosted: true, reachable: true, profile: 'business', osToolsEnabled: true, entitled: true });
+    expect(body).toMatchObject({ hosted: true, reachable: true, profile: 'business', osToolsEnabled: true, entitled: ['google'] });
     expect(body.needsConsent).toEqual([{ system: 'google', label: 'Google', connectUrl: 'https://os.example/connections/google' }]);
     expect(JSON.stringify(body)).not.toContain('os-box-token');
   });

@@ -90,12 +90,12 @@ describe('OsConnectionsProvider', () => {
 
 describe('OsConnectionsProvider — the box <-> OS contract fields', () => {
   test('reads profile, entitled, osTools, osPublicUrl and the consent list (system, label, connectUrl)', async () => {
-    const body = { servers: [], profile: 'business', entitled: true, osPublicUrl: 'https://os.example/', osTools: { url: 'https://os.internal/mcp' },
+    const body = { servers: [], profile: 'business', entitled: ['google', 'zendesk'], osPublicUrl: 'https://os.example/', osTools: { url: 'https://os.internal/mcp' },
       needsConsent: [{ system: 'google', label: 'Google', connectUrl: 'https://os.example/c/google' }, { id: 'jira', connectUrl: '/c/jira' }, { label: 'no url' }] };
     const p = provider(vi.fn().mockResolvedValue({ ok: true, json: async () => body }));
     const s = await p.refresh();
     expect(s.profile).toBe('business');
-    expect(s.entitled).toBe(true);
+    expect(s.entitled).toEqual(['google', 'zendesk']);
     expect(p.osToolsUrl()).toBe('https://os.internal/mcp');
     expect(s.osPublicUrl).toBe('https://os.example');
     expect(s.needsConsent).toEqual([

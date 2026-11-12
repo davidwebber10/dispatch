@@ -34,7 +34,8 @@ export interface OsConnectionsResponse {
   systemPrompt?: string | null;
   /** Connections that need a one-off user consent before they can be attached. */
   needsConsent?: Array<{ system?: string; id?: string; label?: string; connectUrl?: string }>;
-  entitled?: boolean;
+  /** The granted system ids (contract 2026-11-11). An older OS sent a boolean. */
+  entitled?: string[] | boolean;
   profile?: string;
   osPublicUrl?: string | null;
   osTools?: { url?: string } | null;
@@ -46,8 +47,8 @@ export interface OsConnectionsState {
   env: Record<string, string>;
   systemPrompt: string | null;
   needsConsent: OsConsent[];
-  /** Whether OS says this person may use Dispatch at all. Null until OS answered once. */
-  entitled: boolean | null;
+  /** The system ids OS grants this person (contract: `entitled`). Null until OS answered once. */
+  entitled: string[] | null;
   /** OS's profile for the person. Null until OS answered (then the env DISPATCH_PROFILE applies). */
   profile: OsProfile | null;
   osPublicUrl: string | null;
@@ -69,7 +70,7 @@ export interface OsConnectionsPublic {
   reachable: boolean;
   error: string | null;
   fetchedAt: string | null;
-  entitled: boolean | null;
+  entitled: string[] | null;
   profile: OsProfile | null;
   osPublicUrl: string | null;
   osToolsEnabled: boolean;
@@ -232,7 +233,7 @@ export class OsConnectionsProvider {
           env: body?.env && typeof body.env === 'object' ? body.env : {},
           systemPrompt: typeof body?.systemPrompt === 'string' && body.systemPrompt.trim() ? body.systemPrompt : null,
           needsConsent: normalizeConsent(body?.needsConsent),
-          entitled: typeof body?.entitled === 'boolean' ? body.entitled : null,
+          entitled: Array.isArray(body?.entitled) ? body.entitled.filter((x): x is string => typeof x === 'string') : null,
           // An answer without a profile keeps the one we had (an older OS build).
           profile: profile ?? this.state.profile,
           osPublicUrl: httpUrl(body?.osPublicUrl) ?? this.state.osPublicUrl,
@@ -286,7 +287,7 @@ export class OsConnectionsProvider {
   private set(next: OsConnectionsState): void {
     const prev = this.state;
     this.state = next;
-    const changed = prev.reachable !== next.reachable || prev.profile !== next.profile || prev.entitled !== next.entitled
+    const changed = prev.reachable !== next.reachable || prev.profile !== next.profile || JSON.stringify(prev.entitled) !== JSON.stringify(next.entitled)
       || (prev.osTools?.url ?? null) !== (next.osTools?.url ?? null)
       || JSON.stringify(prev.needsConsent) !== JSON.stringify(next.needsConsent)
       || prev.systemPrompt !== next.systemPrompt
