@@ -44,6 +44,9 @@ import { createJsonBody } from '../http/json-body.js';
 import { jsonCompression } from '../http/compress.js';
 import { OsConnectionsProvider } from '../integrations/os-provider.js';
 import { createOsToolsRouter, osToolsServerSpec } from '../os/tools-proxy.js';
+import { ClaudeCliLogin, planOf } from '../auth/claude-cli-login.js';
+import { useCleanClaudeLogin, isHostedBox } from '../os/hosted-mode.js';
+import { wireStopOnAuthFailure } from '../os/auth-stop.js';
 import { IntegrationsService, type IntegrationLauncher } from '../integrations/service.js';
 import { HeartbeatService } from '../platform/heartbeat.js';
 import { inheritedEnv } from '../platform/inherited-env.js';
@@ -467,6 +470,14 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   // Terminal-free Claude login (design doc §11.2). Its token is injected by the spawn-env refresh,
   // so a box authenticated mid-session takes effect on the next spawn without a daemon restart.
   const claudeLogin = new ClaudeLoginService(dataDir);
+  // A hosted box (or DISPATCH_CLAUDE_LOGIN=cli) signs in with Claude Code's own `claude auth login`:
+  // no token is read, kept or injected (auth/claude-cli-login.ts). A local install keeps setup-token.
+  if (useCleanClaudeLogin(env)) {
+    claudeLogin.useCleanLogin(new ClaudeCliLogin({ env: () => ({ ...inheritedEnv(), ...spawnEnv.current() }) }), { ownerEmail: env.DISPATCH_OWNER_EMAIL });
+    claudeLogin.onAccountConfigDir = ({ id, label, configDir, status }) => {
+      accounts.upsertClaudeConfigDir({ id, label, configDir, ...(status.email ? { email: status.email } : {}), ...(planOf(status) ? { plan: planOf(status)! } : {}) });
+    };
+  }
   // Added Codex accounts sign in with `codex login --device-auth` under the threads' spawn env
   // (PATH with the bundled tools), so it runs the same `codex` the threads do.
   const codexLogin = new CodexLoginService({
@@ -478,6 +489,10 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     accounts, claudeLogin, pushService, broadcaster, spawnEnv: () => spawnEnv.current(), network, clock: opts.clock,
   });
   const { usageLimits, limitSnapshots, usageGauge } = limits;
+  // A hosted box: a chat thread whose CLI is signed out gives its process back (os/auth-stop.ts).
+  const stopAuthWatch = isHostedBox(env) || useCleanClaudeLogin(env)
+    ? wireStopOnAuthFailure({ managers: harnesses.managers.values(), stop: (id) => sessionService.stopTerminal(id), onAuthFailure: () => claudeLogin.noteAuthFailure() })
+    : () => {};
   // Fleet totals are a read-only projection of the canonical analytics ledger.
   const usage = new UsageRecorder(db);
   wireThreadSettledPush(db, statusService, pushService);
@@ -667,6 +682,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
       usageGauge.stop();
       boxHeartbeat.stop();
       osConnections.stop();
+      stopAuthWatch();
       threadAutoNamer.dispose();
       endless.stop();
       endlessManager.killAll();

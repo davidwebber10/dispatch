@@ -1,6 +1,7 @@
 import { threadViewCache } from '../../../lib/threadViewCache';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { SignedOutCard } from './SignedOutCard';
+import { ConnectClaudeCard } from '../../connections/ConnectClaudeCard';
 import { ModelSwitcher } from './ModelSwitcher';
 import { isClaudeAuthError } from '../../endless/ClaudeLogin';
 import { MessageScroller } from '@shadcn/react/message-scroller';
@@ -272,6 +273,11 @@ export function ChatView({ terminalId }: { terminalId: string }) {
         )}
         </div>
       </MessageScroller.Provider>
+
+      {/* A hosted box signed out of Claude: the one guided "Connect your Claude account" step, above the composer. */}
+      {tab?.type === 'claude-code' && !authRequired && (
+        <ConnectClaudeCard />
+      )}
 
       {/* Dismissible "resume from summary?" card, above the composer (not inside it — see
           ResumeAdviceCard's doc comment for why this exists at all). */}

@@ -109,7 +109,7 @@ export function createAccountsRouter(accounts: AccountsStore, claudeLogin: Claud
     // "Sign in again" (W1-H): the login is for one saved account, whose token it replaces.
     const accountId = typeof req.body?.accountId === 'string' && req.body.accountId ? req.body.accountId : undefined;
     if (accountId === 'cli') return void res.status(400).json({ error: 'the CLI login is signed in on its own computer (claude)' });
-    if (accountId && accounts.claudeToken(accountId) === null) return void res.status(404).json({ error: 'unknown account' });
+    if (accountId && !accounts.has('claude', accountId)) return void res.status(404).json({ error: 'unknown account' });
     try { res.json(await (accountId ? claudeLogin.startForAccount(label, accountId) : claudeLogin.startForAccount(label))); } catch (err) { res.status(500).json({ error: clientMessage(err) }); }
   });
 

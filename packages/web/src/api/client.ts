@@ -198,7 +198,7 @@ export const api = {
     req<{ ok: true }>('/api/endless/send', { method: 'POST', body: body({ text, project, images, files }) }),
   endlessRetry: () => req<{ ok: true }>('/api/endless/retry', { method: 'POST' }),
   endlessStop: () => req<{ ok: true }>('/api/endless/stop', { method: 'POST' }),
-  claudeAuthStatus: () => req<{ authenticated: boolean; session: ClaudeLoginSession | null }>('/api/claude-auth'),
+  claudeAuthStatus: () => req<{ authenticated: boolean; session: ClaudeLoginSession | null; method?: 'claude-auth-login'; account?: { email: string | null; plan: string | null; orgName: string | null } | null }>('/api/claude-auth'),
   claudeLoginStart: () => req<ClaudeLoginSession>('/api/claude-auth/login', { method: 'POST' }),
   claudeLoginCode: (code: string) => req<ClaudeLoginSession>('/api/claude-auth/login/code', { method: 'POST', body: body({ code }) }),
   endlessState: () => req<EndlessState>('/api/endless/state'),
