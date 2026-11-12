@@ -8,6 +8,7 @@ import { useUsageLimits, UsageLimitsRows } from './UsageLimitsSection';
 import { useAccounts, threadAccount } from '../../stores/accounts';
 import { AccountSwitchModal } from '../common/AccountSwitchModal';
 import { useActiveModel, activeModelOf } from '../../stores/activeModel';
+import { can } from '../../lib/profile';
 import { friendlyModelName } from '../../lib/modelName';
 
 function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
@@ -27,6 +28,7 @@ const label: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSp
 const btn: React.CSSProperties = { height: 30, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontSize: 12, cursor: 'pointer' };
 
 export function DetailsPane({ projectId, terminalId }: { projectId: string | null; terminalId: string | null }) {
+  const machine = can('details.machine');
   const project = useProjects((s) => s.sessions.find((x) => x.id === projectId)) ?? null;
   const activity = useActivity((s) => (terminalId ? s.byTerminal[terminalId] : undefined));
   const activeModels = useActiveModel((s) => s.byTerminal);
@@ -80,12 +82,13 @@ export function DetailsPane({ projectId, terminalId }: { projectId: string | nul
           {tab?.label && <Row label="Name" value={tab.label} />}
           {/* Pretty has no CLI status line for activity.model: show the active model instead. */}
           {!activity?.model && prettyModel && <Row label="Model" value={friendlyModelName(prettyModel) ?? prettyModel} />}
-          <Row label="ID" value={terminalId} mono />
-          {term?.workingDir && <Row label="Directory" value={homePath(term.workingDir)} mono />}
-          {branch && <Row label="Branch" value={`⎇ ${branch}`} mono />}
-          {term?.pid != null && <Row label="PID" value={String(term.pid)} mono />}
+          {/* Machine facts (ID, folder, branch, PID, tool servers, provider) are developer detail (lib/profile.ts 'details.machine'). */}
+          {machine && <Row label="ID" value={terminalId} mono />}
+          {machine && term?.workingDir && <Row label="Directory" value={homePath(term.workingDir)} mono />}
+          {machine && branch && <Row label="Branch" value={`⎇ ${branch}`} mono />}
+          {machine && term?.pid != null && <Row label="PID" value={String(term.pid)} mono />}
           {/* Every MCP server the thread was launched with (docs/superpowers/specs/2026-11-07-plugins-design.md, section 3.3). */}
-          {Array.isArray((term?.config as { toolsAvailable?: unknown } | undefined)?.toolsAvailable) && ((term!.config as { toolsAvailable: string[] }).toolsAvailable.length > 0) && (
+          {machine && Array.isArray((term?.config as { toolsAvailable?: unknown } | undefined)?.toolsAvailable) && ((term!.config as { toolsAvailable: string[] }).toolsAvailable.length > 0) && (
             <Row label="Tools" value={(term!.config as { toolsAvailable: string[] }).toolsAvailable.join(', ')} mono />
           )}
           {status && <Row label="Status" value={status} />}
@@ -94,8 +97,8 @@ export function DetailsPane({ projectId, terminalId }: { projectId: string | nul
       )}
       <div style={{ ...label, margin: '14px 0 8px' }}>PROJECT</div>
       <Row label="Name" value={project.name} />
-      <Row label="Directory" value={homePath(project.workingDir)} mono />
-      <Row label="Provider" value={project.provider} />
+      {machine && <Row label="Directory" value={homePath(project.workingDir)} mono />}
+      {machine && <Row label="Provider" value={project.provider} />}
       <Row label="Status" value={project.status} />
       <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
         {terminalId && <button onClick={() => { useTabs.getState().markLoading(terminalId); void api.relaunchTerminal(terminalId); }} style={btn}>Reload Thread</button>}

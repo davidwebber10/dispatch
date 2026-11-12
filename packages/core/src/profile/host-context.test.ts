@@ -75,3 +75,14 @@ describe('indexHtmlWithHostContext', () => {
     expect(JSON.parse(decoded).osBaseUrl).toBe('https://os.example/?a="b"&c=<d>');
   });
 });
+
+import { contentSecurityPolicy, osOriginFor } from '../auth/security-headers.js';
+describe('the page may ask OS for its app list', () => {
+  test('a hosted box names the OS origin in connect-src; a local install adds nothing', () => {
+    expect(osOriginFor({})).toBe('');
+    const origin = osOriginFor({ OS_BASE_URL: 'http://os-internal:8000', OS_PUBLIC_URL: 'https://os.example/x', OS_BOX_TOKEN: 't' });
+    expect(origin).toBe('https://os.example');
+    expect(contentSecurityPolicy('box.example', origin)).toContain("connect-src 'self' ws://box.example wss://box.example https://os.example");
+    expect(contentSecurityPolicy('box.example', '')).toContain("connect-src 'self' ws://box.example wss://box.example;");
+  });
+});

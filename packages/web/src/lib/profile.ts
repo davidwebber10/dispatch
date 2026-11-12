@@ -21,61 +21,62 @@ export interface FeatureRule {
   developer: true;
   /** False: hidden on a hosted workspace in EVERY profile (the feature cannot work there). */
   hosted?: false;
-  /** What the key covers, for the person who edits this map. */
-  note: string;
 }
 
-const show = (note: string): FeatureRule => ({ business: true, developer: true, note });
-const hide = (note: string): FeatureRule => ({ business: false, developer: true, note });
+// What each key covers is the comment on its line (comments, not strings: this module is in the first load).
+const show = (): FeatureRule => ({ business: true, developer: true });
+const hide = (): FeatureRule => ({ business: false, developer: true });
 /** Hidden for business people, and on a hosted workspace for everyone (it needs the person's own computer). */
-const localOnly = (note: string): FeatureRule => ({ business: false, developer: true, hosted: false, note });
+const localOnly = (): FeatureRule => ({ business: false, developer: true, hosted: false });
 
 /** EDIT HERE. The proposal for business people (to be revised after the design session). */
 export const FEATURES = {
   // ── Shown to a business person ──────────────────────────────────────────────
-  'threads.chat': show('Projects, threads list, and chat (Pretty) threads for every harness that supports them'),
-  'tabs.notes': show('Notes tabs'),
-  'tabs.files': show('File tabs, the Files shelf and the file browser (read, upload, download)'),
-  previews: show('Previews / Inbox'),
-  'needs-you': show('The "Needs you" list'),
-  automations: show('Automations and schedules'),
-  endless: show('Chat ("Endless"): it runs without a terminal'),
-  accounts: show('Settings > Accounts: sign in to Claude and Codex'),
-  approvals: show('The approvals UI'),
-  attachments: show('Attachments and voice input in the composer'),
-  update: show('The update prompt (plain wording when hosted)'),
-  'settings.appearance': show('Settings > Appearance (only the OS themes when hosted)'),
-  'settings.notifications': show('Settings > Notifications'),
-  'settings.about': show('Settings > About & updates'),
+  'threads.chat': show(), // Projects, threads list, and chat (Pretty) threads for every harness that supports them
+  'tabs.notes': show(), // Notes tabs
+  'tabs.files': show(), // File tabs, the Files shelf and the file browser (read, upload, download)
+  previews: show(), // Previews / Inbox
+  'needs-you': show(), // The "Needs you" list
+  automations: show(), // Automations and schedules
+  endless: show(), // Chat ("Endless"): it runs without a terminal
+  accounts: show(), // Settings > Accounts: sign in to Claude and Codex
+  approvals: show(), // The approvals UI
+  attachments: show(), // Attachments and voice input in the composer
+  update: show(), // The update prompt (plain wording when hosted)
+  'tabs.grid': show(), // Tabs across the top; drag to merge them into a grid (Multi-pane tabs, "Operator")
+  'settings.appearance': show(), // Settings > Appearance (only the OS themes when hosted)
+  'settings.notifications': show(), // Settings > Notifications
+  'settings.about': show(), // Settings > About & updates
 
   // ── Hidden from a business person ───────────────────────────────────────────
-  'threads.cli': hide('CLI/terminal mode, the Pretty <-> CLI switch, the CLI sign-in shell'),
-  'threads.shell': hide('Shell threads'),
-  'threads.browser': hide('Browser threads'),
-  'threads.git': hide('Worktree, git and branch options (new-thread worktree, branch a thread)'),
-  'review.diff': hide('Diff review'),
-  'control-plane': hide('Control Plane: overseer, coordinator, ledger, recaps, decision cards'),
-  missions: hide('Missions and agent types'),
-  analytics: hide('Analytics'),
-  'settings.agents': hide('Settings > Agents (harness defaults)'),
-  'settings.usage': hide('Settings > Usage limits'),
-  'settings.integrations': hide('Settings > Integrations (add an MCP server)'),
-  'settings.secrets': hide('Settings > Secrets (Doppler)'),
-  'settings.tools': hide('Settings > Tools'),
-  'settings.dictation': hide('Settings > Dictation: its API key lives in Doppler, which a business workspace has not'),
-  'settings.devices': localOnly('Settings > Devices & access (pairing): a hosted workspace has no device list'),
-  'settings.servers': localOnly('Settings > Servers and the server switcher: other Dispatch machines'),
-  'about.report': hide('Settings > About: "Report a problem" on GitHub'),
-  setup: localOnly('The setup wizard (install CLIs, Tailscale, Doppler). A hosted developer gets only the account step'),
-  'settings.plugins': hide('Settings > Plugins, plugin settings sections and plugin screens in the rail'),
-  'settings.skills': hide('Settings > Skills marketplace'),
-  'settings.telemetry': hide('Telemetry settings'),
-  'model-picker': hide('The model picker (the default model applies)'),
-  'effort-picker': hide('The effort picker'),
-  'tool-json': hide('Raw tool-call JSON expanders (the one-line tool row stays)'),
-  'projects.path': hide('The folder path picker of New Project (a hosted developer keeps it under Advanced)'),
-  'settings.editor': hide('Settings > Appearance > "Open docs in" (an editor on the computer)'),
-  'themes.all': hide('Every theme; a business person picks only OS light, OS dark or System'),
+  'threads.cli': hide(), // CLI/terminal mode, the Pretty <-> CLI switch, the CLI sign-in shell
+  'threads.shell': hide(), // Shell threads
+  'threads.browser': hide(), // Browser threads
+  'threads.git': hide(), // Worktree, git and branch options (new-thread worktree, branch a thread)
+  'review.diff': hide(), // Diff review
+  'control-plane': hide(), // Control Plane: overseer, coordinator, ledger, recaps, decision cards
+  missions: hide(), // Missions and agent types
+  analytics: hide(), // Analytics
+  'settings.agents': hide(), // Settings > Agents (harness defaults)
+  'settings.usage': hide(), // Settings > Usage limits
+  'settings.integrations': hide(), // Settings > Integrations (add an MCP server)
+  'settings.secrets': hide(), // Settings > Secrets (Doppler)
+  'settings.tools': hide(), // Settings > Tools
+  'settings.dictation': hide(), // Settings > Dictation: its API key lives in Doppler, which a business workspace has not
+  'settings.devices': localOnly(), // Settings > Devices & access (pairing): a hosted workspace has no device list
+  'settings.servers': localOnly(), // Settings > Servers and the server switcher: other Dispatch machines
+  'about.report': hide(), // Settings > About: "Report a problem" on GitHub
+  setup: localOnly(), // The setup wizard (install CLIs, Tailscale, Doppler). A hosted developer gets only the account step
+  'settings.plugins': hide(), // Settings > Plugins, plugin settings sections and plugin screens in the rail
+  'settings.skills': hide(), // Settings > Skills marketplace
+  'settings.telemetry': hide(), // Telemetry settings
+  'model-picker': hide(), // The model picker (the default model applies)
+  'effort-picker': hide(), // The effort picker
+  'tool-json': hide(), // Raw tool-call JSON expanders (the one-line tool row stays)
+  'projects.path': hide(), // The folder path picker of New Project (a hosted developer keeps it under Advanced)
+  'details.machine': hide(), // Details pane: thread ID, folder, branch, PID, tool servers, provider
+  'settings.editor': hide(), // Settings > Appearance > "Open docs in" (an editor on the computer)
+  'themes.all': hide(), // Every theme; a business person picks only OS light, OS dark or System
 } as const satisfies Record<string, FeatureRule>;
 
 export type Feature = keyof typeof FEATURES;

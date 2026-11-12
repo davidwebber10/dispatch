@@ -3,6 +3,7 @@ import { api } from '../../api/client';
 import { useAuth } from '../../stores/auth';
 import { useTabs, findTerminal } from '../../stores/tabs';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { usesPlainWording } from '../../lib/hostContext';
 import type { AuthRequest } from '../../api/types';
 
 /**
@@ -85,7 +86,7 @@ export function AuthBanner() {
 
   // A plain link has no OAuth callback to relay back, so the paste field would only confuse.
   const signIn = isSignIn(req);
-  const title = signIn ? 'Authentication required' : 'Link to open';
+  const title = signIn ? (usesPlainWording() ? 'Sign in to continue' : 'Authentication required') : 'Link to open';
 
   // The phone header is calc(50px + env(safe-area-inset-top)) tall, so on a phone the card
   // starts under it (header and tab bar stay tappable) and spans the width instead of
@@ -162,7 +163,9 @@ export function AuthBanner() {
         </a>
         {signIn && (
           <>
-            <div style={{ marginTop: 10, fontSize: 11, color: 'var(--color-text-tertiary)' }}>On this Mac it returns automatically. From another device (e.g. iPhone), copy the <code>localhost</code> URL Safari lands on and paste it here:</div>
+            <div style={{ marginTop: 10, fontSize: 11, color: 'var(--color-text-tertiary)' }}>{usesPlainWording()
+              ? 'After you sign in, your browser shows a page that may not load. Copy the address of that page and paste it here:'
+              : <>On this Mac it returns automatically. From another device (e.g. iPhone), copy the <code>localhost</code> URL Safari lands on and paste it here:</>}</div>
             <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
               {/* Pasting IS the action: a phone user's only step is paste, so forward on paste
                   rather than making them find and tap Forward as well. */}
@@ -171,7 +174,7 @@ export function AuthBanner() {
                 onChange={(e) => setCb(e.target.value)}
                 onPaste={(e) => { const t = e.clipboardData.getData('text'); if (t.trim()) { e.preventDefault(); setCb(t.trim()); void submit(t); } }}
                 onKeyDown={(e) => { if (e.key === 'Enter') void submit(); }}
-                placeholder="http://localhost:…/callback?code=…"
+                placeholder={usesPlainWording() ? 'Paste the address here' : 'http://localhost:…/callback?code=…'}
                 autoCapitalize="off" autoCorrect="off" spellCheck={false} inputMode="url"
                 // 16px on a phone: anything smaller makes iOS zoom the page on focus.
                 style={{ flex: 1, minWidth: 0, height: tap ?? 30, padding: '0 10px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)', fontWeight: 400, fontSize: isMobile ? 16 : 11 }}

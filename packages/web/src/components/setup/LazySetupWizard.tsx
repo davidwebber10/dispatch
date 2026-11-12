@@ -3,7 +3,7 @@ import { api } from '../../api/client';
 import { useSetup } from '../../stores/setup';
 import { can } from '../../lib/profile';
 import type { ProviderStatus } from '../../api/types';
-import { ConnectAccountPrompt } from './ConnectAccountPrompt';
+const ConnectAccountPrompt = lazy(() => import('./ConnectAccountPrompt').then((m) => ({ default: m.ConnectAccountPrompt })));
 
 // The setup wizard shows on a first run, or when About > "Run setup again" asks for it. Its code
 // (with the Secrets section it embeds) is not in the first load (engineering program 2026-11-09,
@@ -24,7 +24,7 @@ export function SetupWizard() {
   const noWizard = !can('setup') && !can('threads.cli');
   if (noWizard) {
     const claude = providers?.find((p) => p.name === 'claude');
-    return claude && claude.signedIn === false ? <ConnectAccountPrompt /> : null;
+    return claude && claude.signedIn === false ? <Suspense fallback={null}><ConnectAccountPrompt /></Suspense> : null;
   }
   if ((firstRun || forceOpen) && !shown) setShown(true);
   if (!shown) return null;

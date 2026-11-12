@@ -16,7 +16,7 @@ describe('the feature map', () => {
   it('the business profile hides the power-user features and keeps the rest', () => {
     const hidden = keys.filter((k) => !featureFor(k, 'business')).sort();
     expect(hidden).toEqual([
-      'about.report', 'analytics', 'control-plane', 'effort-picker', 'missions', 'model-picker', 'projects.path', 'review.diff',
+      'about.report', 'analytics', 'control-plane', 'details.machine', 'effort-picker', 'missions', 'model-picker', 'projects.path', 'review.diff',
       'settings.agents', 'settings.devices', 'settings.dictation', 'settings.editor', 'settings.integrations', 'settings.plugins',
       'settings.secrets', 'settings.servers', 'settings.skills', 'settings.telemetry', 'settings.tools', 'settings.usage',
       'setup', 'themes.all', 'threads.browser', 'threads.cli', 'threads.git', 'threads.shell', 'tool-json',
@@ -26,8 +26,9 @@ describe('the feature map', () => {
     }
   });
 
-  it('every key explains itself', () => {
-    for (const k of keys) expect(FEATURES[k].note.length, k).toBeGreaterThan(5);
+  it('every key explains itself (a comment on its line in profile.ts)', async () => {
+    const src = (await import('./profile.ts?raw')).default as string;
+    for (const k of keys) expect(src, k).toMatch(new RegExp(`'?${k.replace('.', '\\.')}'?: (show|hide|localOnly)\\(\\), // .{6,}`));
   });
 
   it('a hosted workspace hides what cannot work there, in every profile', () => {

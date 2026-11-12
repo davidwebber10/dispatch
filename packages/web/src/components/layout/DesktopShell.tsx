@@ -31,6 +31,8 @@ import { useSettings } from '../../stores/settings';
 import { useGroups } from '../panes/store';
 import { useUI } from '../../stores/ui';
 import { can } from '../../lib/profile';
+import { usesOsLook } from '../../lib/hostContext';
+const OsTopBarActions = lazy(() => import('./os/OsTopBarActions').then((m) => ({ default: m.OsTopBarActions })));
 
 // The desktop shell: the icon rail and the view it shows (engineering program 2026-11-09, W2-E).
 // App.tsx loads this module only at a desktop width, and the phone shell (mobile/MobileApp) only
@@ -67,12 +69,22 @@ export function DesktopShell() {
   const activeGroupId = useGroups((s) => (activeTerminalId ? s.tabGroup[activeTerminalId] : undefined));
   const reconnectGen = useReconnect((s) => s.gen);
   const showAgent = agentFocused && !!agentSelected;
+  const os = usesOsLook();
+  const projectSidebar = (
+    <ProjectSidebar
+      onSelectTab={selectTab}
+      onSelectAgent={(id) => useAgentUI.getState().selectAgent(id)}
+      onNewAgent={(pid) => useAgentUI.getState().openNew(pid)}
+      onDispatch={dispatchProject}
+    />
+  );
 
   return (
     <>
       <Slot name="app.overlay" />
       <CommandPalette />
-      <AppShell>
+      {/* Hosted (or the business preview): the Threads | Projects list moves into the OS rail. */}
+      <AppShell rail={os ? projectSidebar : undefined}>
         {/* One boundary per view: a render error leaves the shell (the icon rail) on screen, and
             a change of view starts clean (the key). */}
         <ErrorBoundary key={view} scope={`${view} view`}>
@@ -86,13 +98,7 @@ export function DesktopShell() {
           ? <Suspense fallback={viewFallback}><AnalyticsView /></Suspense>
           : (
             <Workspace
-              sidebar={
-                <ProjectSidebar
-                  onSelectTab={selectTab}
-                  onSelectAgent={(id) => useAgentUI.getState().selectAgent(id)}
-                  onNewAgent={(pid) => useAgentUI.getState().openNew(pid)}
-                  onDispatch={dispatchProject}
-                />}
+              sidebar={os ? null : projectSidebar}
               main={
                 showAgent
                   ? <AgentPane onClose={closeAgentPane} />
@@ -101,13 +107,14 @@ export function DesktopShell() {
                       {/* The panel toggles flank the tab strip — the old TopBar's
                           top-left / top-right positions, one row down. */}
                       <div style={{ display: 'flex', flexShrink: 0 }}>
-                        <PanelToggle side="left" />
+                        {!os && <PanelToggle side="left" />}
                         {/* Own bar styling too: GroupedTabBar returns null with no tabs,
                             and the strip must stay a continuous 44px bar even then. */}
-                        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: 'var(--color-pane)', borderBottom: '1px solid var(--color-border)' }}>
+                        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: os ? 'var(--color-base)' : 'var(--color-pane)', borderBottom: '1px solid var(--color-border)', minHeight: os ? 56 : undefined }}>
                           <GroupedTabBar onSelect={() => useAgentUI.getState().blur()} />
                         </div>
                         <PanelToggle side="right" count={isDispatchTab(activeTerminalId) ? openDecisions : 0} />
+                        {os && <Suspense fallback={null}><OsTopBarActions /></Suspense>}
                       </div>
                       {activeTerminalId
                         ? (isDispatchTab(activeTerminalId)

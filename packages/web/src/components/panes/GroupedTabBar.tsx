@@ -49,6 +49,7 @@ import { leafTabIds, leafCount, MAX_PANES } from './types';
 import { TabActivityIndicator, GroupActivityIndicator } from './TabActivityIndicator';
 import { StallBadge } from '../common/StallBadge';
 import { revealIn, tabChipSelector } from '../../lib/reveal';
+import { usesOsLook } from '../../lib/hostContext';
 
 /* ── Constants ───────────────────────────────────────────────────────── */
 const BAR_H      = 44;
@@ -64,6 +65,24 @@ type GroupSlot  = { kind: 'group';  id: string; groupId: string; tabIds: string[
 type TabSlot    = SingleSlot | GroupSlot;
 
 /* ── Shared button style ─────────────────────────────────────────────── */
+/* ── OS look (hosted / business preview): the tab strip of Polywood OS ──────────────────────────
+   OS TabStrip: a 56px bar (py-1.5) of 44px pills (h-11), rounded-md, the active one on --secondary
+   (here --color-hover), inactive text muted with a hover tint, 15px medium labels. Local installs
+   keep the classic underline look. */
+const OS = usesOsLook();
+const OS_BAR_H = 56;
+function chipLook(act: boolean): React.CSSProperties {
+  if (!OS) return {
+    borderRight: '1px solid var(--color-border)',
+    background: act ? 'var(--color-base)' : 'transparent',
+    borderBottom: act ? '2px solid var(--color-accent)' : '2px solid transparent',
+  };
+  return {
+    height: 44, alignSelf: 'center', margin: '0 2px', borderRadius: 'var(--radius-md)',
+    background: act ? 'var(--color-hover)' : 'transparent',
+  };
+}
+
 const iconBtn: React.CSSProperties = {
   background: 'none', border: 'none',
   color: 'var(--color-text-tertiary)', cursor: 'pointer',
@@ -139,10 +158,11 @@ function ClassicTabBar({ onSelect }: { onSelect?: () => void }) {
 
   return (
     <div ref={barRef} style={{
-      display: 'flex', height: BAR_H, flexShrink: 0,
+      display: 'flex', height: OS ? OS_BAR_H : BAR_H, flexShrink: 0,
       overflowX: 'auto',
-      background: 'var(--color-pane)',
+      background: OS ? 'var(--color-base)' : 'var(--color-pane)',
       borderBottom: '1px solid var(--color-border)',
+      ...(OS ? { alignItems: 'center', padding: '0 10px' } : {}),
     }}>
       {openTabIds.map((id, i) => {
         const proj = sessions.find((s) => s.id === projectIds[i]);
@@ -160,9 +180,7 @@ function ClassicTabBar({ onSelect }: { onSelect?: () => void }) {
               padding: dispatch ? '0 10px 0 13px' : '0 10px 0 15px',
               minWidth: TAB_MIN_W, maxWidth: TAB_MAX_W, flexShrink: 0,
               cursor: 'pointer',
-              borderRight: '1px solid var(--color-border)',
-              background:    act ? 'var(--color-base)' : 'transparent',
-              borderBottom:  act ? '2px solid var(--color-accent)' : '2px solid transparent',
+              ...chipLook(act),
             }}
           >
             {dispatch && <Network size={14} weight="fill" style={{ flexShrink: 0, color: 'var(--color-accent)' }} />}
@@ -211,9 +229,7 @@ function DispatchChip({ tabId, onSelect }: { tabId: string; onSelect?: () => voi
         padding: '0 10px 0 13px',
         minWidth: TAB_MIN_W, maxWidth: TAB_MAX_W, flexShrink: 0,
         height: '100%', cursor: 'pointer',
-        borderRight: '1px solid var(--color-border)',
-        background:   act ? 'var(--color-base)' : 'transparent',
-        borderBottom: act ? '2px solid var(--color-accent)' : '2px solid transparent',
+        ...chipLook(act),
         userSelect: 'none',
       }}
     >
@@ -334,9 +350,7 @@ function SingleChip({ slot, index, onSelect }: { slot: SingleSlot; index: number
         minWidth: TAB_MIN_W, maxWidth: TAB_MAX_W, flexShrink: 0,
         height: '100%',
         cursor: 'pointer',
-        borderRight: '1px solid var(--color-border)',
-        background:   act ? 'var(--color-base)' : 'transparent',
-        borderBottom: act ? '2px solid var(--color-accent)' : '2px solid transparent',
+        ...chipLook(act),
         userSelect: 'none',
         touchAction: 'none',
       }}
@@ -463,9 +477,7 @@ function GroupChip({ slot, index, onSelect }: { slot: GroupSlot; index: number; 
         minWidth: GRP_MIN_W, maxWidth: GRP_MAX_W, flexShrink: 0,
         height: '100%',
         cursor: 'pointer',
-        borderRight: '1px solid var(--color-border)',
-        background:   act ? 'var(--color-base)' : 'transparent',
-        borderBottom: act ? '2px solid var(--color-accent)' : '2px solid transparent',
+        ...chipLook(act),
         userSelect: 'none',
         touchAction: 'none',
       }}
@@ -698,10 +710,11 @@ function GroupedTabBarInner({ onSelect }: { onSelect?: () => void }) {
 
   return (
     <div ref={barRef} style={{
-      display: 'flex', height: BAR_H, flexShrink: 0,
+      display: 'flex', height: OS ? OS_BAR_H : BAR_H, flexShrink: 0,
       overflowX: 'auto',
-      background: 'var(--color-pane)',
+      background: OS ? 'var(--color-base)' : 'var(--color-pane)',
       borderBottom: '1px solid var(--color-border)',
+      ...(OS ? { alignItems: 'center', padding: '0 10px' } : {}),
     }}>
       <DndContext
         sensors={sensors}

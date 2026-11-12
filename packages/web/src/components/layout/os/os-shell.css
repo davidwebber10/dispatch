@@ -1,0 +1,27 @@
+/* The Polywood OS shell look (hosted / business preview), re-created with Dispatch tokens.
+   Source: explorer web/src/shell/{LeftRail,SubAppSwitcher,RailNav,TabStrip}.tsx (Tailwind classes noted).
+   --secondary maps to --color-hover, --accent/50 to a half hover tint, --muted-foreground to text-secondary. */
+.os-hover:hover { background: color-mix(in srgb, var(--color-hover) 50%, transparent); }
+.os-item { display: flex; width: 100%; align-items: center; gap: 12px; padding: 8px; border: none; border-radius: var(--radius-md);
+  background: transparent; color: var(--color-text-primary); font: 500 15px/20px var(--font-sans); text-align: left; cursor: pointer;
+  text-decoration: none; transition: background-color .15s, color .15s; }
+.os-item:hover { background: var(--color-hover); }
+.os-item[aria-current="page"], .os-item[data-active="true"] { background: var(--color-hover); }
+.os-item .os-item-icon { width: 18px; height: 18px; flex-shrink: 0; color: var(--color-text-secondary); }
+.os-item[aria-current="page"] .os-item-icon, .os-item[data-active="true"] .os-item-icon { color: var(--color-accent); }
+.os-item.os-collapsed { width: 40px; height: 40px; padding: 0; justify-content: center; color: var(--color-text-secondary); }
+.os-item.os-collapsed:hover { color: var(--color-text-primary); }
+.os-icon-btn { display: inline-flex; width: 32px; height: 32px; align-items: center; justify-content: center; border: none; border-radius: var(--radius-md);
+  background: transparent; color: var(--color-text-secondary); cursor: pointer; transition: background-color .15s, color .15s; }
+.os-icon-btn:hover { background: var(--color-hover); color: var(--color-text-primary); }
+.os-group-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 8px 4px;
+  font: 600 11px/16px var(--font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--color-text-secondary); }
+.os-switch-panel { display: grid; transition: grid-template-rows .2s ease-out; }
+.os-switch-item { display: flex; align-items: center; gap: 12px; padding: 8px 4px; border-radius: var(--radius-sm);
+  font: 500 15px/20px var(--font-sans); color: var(--color-text-primary); text-decoration: none; cursor: pointer; transition: background-color .15s; }
+.os-switch-item:hover { background: var(--color-hover); }
+.os-switch-item[aria-current="true"] { background: var(--color-hover); }
+.os-resize { position: absolute; right: -2px; top: 0; z-index: 50; height: 100%; width: 6px; cursor: col-resize; user-select: none; }
+.os-resize > div { margin: 0 auto; height: 100%; width: 1px; background: transparent; transition: background-color .15s; }
+.os-resize:hover > div { background: var(--color-border); }
+@media (prefers-reduced-motion: reduce) { .os-switch-panel, .os-item, .os-switch-item { transition: none; } }

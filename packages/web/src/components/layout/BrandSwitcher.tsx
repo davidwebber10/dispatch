@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { Terminal } from '@phosphor-icons/react';
 import { useServers, currentServer, currentLabel } from '../../stores/servers';
 import { useUpdate } from '../../stores/update';
 import { usesOsLook } from '../../lib/hostContext';
-import { HostedBrand } from './HostedBrand';
+// The OS shell parts load on demand: a local install never downloads them (phone first-paint budget).
+const OsMobileMenu = lazy(() => import('./os/OsMobileMenu').then((m) => ({ default: m.OsMobileMenu })));
 
 /**
  * The rail's logo button. Compact by necessity — it lives in the 64px icon rail —
@@ -11,8 +12,9 @@ import { HostedBrand } from './HostedBrand';
  * which opens to the RIGHT of the rail rather than below.
  */
 export function BrandSwitcher({ variant = 'rail' }: { variant?: 'rail' | 'header' } = {}) {
-  // A hosted workspace (or the business preview) has no servers to switch: the way back to OS instead.
-  if (usesOsLook()) return <HostedBrand variant={variant} />;
+  // A hosted workspace (or the business preview) has no servers to switch: the OS app switcher instead
+  // (the desktop rail renders its own, os/OsLeftRail; this is the phone header's).
+  if (usesOsLook()) return variant === 'header' ? <Suspense fallback={null}><OsMobileMenu /></Suspense> : null;
   return <LocalBrandSwitcher />;
 }
 
