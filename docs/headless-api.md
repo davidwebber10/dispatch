@@ -213,10 +213,49 @@ Usage and limits: `GET /api/usage-limits/summary` →
 - `GET /api/os/connections` → `{"hosted":true,"reachable":true,"profile":"business","entitled":[…],"osToolsEnabled":true,"needsConsent":[{"system":"zendesk","label":"Zendesk","connectUrl":"…"}],"servers":[],"capabilities":[…]}`.
 - `POST /api/os/connections/refresh` asks OS now (after the person connected a system).
 - `GET /api/os/tools` → `{"enabled":true,"reachable":true,"tools":[{"name":"acumatica_search_sales_orders","server":"acumatica","tool":"search_sales_orders","system":"acumatica","description":"…","readOnly":null},…]}`.
-  `server`/`tool` is how a thread sees it. A system that needs consent has no server in a thread until
-  it is connected; a running thread keeps the servers it started with, a new thread gets the new set.
-  The built-in `data` and `display` systems need no connection. The gateway's instructions ride the
-  `data` server (tool names written `data.guide`, `display.chart`).
+  `server`/`tool` is how a thread sees it. The built-in `data` and `display` systems need no
+  connection. The gateway's instructions ride the `data` server (tool names written `data.guide`,
+  `display.chart`).
+
+**A system the person has not connected yet** (2026-11-12). The gateway lists it with ONE tool,
+`<system>_connect`; the thread gets a server for it as for any other system, with the one tool
+`connect` (`mcp__google__connect`). When a request needs that system, the agent calls `connect`; the
+result is OS's own text (the Connect card: `"error":"not_connected"`, `label`, `connect_url`) and one
+more text block from the box with what happens next. When the person has connected the system, the
+gateway lists the real tools and no `connect`.
+
+**A running thread gets the new tools** without a restart where its harness allows it: the box sends
+MCP `notifications/tools/list_changed` for that system (below). The box learns of the change from:
+
+| Source | When |
+| --- | --- |
+| A fast re-check after a `connect` call | at once, then every 5 s for 5 minutes, that system only; ends at the first change |
+| `POST /api/os/connections/refresh` | **the platform's signal**: call it (through the router, with the box token) when the person finished a Connect flow; every running thread with that system's server gets list_changed at once |
+| The OS poll | every 60 s, when OS's answer changes |
+| The `refresh` tool of the `connections` server | the agent calls it (the `connect` result tells it to, when the tools do not come) |
+
+| Harness (version measured) | Running thread after the person connects | Evidence (2026-11-12, real CLI, stub model, no real model) |
+| --- | --- | --- |
+| Claude Code 2.1.322 | **yes, live** (HTTP and stdio) | after list_changed it asks `tools/list` again; the new tool is in its tool list on the next model request and is called. Also end to end through the daemon route with the fast re-check |
+| OpenCode 1.18.34 | **yes, live** (HTTP and stdio) | the same. The image's 1.19.5 was not run |
+| Codex 0.167.0 | **no: a new thread is needed** | it opens no event stream, ignores list_changed (also on stdio), keeps the old list on the next turn, and `config/mcpServer/reload` does not change a loaded thread. Its `connect` result says so and tells the agent to ask the person to send the request again in a new thread |
+| Grok | not measured: treated as "a new thread is needed" | |
+
+A system that appears mid-thread (the person was just granted it) gets no new server in a running
+thread: servers are fixed when the thread starts. It reaches new threads only. For Codex, a thread that
+is resumed after the app-server unloaded it (`thread/unsubscribe`, `thread_unload_delay_secs`, then
+`thread/resume`) also gets the new tools with its history: measured, not wired into Dispatch.
+
+The view can offer "Send again in a new thread" when a Codex thread's tool result or text says so.
+
+**How a thread receives list_changed.** Each company server is the daemon route
+`/api/os/mcp/<system>` (streamable HTTP). `initialize` always declares `capabilities.tools.listChanged:
+true` (a harness subscribes only then). `GET` with `Accept: text/event-stream` and the thread's key opens
+the server-to-client event stream; each change is one event
+`event: message` / `data: {"jsonrpc":"2.0","method":"notifications/tools/list_changed"}`, and a
+comment line every 25 s keeps it open. A `GET` without that header still answers `405`. A harness on the
+stdio bridge (`os-mcp-bridge.js`) gets the same notification on stdout: the bridge opens the stream after
+`initialize` and opens it again (with one list_changed) after a daemon restart.
 
 ## 9. What the business profile allows and refuses (capability `gate-v2`)
 
@@ -229,7 +268,7 @@ decision is made by the route that matched the request, not by the text of the U
 a path changes it. A route with no row answers `rule: "unclassified"`. A `GET` is not allowed just
 because it is a `GET`: a read of a secret or of the machine is refused too.
 
-What this contract needs is allowed: sections 1 to 8, and the file routes inside the person's project.
+What this contract needs is allowed: sections 1 to 8 and 11, and the file routes inside the person's project.
 
 | Rule | Refused request |
 | --- | --- |
@@ -244,6 +283,7 @@ What this contract needs is allowed: sections 1 to 8, and the file routes inside
 | `worktree.create`, `review.diff`, `files.browse`, `files.reveal` | worktrees; the diff review routes; the folder browser of the machine |
 | `plugin.*`, `skill.install`, `skill.enable`, `integration.*`, `setup.install` | adding, enabling, updating or exporting a plugin, a skill or a tool connection; installing a CLI |
 | `secrets`, `settings`, `devices`, `analytics`, `control-plane` | Doppler secrets (also reading a value); the machine's settings (`PUT`); device sign-in; analytics; the decision ledger (`POST`) |
+| `inbox.secret` | the value of a `secret` drop in the Inbox (section 11) |
 | `agent-key` | any request that carries a thread's or a plugin's own key, except the few an agent needs: its company tools (`/api/os/mcp/:system`), its own status and hook events, who it is, the project and thread lists, and its Inbox files. A key cannot start or message a thread, answer an approval, change approvals or add a tool |
 | `unclassified` | a route that has no row in the table |
 
@@ -269,3 +309,114 @@ The heartbeat (`POST <OS>/api/dispatch/heartbeat`, every 30 s) carries, captured
 Four beats in a row with no action kept the same `lastActivityAt`. What is counted and what moves
 `lastActivityAt` is in `docs/hosted.md` ("Idle info"). A schedule that falls due while the box sleeps
 runs once on the first tick after the next start.
+
+## 11. The Inbox (drops a thread hands the person)
+
+The bundled plugin with the MCP tool `mcp__plugin-previews__preview` is the **Inbox**: a thread puts
+files, tables, images, links, commands and text there for the person. Plugin id `previews`, server id
+`plugin-previews`, tool `preview`: clients match on these ids, so they stay. On a hosted box the names a
+person reads say Inbox: the server's `serverInfo.title` is `Inbox`, the tool's `title` and
+`annotations.title` are `Put in Inbox` (a local install shows neither).
+
+The examples below were captured from a daemon build with a fake harness (`tests/routes/inbox.test.ts`,
+`INBOX_CAPTURE=<file>`): the drops were made by the real Inbox MCP server under a thread's key, then
+read as the owner. Every route works the same for the developer and the business profile, except
+the secret (below).
+
+**The tool's input** (`tools/list`, abridged): `kind` (`command`, `link`, `code`, `secret`, `steps`,
+`diff`, `table`, `doc`, `text`, `images`, `files`; default inferred), `paths` (files of the thread's
+project: png, jpg, gif, webp, svg, pdf, html, md, txt, csv, json; up to 20), `text` (up to 64 KB),
+`commands`, `cwd`, `url` (`link`), `language` (`code`), `steps` (`[{text, command?}]`, up to 30),
+`title`, `note`. The checks are in `packages/plugins/previews/mcp/kinds.mjs`.
+
+**Where a drop is stored.** One document `preview:<dropId>` of the plugin `previews` in the daemon's
+database (`plugin_data`). Each file is a file reference (`plugin_files`) with a copy made when it was
+posted: `<data dir>/plugin-files/previews/<fileId><ext>` (25 MB at most; a bigger file is served from
+the project, with every check of the path policy). A secret's value is removed 24 hours after it was posted.
+
+| Route | Answer |
+| --- | --- |
+| `GET /api/inbox` | the drops, newest first. Query: `threadId`, `projectId`, `unread=1`, `limit` (default 200, at most 1000), `before=<createdAt>` (the next page). `{drops, hasMore, unread}`; `unread` counts every drop |
+| `GET /api/inbox/unread` | `{total, byThread, byProject}` |
+| `GET /api/inbox/drops/:dropId` | `{drop}`; `404` when it is gone |
+| `GET /api/inbox/drops/:dropId/files/:fileId` | the bytes of a file THAT DROP lists, by its id |
+| `POST /api/inbox/drops/:dropId/read` | marks it read: `{drop}` |
+| `POST /api/inbox/read` | marks every unread drop read; body `{}`, `{"threadId":"…"}` or `{"projectId":"…"}`: `{marked}` |
+| `DELETE /api/inbox/drops/:dropId` | `204`; the drop, its file references and their copies go |
+| `GET /api/inbox/drops/:dropId/secret` | developer only: `{value}` of a `secret` drop on this explicit request (`410` after its 24 hours). Business: `403` rule `inbox.secret` |
+
+Only the owner (the box token through the router, or the owner's page) may call them; a thread's or a
+plugin's key gets `403`. No capability names these routes: on an older box `GET /api/inbox` is not a
+route and answers an error, so a view can hide the Inbox there. Under the business profile they are classified in the route table (section 9):
+all allowed except the secret.
+
+`GET /api/inbox?limit=2`, captured:
+
+```json
+{"drops":[
+  {"id":"8988068e-e422-453c-bd92-1ce021e98d55","threadId":"T1","threadTitle":"Sales by region","projectId":"P1","projectName":"Reports",
+   "title":"example.com","note":"The shared report.","kind":"link","createdAt":"2026-11-12T14:27:24.249Z","read":false,"readAt":null,
+   "files":[],"text":"https://example.com/report","url":"https://example.com/report"},
+  {"id":"bd86fc3e-b94b-47a7-839d-904f5c2113b2","threadId":"T1","threadTitle":"Sales by region","projectId":"P1","projectName":"Reports",
+   "title":"API token","note":"For the import.","kind":"secret","createdAt":"2026-11-12T14:27:24.244Z","read":false,"readAt":null,
+   "files":[],"text":null,"secret":{"present":true,"expired":false}}],
+ "hasMore":true,"unread":4}
+```
+
+`GET /api/inbox/drops/c1ebff7f-…` (a `table` drop with one file):
+
+```json
+{"drop":{"id":"c1ebff7f-affc-4fc9-81a5-5f29536e973c","threadId":"T1","threadTitle":"Sales by region","projectId":"P1","projectName":"Reports",
+ "title":"Sales by region","note":"This week, from the order system.","kind":"table","createdAt":"2026-11-12T14:27:24.215Z","read":false,"readAt":null,
+ "files":[{"id":"64bc0b11-5841-4f91-894c-c68db44000de","name":"sales.csv","size":32,"type":"text/csv",
+           "url":"/api/inbox/drops/c1ebff7f-affc-4fc9-81a5-5f29536e973c/files/64bc0b11-5841-4f91-894c-c68db44000de"}],
+ "text":null}}
+```
+
+A drop's fields: `kind` null means "infer the look" (images only: pictures; one file: that file;
+else text). By kind: `text` (the text to show or copy; null for a `secret`, always), `url` (`link`),
+`commands` and `cwd` (`command`), `language` (`code`), `steps` (`steps`), `secret: {present, expired}`
+(`secret`). A file `url` starts with `/api/`: put the base path (`/dispatch`) in front.
+
+The file, captured:
+
+```text
+GET /api/inbox/drops/c1ebff7f-…/files/64bc0b11-…   -> 200
+content-type: text/csv
+content-disposition: attachment; filename="sales.csv"; filename*=UTF-8''sales.csv
+x-content-type-options: nosniff
+content-security-policy: sandbox; default-src 'none'
+cache-control: private, max-age=300
+
+region,total
+North,120
+South,95
+```
+
+File rules: only a file the drop lists, by id; never a path (another drop's file id, an unknown id or a
+path-like id: `404`, or `400 bad_path`). Every file goes out with `nosniff` and `attachment`. HTML, SVG
+and other markup go out as `application/octet-stream`, so no file a thread made runs as a page; an
+`<img>` of a png, jpg, gif or webp still works (fetch the bytes and show them). A file that has no copy
+is checked against the project's folder and the path policy at each request (a file that became a link
+out of the project is refused).
+
+The other answers, captured: `GET /api/inbox/unread` → `{"total":4,"byThread":{"T1":4},"byProject":{"P1":4}}`;
+`POST /api/inbox/drops/c1ebff7f-…/read` → `{"drop":{…,"read":true,"readAt":"2026-11-12T14:27:24.260Z",…}}`;
+`POST /api/inbox/read` `{"threadId":"T1"}` → `{"marked":3}`; `DELETE /api/inbox/drops/8988068e-…` → `204`;
+business `GET /api/inbox/drops/bd86fc3e-…/secret` →
+`403 {"error":"A secret that a thread handed you is not shown in your workspace.","code":"not_available_in_profile","rule":"inbox.secret"}`.
+
+**A secret drop.** A list or drop answer never carries the value: the view shows that a secret exists
+(`secret.present`) or that it expired. For a business person the value is not shown at all, also not
+through the plugin's own data routes (`GET /api/plugins/previews/data…` answers `text: null,
+redacted: true` for a secret under the business profile). The developer gets it on an explicit
+request for that one drop (`…/secret`, `Cache-Control: no-store`).
+
+**Events.** On the events socket (section 6) each new drop, each read mark and each delete is one frame,
+captured: `{"type":"plugin:data","id":"previews","key":"preview:c1ebff7f-affc-4fc9-81a5-5f29536e973c"}`
+(a new or changed drop: read `GET /api/inbox/drops/<id>`) and
+`{"type":"plugin:data","id":"previews","key":"preview:8988068e-…","deleted":true}`. Ignore frames of another plugin id.
+
+**Not now (an option for later).** An agent cannot make a file available to the person without the
+Inbox plugin (when the plugin is disabled or absent, the `preview` tool is not there). A daemon tool that
+registers a file of the thread's project as a drop would close that.
