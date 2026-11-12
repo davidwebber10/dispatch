@@ -311,6 +311,28 @@ describe('ConversationReader.page', () => {
     expect(await half.page('t', {})).toEqual(empty);
   });
 
+  it('a transcript replaced by a link (to a file the daemon may read and the agent may not) is not read', async () => {
+    const empty = { items: [], cursor: 0, startLine: 0, hasMore: false };
+    const secret = write('root-only.jsonl', claudeFixture(8));
+    fs.chmodSync(secret, 0o600);
+    const link = path.join(tmp, 'transcript.jsonl');
+    fs.symlinkSync(secret, link);
+    const reader = readerFor(link);
+    expect(await reader.page('t', {})).toEqual(empty);
+    expect(await reader.search('t', 'uuid')).toEqual({ matches: [] });
+    expect(reader.tailItems('t', 50)).toEqual([]);
+    // The same file, read directly, has items: the link alone is what is refused.
+    expect((await readerFor(secret).page('t', {})).items.length).toBeGreaterThan(0);
+  });
+
+  it('an open transcript that is not the agent user\'s is not read', async () => {
+    const file = write('other-owner.jsonl', claudeFixture(8));
+    const reader = new ConversationReader({ db, locate: () => ({ file, parseLine: parseClaudeTranscript }), trusted: () => false });
+    expect(await reader.page('t', {})).toEqual({ items: [], cursor: 0, startLine: 0, hasMore: false });
+    expect(await reader.search('t', 'uuid')).toEqual({ matches: [] });
+    expect(reader.tailItems('t', 50)).toEqual([]);
+  });
+
   it('a shell thread returns unsupported', async () => {
     const reader = new ConversationReader({ db, locate: () => 'unsupported' });
     const page = await reader.page('sh', { limit: 10 });

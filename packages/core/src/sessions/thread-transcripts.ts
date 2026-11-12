@@ -8,7 +8,9 @@ import { parseCodexRollout } from '../conversation/codex-transcript.js';
 import { ConversationReader, type ConvPage, type ConvPageOptions, type SearchMatch, type TranscriptLocation } from '../conversation/reader.js';
 import { findCodexRolloutPath } from './codex-sessions.js';
 import { platform } from '../platform/index.js';
-import { resolveTranscriptPath } from './transcript-path.js';
+import { claudeProjectsRoot, resolveTranscriptPath } from './transcript-path.js';
+import { transcriptPathTrusted } from '../conversation/transcript-trust.js';
+import { codexArchivedRoot, codexSessionsRoot } from '../platform/codex-home.js';
 import { threadHarnessCapabilities } from './harness-capabilities.js';
 
 /**
@@ -102,7 +104,7 @@ export class ThreadTranscripts {
       const file = findCodexRolloutPath(sessionId);
       // Per-line parser for whichever transcript format this thread writes. Both take one
       // line and return the items it contains, so the reader's windowing is format-agnostic.
-      return file ? { file, parseLine: parseCodexRollout } : null;
+      return file && transcriptPathTrusted(file, [codexSessionsRoot(), codexArchivedRoot()]) ? { file, parseLine: parseCodexRollout } : null;
     }
 
     const session = sessionsDb.getById(this.db, terminal.session_id);
@@ -120,7 +122,9 @@ export class ThreadTranscripts {
     // spawned with. Reading the computed path directly is what made those chats render
     // empty — see sessions/transcript-path.ts.
     const file = resolveTranscriptPath(workDir, sessionId);
-    return file ? { file, parseLine: parseClaudeTranscript } : null;
+    // The agent can replace its transcript (or a folder above it) with a link: never read one with
+    // the daemon's rights (conversation/transcript-trust.ts).
+    return file && transcriptPathTrusted(file, [claudeProjectsRoot()]) ? { file, parseLine: parseClaudeTranscript } : null;
   }
 
   /**
