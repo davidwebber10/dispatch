@@ -48,6 +48,7 @@ import { ClaudeCliLogin, planOf } from '../auth/claude-cli-login.js';
 import { useCleanClaudeLogin, isHostedBox } from '../os/hosted-mode.js';
 import { wireStopOnAuthFailure } from '../os/auth-stop.js';
 import { createApprovalsRouter } from '../os/approvals-routes.js';
+import { createContinuityRouter } from '../os/continuity.js';
 import { setProfileSource, envProfile } from '../os/profile.js';
 import { IntegrationsService, type IntegrationLauncher } from '../integrations/service.js';
 import { HeartbeatService } from '../platform/heartbeat.js';
@@ -609,6 +610,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   // Any change from OS (the boot fetch included) reaches the spawn env at once: the short-lived tokens
   // of OS's own servers live in `env`, and before this they arrived only with some later refresh.
   app.use('/api', createApprovalsRouter(db, sessionService));
+  app.use('/api', createContinuityRouter(db, sessionService));
   // The profile a spawn reads now: OS's answer (authoritative, live), else DISPATCH_PROFILE.
   setProfileSource(() => osConnections.snapshot().profile ?? envProfile(env));
   osConnections.onChange(() => {

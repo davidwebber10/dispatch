@@ -28,6 +28,7 @@ import { applyPluginEvent } from './plugins/host';
 import { useHost } from './stores/host';
 import { useAnalyticsFeed } from './stores/analytics';
 import { useOsConnections } from './stores/osConnections';
+import { BoxRestartPill } from './components/common/BoxRestartPill';
 import { useReconnect } from './stores/reconnect';
 import { useResume } from './hooks/useResume';
 import { resumeSockets } from './lib/resumeSockets';
@@ -217,6 +218,7 @@ export default function App() {
     <>
       <SetupWizard />
       <AuthBanner />
+      <BoxRestartPill />
       <UpdateModal />
       <HighScoreCelebration />
       {isMobile

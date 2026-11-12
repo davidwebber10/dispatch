@@ -46,6 +46,23 @@ beforeEach(() => {
 afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
 
 describe('restart recovery: runs', () => {
+  it('a daily schedule that was due three times while the daemon was down runs ONCE on start (hosted continuity, item e)', () => {
+    const d = boot();
+    sessionsDb.create(d.db, { id: 'proj-1', provider: 'codex', name: 'tenex', workingDir: '/srv/tenex' });
+    const schedule = d.service.createSchedule({
+      projectId: 'proj-1', name: 'Daily', provider: 'codex', workingDir: '/srv/tenex', prompt: 'Report',
+      scheduleKind: 'recurring', runAt: null, recurrenceRule: JSON.stringify({ type: 'daily', time: '12:00' }), timezone: 'UTC',
+      enabled: true, nextRunAt: null, defaultTerminalLabel: 'Daily',
+    });
+    agentsDb.updateSchedule(d.db, schedule.id, { enabled: true, nextRunAt: '2026-05-08T12:00:00.000Z' });
+    const now = '2026-05-11T09:00:00.000Z'; // down for three noons
+    expect(d.service.processDueRuns(now)).toHaveLength(1);
+    const next = d.db.prepare('SELECT next_run_at FROM agent_schedules WHERE id = ?').get(schedule.id) as { next_run_at: string };
+    expect(Date.parse(next.next_run_at)).toBeGreaterThan(Date.parse(now));
+    expect(d.service.processDueRuns(now)).toHaveLength(0);
+    d.db.close();
+  });
+
   it('an open run with a dead terminal is closed at boot and the schedule fires again', () => {
     // Daemon 1: a recurring schedule fires and its run is at work.
     const first = boot();

@@ -1,3 +1,4 @@
+import { isBoxDownAnswer, noteBoxDown } from '../lib/boxRestart';
 import type { harnessCapabilities } from '../../../core/src/providers/capabilities';
 import { apiPath } from '../lib/basePath';
 import type { AccountsView, AccountThread, AccountProvider, ClaudeLoginSession as ClaudeLoginSessionT, CodexLoginSession, PluginRow, PluginDoc, PluginDocMeta, WorkerStats, Marketplace, CatalogEntry, PluginUpdate, MarketVersion, SkillRow } from './types';
@@ -66,6 +67,12 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     headers: init?.body || init?.headers ? { ...(init?.body ? { 'Content-Type': 'application/json' } : {}), ...(init?.headers as Record<string, string> | undefined) } : undefined,
     body: init?.body,
   });
+  // A hosted box restarting: the router's 503/redirect/launcher page is not data and not an error
+  // to show. Quietly reconnect (lib/boxRestart.ts); the caller gets a 503 it can treat as "later".
+  if ((!res.ok || res.redirected || /text\/html/i.test(res.headers?.get?.('content-type') ?? '')) && await isBoxDownAnswer(res)) {
+    noteBoxDown();
+    throw new ApiError(`${init?.method ?? 'GET'} ${path}: Reconnecting…`, 503);
+  }
   if (!res.ok) {
     // Carry the server's { error } text when there is one: a bare "failed: 404" cannot tell
     // a deleted file from a directory or a refused path.
@@ -290,6 +297,8 @@ export const api = {
   getApprovals: (terminalId: string) => req<ThreadApprovals>(`/api/terminals/${terminalId}/approvals`),
   setApprovals: (terminalId: string, mode: 'auto' | 'ask' | 'smart') =>
     req<{ mode: string; live: boolean }>(`/api/terminals/${terminalId}/approvals`, { method: 'POST', body: body({ mode }) }),
+  // A Grok/OpenCode thread a restart interrupted (core os/continuity.ts): continue it.
+  continueThread: (terminalId: string) => req<void>(`/api/terminals/${terminalId}/continue`, { method: 'POST' }),
   resolveBlocked: (terminalId: string, blockId: string, decision: 'allow' | 'keep') =>
     req<void>(`/api/terminals/${terminalId}/blocked/${encodeURIComponent(blockId)}`, { method: 'POST', body: body({ decision }) }),
   // Autonomy dial: supervised (surface gated tools as Needs) ⇄ autonomous (auto-allow, run free).
