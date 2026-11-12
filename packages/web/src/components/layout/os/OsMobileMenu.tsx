@@ -12,10 +12,11 @@ import { PRODUCT_ICON } from './OsIcon';
  */
 export function OsMobileMenu({ onSettings }: { onSettings: () => void }) {
   const [open, setOpen] = useState(false);
-  const [switcherOpen, setSwitcherOpen] = useState(false);
+  // The drawer opens with the app list showing (OS phone drawer: the switcher is the point of it).
+  const [switcherOpen, setSwitcherOpen] = useState(true);
   const shell = useOsShell();
   const Icon = PRODUCT_ICON;
-  const close = () => { setOpen(false); setSwitcherOpen(false); };
+  const close = () => { setOpen(false); setSwitcherOpen(true); };
   return (
     <>
       <button type="button" className="os-icon-btn" aria-label="Open navigation" onClick={() => setOpen(true)} style={{ width: 36, height: 36 }}>
