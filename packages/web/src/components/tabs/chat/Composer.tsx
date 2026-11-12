@@ -15,6 +15,7 @@ import { useTransportSwitch } from '../../layout/TransportToggle';
 import { ConfirmModal } from '../../common/ConfirmModal';
 import { textToSend } from '../../../lib/slashEscape';
 import { MODEL_IMAGE_MIME, fileToBase64 } from '../../../lib/image-attach';
+import { askLook } from './askLook';
 
 export interface ComposerProps {
   terminalId: string;
@@ -235,6 +236,7 @@ export const Composer = memo(function Composer({ terminalId, sessionId, tab, bus
             mobile={isMobile}
             menuExtra={slash.plusRow}
             slash={slash.overlay}
+            look={askLook() ? 'os' : undefined}
           />
         </div>
 

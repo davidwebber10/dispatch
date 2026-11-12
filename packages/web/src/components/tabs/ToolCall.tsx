@@ -5,6 +5,7 @@ import { HighlightedCode } from '../HighlightedCode';
 import { getToolView, parseToolInput } from './toolviews/registry';
 import { can } from '../../lib/profile';
 import { useToolExpanded, useToolTab, uiKeyOf } from '../../hooks/useToolUIState';
+import { askLook } from './chat/askLook';
 
 /**
  * One mono glyph per tool family (2026-08-16 pretty-chat redesign): the leading column of a
@@ -104,7 +105,10 @@ export function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?
   const err = result?.isError;
   const lines = hasOut ? out.split('\n').length : 0;
   const view = getToolView(tool.toolName, parseToolInput(tool.toolInput));
-  const headerName = view?.label?.(tool) ?? name;
+  // The OS look for a business person (no raw JSON): a tool name a person can read, in OS type.
+  const plainRow = askLook() && !can('tool-json');
+  const headerName = plainRow ? readableToolName(view?.label?.(tool) ?? name) : view?.label?.(tool) ?? name;
+  const rowFont = plainRow ? '400 13px var(--font-sans)' : '400 11.5px var(--font-mono)';
   // The raw input/output expander is a developer feature (lib/profile.ts 'tool-json'); a tool with
   // its own readable view (a diff, a file) still opens. The one-line row always shows.
   const expandable = (hasIn || hasOut) && (can('tool-json') || !!view?.expanded);
@@ -142,13 +146,13 @@ export function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?
         {/* flexShrink 0: the name is the single most identifying thing on the row and is almost
             always short, so it never shrinks; the arg detail is the elastic half. maxWidth caps
             the pathological case (a very long MCP tool name). */}
-        <span style={{ minWidth: 0, maxWidth: '55%', flexShrink: 0, font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{headerName}</span>
+        <span style={{ minWidth: 0, maxWidth: '55%', flexShrink: 0, font: rowFont, color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{headerName}</span>
         {(() => {
           const arg = inputSummary(tool);
           return arg ? (
             <span
               title={tool.toolDetail ?? arg}
-              style={{ minWidth: 0, flex: '1 1 auto', font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              style={{ minWidth: 0, flex: '1 1 auto', font: rowFont, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
             >
               {arg}
             </span>
@@ -195,6 +199,16 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
       background: active ? 'var(--color-elevated)' : 'transparent', color: active ? 'var(--color-text-primary)' : 'var(--color-text-secondary)', fontWeight: active ? 600 : 400,
     }}>{children}</button>
   );
+}
+
+/**
+ * A tool name a person can read (the OS look, business profile): an MCP tool's
+ * `mcp__server__do_thing` becomes "do thing"; anything else is unchanged.
+ */
+export function readableToolName(name: string): string {
+  if (!name.startsWith('mcp__')) return name;
+  const parts = name.split('__');
+  return parts.length >= 3 && parts[parts.length - 1] ? parts[parts.length - 1].replace(/_/g, ' ') : name;
 }
 
 /** A tool result, minimized to a one-line summary and expandable on click. */

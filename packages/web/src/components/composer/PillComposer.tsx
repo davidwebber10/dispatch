@@ -62,6 +62,10 @@ export interface PillComposerProps {
   onTallChange?: (tall: boolean) => void;
   /** Drawn just above the box: the "/" menu's list, its notice and its sheet (composer/slash/useSlashMenu). */
   slash?: ReactNode;
+  /** 'os': the Pretty thread view on a hosted box or in the business preview (tabs/chat/askLook.tsx). Same
+   *  controls and layout; the box is drawn like an OS input (the --input border, rounded-lg, 14px text, a focus
+   *  ring) and the keys like OS buttons (size-9, rounded-md, the primary fill for Send). */
+  look?: 'os';
 }
 
 const MAX_FRACTION = 0.5;
@@ -69,12 +73,16 @@ const MAX_FRACTION = 0.5;
 export function PillComposer({
   value, onChange, onSend, canSend, stopMode = false, onStop, placeholder, onAddFile, menuExtra, afterPlus, pluginContext,
   dictation, sttConfigured, textareaRef, textareaProps, dragActive = false, mobile = false, sendLabel = 'Send',
-  maxLines, maxHeight, onTallChange, handle, floating, slash,
+  maxLines, maxHeight, onTallChange, handle, floating, slash, look,
 }: PillComposerProps) {
   const own = useRef<HTMLTextAreaElement | null>(null);
+  const ask = look === 'os';
+  // The OS focus ring: focus-within cannot be written inline, so the box follows focus itself.
+  const [focused, setFocused] = useState(false);
   // 60 px tall on a phone (2026-11-06, was 48): 42 px keys inside 8 px padding and a 1 px border.
-  const key = mobile ? 42 : 32;
-  const lineH = mobile ? 22 : 21;
+  // OS look: size-9 (36 px) keys and text-sm (20 px lines) on a desktop.
+  const key = mobile ? 42 : ask ? 36 : 32;
+  const lineH = mobile ? 22 : ask ? 20 : 21;
   const minH = key;
 
   // Grow with the text, then scroll past half the window. Runs on every change, so a paste, a
@@ -117,7 +125,7 @@ export function PillComposer({
   const expandable = mobile && long && !recording;
   const failed = dictation.state === 'error';
   const [recordingsOpen, setRecordingsOpen] = useState(false);
-  const circle = { flex: 'none', width: key, height: key, padding: 0, borderRadius: '50%', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' } as const;
+  const circle = { flex: 'none', width: key, height: key, padding: 0, borderRadius: ask ? 'var(--radius-md)' : '50%', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' } as const;
   // Once there is text, it gets its own full-width line above the + / mic / send row (2026-11-05:
   // inline, a wrapped message sat between the keys with an odd uneven margin). One grid with
   // named areas, so the text box stays the same element when the layout switches (no lost focus).
@@ -192,7 +200,20 @@ export function PillComposer({
     <RecordingsSheet open={recordingsOpen} onClose={() => setRecordingsOpen(false)} onInsert={(t) => { dictation.insert(t); dictation.reset(); }} />
     <div style={{ position: 'relative' }}>
     {slash}
-    <div ref={boxRef} data-testid="pill-composer" data-stacked={stacked || undefined} style={{
+    <div ref={boxRef} data-testid="pill-composer" data-stacked={stacked || undefined} data-look={look}
+      onFocusCapture={ask ? () => setFocused(true) : undefined}
+      onBlurCapture={ask ? (e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false); } : undefined}
+      style={ask ? {
+      position: 'relative', paddingTop: handle ? 14 : undefined,
+      display: 'grid', gridTemplateColumns: 'auto 1fr auto auto', alignItems: 'end', columnGap: 4, rowGap: 2,
+      gridTemplateAreas: stacked ? '"text text text text" "plus . mic send"' : recording ? '"plus text text send"' : '"plus text mic send"',
+      // OS input: the card fill, the --input border (border-hover), rounded-lg; focus: the ring color and a 3px ring.
+      padding: mobile ? 8 : 5, borderRadius: 'var(--radius-lg)',
+      background: dragActive ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-pane))' : 'var(--color-pane)',
+      border: `1px solid ${dragActive || focused ? 'var(--color-accent)' : 'var(--color-border-hover)'}`,
+      boxShadow: [focused ? '0 0 0 3px color-mix(in srgb, var(--color-accent) 20%, transparent)' : '', floating ? '0 10px 30px -12px var(--color-shadow)' : ''].filter(Boolean).join(', ') || undefined,
+      transition: 'border-color .12s, background .12s, box-shadow .12s',
+    } : {
       position: 'relative', boxShadow: floating ? '0 10px 30px -12px var(--color-shadow)' : undefined,
       paddingTop: handle ? 14 : undefined,
       display: 'grid', gridTemplateColumns: 'auto 1fr auto auto', alignItems: 'end', columnGap: 4, rowGap: 2,
@@ -205,7 +226,7 @@ export function PillComposer({
         <InputActionsMenu
           onAddFile={onAddFile}
           extra={menuExtra}
-          triggerStyle={{ ...circle, background: 'transparent', color: 'var(--color-text-primary)', cursor: 'pointer' }}
+          triggerStyle={{ ...circle, background: 'transparent', color: ask ? 'var(--color-text-secondary)' : 'var(--color-text-primary)', cursor: 'pointer' }}
         />
         {afterPlus}
       </div>
@@ -229,7 +250,7 @@ export function PillComposer({
           style={{
             gridArea: 'text', width: '100%', minWidth: 0, minHeight: minH, height: minH, margin: 0, resize: 'none', overflowY: 'auto',
             border: 'none', outline: 'none', background: 'transparent', color: 'var(--color-text-primary)',
-            font: `400 ${mobile ? 16 : 14.5}px var(--font-sans)`, lineHeight: `${lineH}px`,
+            font: `400 ${mobile ? 16 : ask ? 14 : 14.5}px var(--font-sans)`, lineHeight: `${lineH}px`,
             padding: stacked ? `${(minH - lineH) / 2}px ${expandable ? 34 : 8}px 2px 8px` : `${(minH - lineH) / 2}px ${expandable ? 34 : 4}px ${(minH - lineH) / 2}px 4px`, boxSizing: 'border-box',
           }}
         />
@@ -253,7 +274,7 @@ export function PillComposer({
           onMouseDown={(e) => e.preventDefault() /* keep the keyboard up */}
           onClick={() => { if (sttConfigured) void dictation.start(); else setMicHint((v) => !v); }}
           style={{ ...circle, gridArea: 'mic', background: 'transparent', color: sttConfigured ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)', cursor: 'pointer', opacity: sttConfigured ? 1 : 0.5 }}>
-          <Microphone size={mobile ? 21 : 18} />
+          <Microphone size={mobile ? 21 : ask ? 16 : 18} />
         </button>
       )}
       {stopMode ? (
@@ -265,8 +286,11 @@ export function PillComposer({
         <button type="button" aria-label={sendLabel} title={sendLabel} disabled={!canSend}
           onMouseDown={(e) => e.preventDefault()}
           onClick={onSend}
-          style={{ ...circle, gridArea: 'send', background: canSend ? 'var(--color-accent)' : 'var(--color-hover)', color: canSend ? 'var(--color-on-accent)' : 'var(--color-text-tertiary)', cursor: canSend ? 'pointer' : 'default', transition: 'background .15s' }}>
-          <ArrowUp size={mobile ? 20 : 17} weight="bold" />
+          style={ask
+            /* OS: the primary Button, at half opacity while disabled. */
+            ? { ...circle, gridArea: 'send', background: 'var(--color-accent)', color: 'var(--color-on-accent)', opacity: canSend ? 1 : 0.5, cursor: canSend ? 'pointer' : 'default', transition: 'opacity .15s' }
+            : { ...circle, gridArea: 'send', background: canSend ? 'var(--color-accent)' : 'var(--color-hover)', color: canSend ? 'var(--color-on-accent)' : 'var(--color-text-tertiary)', cursor: canSend ? 'pointer' : 'default', transition: 'background .15s' }}>
+          <ArrowUp size={mobile ? 20 : ask ? 16 : 17} weight={ask ? 'regular' : 'bold'} />
         </button>
       )}
     </div>
