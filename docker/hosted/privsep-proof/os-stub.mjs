@@ -6,7 +6,7 @@ import fs from 'node:fs';
 const port = Number(process.argv[2] || 3922);
 const logFile = process.argv[3] || '/dev/null';
 const outbound = process.env.STUB_OUTBOUND_TOKEN || '';
-const profile = process.env.STUB_PROFILE || 'developer';
+let profile = process.env.STUB_PROFILE || 'developer';
 const log = (o) => fs.appendFileSync(logFile, JSON.stringify({ t: new Date().toISOString(), ...o }) + '\n');
 const tools = [
   { name: 'crm_get_customer', description: 'Read a customer', inputSchema: { type: 'object', properties: { id: { type: 'string' } } } },
@@ -19,6 +19,8 @@ http.createServer((req, res) => {
   req.on('data', (d) => { body += d; });
   req.on('end', () => {
     const u = new URL(req.url, 'http://stub');
+    // Control (the proof script only): switch the profile the platform answers with.
+    if (u.pathname === '/__ctl') { if (u.searchParams.get('profile')) profile = u.searchParams.get('profile'); res.end(JSON.stringify({ profile })); return; }
     const token = req.headers['x-dispatch-box-token'];
     const tokenOk = !!outbound && token === outbound;
     let j = null; try { j = JSON.parse(body); } catch { /* not JSON */ }
