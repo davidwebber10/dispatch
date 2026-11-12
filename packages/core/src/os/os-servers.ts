@@ -146,7 +146,11 @@ export function osServersNote(specs: readonly McpServerSpec[], platformName: str
   const systems = os.filter((s) => s.osSystem !== OS_SELF_SYSTEM).map((s) => s.name);
   const conn = os.find((s) => s.osSystem === OS_SELF_SYSTEM)?.name;
   const parts: string[] = [];
-  if (systems.length) parts.push(`Company systems from ${platformName} are MCP servers of their own: ${systems.join(', ')}.`);
+  if (systems.length) {
+    parts.push(`Company systems from ${platformName} are MCP servers of their own: ${systems.join(', ')}.`);
+    parts.push('A system the person has not connected yet has one tool, `connect`. When a request needs that system, call its `connect` tool '
+      + '(the person gets a Connect card) instead of saying that you cannot do it, and follow what its result says.');
+  }
   if (conn) parts.push(`The \`list\` tool of the \`${conn}\` server shows which company systems are connected.`);
   return parts.join(' ');
 }

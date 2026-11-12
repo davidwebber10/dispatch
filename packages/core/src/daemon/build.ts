@@ -603,8 +603,9 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     // developerInstructions, Grok --rules, OpenCode's rules file).
     secretsServerSpec: () => ({ spec: secretsService.getServerSpec(), prompt: [secretsService.getSystemPrompt(), osConnections.getSystemPrompt()].filter(Boolean).join('\n\n') || null }),
     // The company tools (os/os-servers.ts): one server per company system that has a tool for this
-    // person, reaching OS only through this daemon's loopback route (os/tools-proxy.ts). A running
-    // thread keeps the servers it started with; a change in OS reaches the next spawn.
+    // person (a not-connected one has its `connect` tool), reaching OS only through this daemon's
+    // loopback route (os/tools-proxy.ts). A running thread keeps the SET of servers it started with;
+    // the tools of each change live (list_changed). A new system reaches the next spawn.
     integrationsSpecs: () => {
       const specs = [...integrationsService.getServerSpecs(), ...osConnections.getServerSpecs()];
       if (osConnections.osToolsUrl() && daemonApi) specs.push(...osSystemServerSpecs(daemonApi, systemsForSpawn(osConnections, osToolCatalog)));
