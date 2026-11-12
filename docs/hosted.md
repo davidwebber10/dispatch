@@ -25,8 +25,32 @@ of a business person). See `packages/core/src/os/approvals.ts`.
 
 ## What a hosted box does differently
 
-- **Company tools.** One `os-tools` MCP server per thread, a stdio bridge to the daemon's loopback
-  `POST /api/os-tools/mcp`, which adds the box token, owner and thread id (docs/integrations.md).
+- **Company tools.** One MCP server per company system with a tool for the person (`acumatica`,
+  `data`, `display`, `connections`, …), reaching the daemon's loopback `POST /api/os/mcp/<system>`,
+  which renames the tools and adds the box token, owner, thread id and `x-dispatch-systems`
+  (docs/integrations.md). The gateway's instructions ride the `data` server only.
+- **The native window.** The web client on a hosted box looks like a local install: the Dispatch
+  theme and layout, the technical wording for a developer. The OS look stays behind the business
+  preview switch (off, hidden on a hosted box). A business person uses the chat view in OS, which
+  drives this daemon through `docs/headless-api.md`.
+- **Business profile: no unattended runs.** The daemon refuses (403, `not_available_in_profile`) every
+  route that creates, changes, enables or runs an automation, an agent, a role, a coordinator or a
+  queued agent, and the autonomous dial: a run starts its harness with every approval skipped.
+  Listing, cancelling and deleting stay allowed (docs/headless-api.md section 9).
+- **Idle info (capability `idle-info`).** The heartbeat carries `automations: {enabled, nextRunAt,
+  kinds: {schedules, pluginJobs, parkedThreads}}` and `lastActivityAt` (`os/idle-info.ts`).
+  Counted: enabled agent schedules with a next run, plugin worker cron jobs of a running worker,
+  threads parked on a usage limit. Not counted (event driven or housekeeping): thread watches, the
+  delivery outbox, the interim recap, auto-archive, the stall watchdog, the plugin update check,
+  telemetry, the usage gauge. `lastActivityAt` is the newest of a person's message (`source:
+  "user"`), a thread turn (a status change to working, idle, needs input or error, or a CLI output
+  burst; never an attach) and an automation run. The heartbeat, the OS poll and an open page never
+  move it.
+- **Stop and start.** SIGTERM ends the daemon at once (measured 0.01 s with idle threads; at most the
+  3 s kill grace for a busy CLI); SQLite is written as it goes. On the next start a chat thread
+  resumes with its history (the journal) when its socket opens or a message arrives, and an enabled
+  schedule keeps its `next_run_at`. A run that fell due during the sleep runs ONCE on the first tick
+  (about 30 s after start), then the schedule continues from now; missed runs are not repeated.
 - **Claude login.** `claude auth login --claudeai --email <owner>` over pipes; Claude Code keeps its own
   credential; the daemon reads `claude auth status` only. An added account has its own
   `CLAUDE_CONFIG_DIR` under `<dataDir>/claude-accounts/<id>`; `projects/`, `skills/`, `commands/`,
@@ -52,8 +76,9 @@ of a business person). See `packages/core/src/os/approvals.ts`.
   the Claude sign-in (`claude.signin.*`: start, URL host, code length and shape, CLI exit code, the
   CLI's error text, `claude auth status`). Every string is redacted: no code, token, e-mail, cookie or
   URL query. A local install writes none of these lines.
-- **Capabilities.** `platform/capabilities.ts` (`base-path`, `os-tools-proxy`, `profile`) rides the
-  heartbeat and `GET /api/os/connections`.
+- **Capabilities.** `platform/capabilities.ts` (`base-path`, `os-tools-proxy`, `profile`,
+  `headless-v1`, `idle-info`) rides the heartbeat, `GET /api/host-context` and
+  `GET /api/os/connections`. `automations-safe` is not advertised.
 
 ## Image
 
