@@ -8,6 +8,17 @@ import { PLUGIN_ID_RE, parseManifest, satisfiesDispatch, type PluginManifest } f
 import { pluginTemplate } from './template.js';
 import { publishToAgent } from '../privsep/paths.js';
 import { isHostedBox } from '../os/hosted-mode.js';
+import { currentProfile } from '../os/profile.js';
+
+/**
+ * A plugin's instructions for a business person on a hosted box: every block between a line
+ * `<!-- not-business -->` and a line `<!-- /not-business -->` is left out (the Inbox's Send a secret
+ * text). Everywhere else only the two marker lines go.
+ */
+export function instructionsFor(text: string, business: boolean): string {
+  const block = /^[ \t]*<!-- not-business -->[ \t]*\r?\n([\s\S]*?)^[ \t]*<!-- \/not-business -->[ \t]*(\r?\n|$)/gm;
+  return text.replace(block, business ? '' : '$1').trim();
+}
 
 /**
  * Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md, sections 1 and 2.1): the folders
@@ -192,6 +203,9 @@ export class PluginRegistry {
    */
   modelInjection(harness: string): { specs: McpServerSpec[]; prompts: string[]; toolNames: string[] } {
     const specs: McpServerSpec[] = []; const prompts: string[] = []; const toolNames: string[] = [];
+    const hosted = isHostedBox();
+    // A business person on a hosted box (os/profile.ts): a plugin may leave out what that workspace lacks.
+    const business = hosted && currentProfile() === 'business';
     for (const row of this.list()) {
       const model = row.model;
       if (!model || !row.enabled || row.error || !this.keyed(row.id)) continue;
@@ -205,7 +219,11 @@ export class PluginRegistry {
         specs.push({
           name: `plugin-${row.id}`, command: abs(model.mcp.command), args: (model.mcp.args ?? []).map(abs),
           // DISPATCH_HOSTED: a hosted box (os/hosted-mode.ts); a plugin may word its tool for the platform (the Inbox does).
-          env: { ...(model.mcp.env ?? {}), DISPATCH_PLUGIN: row.id, ...(keyFile ? { DISPATCH_PLUGIN_AUTH_FILE: keyFile } : {}), ...(isHostedBox() ? { DISPATCH_HOSTED: '1' } : {}) },
+          // DISPATCH_BUSINESS: a business person there; the Inbox then offers no inbox_secret.
+          env: {
+            ...(model.mcp.env ?? {}), DISPATCH_PLUGIN: row.id, ...(keyFile ? { DISPATCH_PLUGIN_AUTH_FILE: keyFile } : {}),
+            ...(hosted ? { DISPATCH_HOSTED: '1' } : {}), ...(business ? { DISPATCH_BUSINESS: '1' } : {}),
+          },
           authEnv: true,
           // A hosted business thread keeps only the servers of plugins that ship with Dispatch (os/hosted-mcp-policy.ts).
           ...(where?.bundled ? { bundled: true } : {}),
@@ -214,7 +232,7 @@ export class PluginRegistry {
       }
       if (model.instructions) {
         try {
-          const text = fs.readFileSync(path.join(folder, model.instructions), 'utf8').trim();
+          const text = instructionsFor(fs.readFileSync(path.join(folder, model.instructions), 'utf8'), business);
           if (text) prompts.push(`## Plugin: ${row.name}\n\n${text}`);
         } catch { /* listed as broken on the next read */ }
       }

@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { PluginRegistry } from '../../src/plugins/registry.js';
 import { KeyRegistry } from '../../src/auth/principals.js';
+import { setProfileSource, fallbackProfile } from '../../src/os/profile.js';
 
 /** The model part of a plugin (docs/superpowers/specs/2026-11-07-plugins-design.md, sections 3.1 and 3.2). */
 describe('PluginRegistry.modelInjection (2026-11-07)', () => {
@@ -61,5 +62,29 @@ describe('PluginRegistry.modelInjection (2026-11-07)', () => {
     expect(reg().get('bad')?.error).toMatch(/instructions/);
     plugin('bad2', { model: { mcp: { command: 'node', args: ['../../x.js'] } } });
     expect(reg().get('bad2')?.error).toBeUndefined(); // args are the server's business; only the manifest's own files are confined
+  });
+
+  it('a business person on a hosted box: DISPATCH_HOSTED and DISPATCH_BUSINESS, and no not-business block', () => {
+    plugin('inbox', { model: { instructions: 'i.md', mcp: { command: 'node', args: ['mcp/server.js'] } } },
+      { 'i.md': 'Use the Inbox.\n\n<!-- not-business -->\nSend a secret.\n<!-- /not-business -->\n', 'mcp/server.js': '' });
+    const r = reg(); r.issueKeys();
+    const saved = { base: process.env.OS_BASE_URL, token: process.env.OS_BOX_TOKEN };
+    try {
+      expect(r.modelInjection('claude-code').prompts).toEqual(['## Plugin: Plugin inbox\n\nUse the Inbox.\n\nSend a secret.']);
+      process.env.OS_BASE_URL = 'http://platform.invalid'; process.env.OS_BOX_TOKEN = 'proof-token';
+      setProfileSource(() => 'business');
+      const biz = r.modelInjection('claude-code');
+      expect(biz.specs[0].env).toMatchObject({ DISPATCH_HOSTED: '1', DISPATCH_BUSINESS: '1' });
+      expect(biz.prompts).toEqual(['## Plugin: Plugin inbox\n\nUse the Inbox.']);
+      setProfileSource(() => 'developer');
+      const dev = r.modelInjection('claude-code');
+      expect(dev.specs[0].env?.DISPATCH_HOSTED).toBe('1');
+      expect(dev.specs[0].env?.DISPATCH_BUSINESS).toBeUndefined();
+      expect(dev.prompts[0]).toContain('Send a secret.');
+    } finally {
+      setProfileSource(() => fallbackProfile(process.env));
+      if (saved.base === undefined) delete process.env.OS_BASE_URL; else process.env.OS_BASE_URL = saved.base;
+      if (saved.token === undefined) delete process.env.OS_BOX_TOKEN; else process.env.OS_BOX_TOKEN = saved.token;
+    }
   });
 });
