@@ -18,7 +18,9 @@
 //
 // NOT counted (they fire on events, are short housekeeping, or would keep a box awake for ever):
 // thread watches (event driven), the delivery outbox retries, the interim recap sweep, auto-archive,
-// the stall watchdog, the plugin marketplace update check, telemetry, the usage gauge, the heartbeat.
+// the stall watchdog, the plugin marketplace update check, telemetry, the usage gauge, the heartbeat,
+// and every read-only request (GET /api/usage-limits/summary, /api/chats, the journal, the readiness
+// calls): no route stamps activity; tests/os/idle-reads.test.ts pins it.
 import type Database from 'better-sqlite3';
 import * as appState from '../db/app-state.js';
 
