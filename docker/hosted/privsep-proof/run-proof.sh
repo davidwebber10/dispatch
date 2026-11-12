@@ -11,7 +11,10 @@
 #   --old-image   an image from BEFORE privilege separation, for the migration proof (skipped when absent)
 #
 # Exit code 0 only when every functional check passed and no attack succeeded.
-set -uo pipefail
+# No `pipefail`: most checks are `<a command that prints> | grep -q <text>`. grep stops at the first
+# match, the printing command may then end on a closed pipe, and with pipefail that made a check fail
+# although the text was there (seen with `docker logs`).
+set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 IMAGE=dispatch-box-privsep:latest; OLD_IMAGE=""; BOX_PORT=3972; STUB_PORT=3922; DIST=""
 while [[ $# -gt 0 ]]; do
@@ -164,6 +167,7 @@ copy_in "$HERE/agent-work.mjs" agent-work.mjs
 copy_in "$HERE/attack.sh" attack.sh
 copy_in "$HERE/attack-routes.mjs" attack-routes.mjs
 copy_in "$HERE/plant-rc.sh" plant-rc.sh
+copy_in "$HERE/nested-harness.sh" nested-harness.sh
 inbox sh -c "printf '%s' '$SECRET' > /home/dispatch/proof/secret-value; chown 1000:1000 /home/dispatch/proof/secret-value"
 hook work-dev 1 'node "$HOME/proof/agent-work.mjs" inbox dev -- "$@"; node "$HOME/proof/agent-work.mjs" live dev -- "$@"'
 ITID="$(api POST "/api/sessions/$SID/terminals" '{"type":"claude-code","label":"inbox chat","config":{"transport":"structured"}}' | jget id)"
@@ -307,10 +311,16 @@ if compat -v "$VH-compat:/home/dispatch"; then
   api POST "/api/terminals/$CTID/message" '{"content":"compat turn"}' >/dev/null; sleep 4
   api GET "/api/terminals/$CTID/journal" | grep -q 'echo:compat turn' && [ "$(apic GET /api/inbox)" = 200 ] && fok "in that layout a chat thread answers a turn and the Inbox route answers" || fbad "in that layout a chat thread answers a turn" "inbox HTTP $(apic GET /api/inbox)"
   # One user: the daemon's FIRST environment block still names the tokens, and a workload of the same
-  # user can read it (docs/hosted.md, "The two tokens"). Stated here, not a verdict: this layout is not
-  # the protected one, and the box does not claim it is.
-  NAMED="$(docker exec -u 1000 "$NAME-compat" sh -c 'n=0; for f in /proc/[0-9]*/environ; do tr "\0" "\n" < $f 2>/dev/null | grep -qE "^(DISPATCH_BOX_TOKEN|OS_BOX_TOKEN)=" && n=$((n+1)); done; echo $n')"
-  printf 'NOTE  %-62s %s\n' "one-user layout: environment blocks a workload can read that name a token" "$NAMED (not protected; why privsep-v1 is not reported)"
+  # user can read it (docs/hosted.md, "The two tokens"): a NOTE, because this layout is not the
+  # protected one and the box does not claim it is. What must hold in EVERY layout: no process the
+  # daemon started has a token in its own environment.
+  ENVS="$(docker exec -u 1000 "$NAME-compat" sh -c 'd=$(pgrep -f dist/server.js | head -1); n=0; kids=0
+    for f in /proc/[0-9]*/environ; do p=${f#/proc/}; p=${p%/environ}; [ "$p" = "$$" ] && continue
+      tr "\0" "\n" < "$f" 2>/dev/null | grep -qE "^(DISPATCH_BOX_TOKEN|OS_BOX_TOKEN)=" || continue
+      n=$((n+1)); [ "$(awk "{print \$4}" /proc/$p/stat 2>/dev/null)" = "$d" ] && kids=$((kids+1))
+    done; echo "$n $kids $(ls -d /proc/[0-9]* | wc -l)"')"
+  [ "$(echo "$ENVS" | cut -d' ' -f2)" = 0 ] && fok "in that layout too, no process the daemon started has a token in its environment" "$(echo "$ENVS" | cut -d' ' -f3) processes" || fbad "no process the daemon started has a token in its environment" "$ENVS"
+  printf 'NOTE  %-62s %s\n' "one-user layout: a workload can read the first environment of the daemon" "blocks that name a token: $(echo "$ENVS" | cut -d' ' -f1) (init, the daemon; not protected, so privsep-v1 is not reported)"
 else
   fbad "old task definition, one token value: the box starts" "$(docker logs "$NAME-compat" 2>&1 | tail -3 | tr '\n' ' ')"
 fi
@@ -318,7 +328,10 @@ fi
 if compat --user 0 $PLATFORM_CAP_DROP -v "$VH-compat:/home/dispatch" -v "$VS-compat:/var/lib/dispatch/state"; then
   CC="$(api GET /api/host-context | jget capabilities)"
   docker logs "$NAME-compat" 2>&1 | grep -q 'privilege separation is ON' && docker logs "$NAME-compat" 2>&1 | grep -q 'box tokens: SHARED' && echo "$CC" | grep -q privsep-v1 && fok "new task definition, one token value: separated start, tokens through the pipe" "$(docker logs "$NAME-compat" 2>&1 | grep -o 'box tokens: [A-Z]*' | tail -1)" || fbad "new task definition, one token value: separated start" "$CC $(docker logs "$NAME-compat" 2>&1 | grep 'box tokens' | tail -1)"
-  ! docker exec "$NAME-compat" sh -c 'for f in /proc/[0-9]*/environ; do [ "$f" = /proc/1/environ ] && continue; tr "\0" "\n" < $f 2>/dev/null | grep -E "^(DISPATCH_BOX_TOKEN|OS_BOX_TOKEN)="; done' | grep -q . && fok "no process but init has a token in its environment" || fbad "no process but init has a token in its environment"
+  # As the agent user (a process that `docker exec` makes has the container's own environment, so the
+  # check leaves its own shell out): no environment block that user can read names a token.
+  SEEN="$(docker exec -u 1000 "$NAME-compat" sh -c 'n=0; for f in /proc/[0-9]*/environ; do p=${f#/proc/}; p=${p%/environ}; [ "$p" = "$$" ] && continue; tr "\0" "\n" < "$f" 2>/dev/null | grep -qE "^(DISPATCH_BOX_TOKEN|OS_BOX_TOKEN)=" && n=$((n+1)); done; echo $n')"
+  [ "$SEEN" = 0 ] && fok "in that start no environment the agent user can read names a token" "init and the daemon are root" || fbad "in that start no environment the agent user can read names a token" "$SEEN readable blocks name one"
 else
   fbad "new task definition, one token value: the box starts" "$(docker logs "$NAME-compat" 2>&1 | tail -3 | tr '\n' ' ')"
 fi
