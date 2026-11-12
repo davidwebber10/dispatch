@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { ArrowCircleUp, PuzzlePiece } from '@phosphor-icons/react';
 import { api } from '../../api/client';
 import { useUpdate, updatePending } from '../../stores/update';
+import { hostCopy, hostDetail, PLAIN } from '../../lib/hostCopy';
+import { usesPlainWording } from '../../lib/hostContext';
 import { useApplyUpdate } from './useApplyUpdate';
 
 /**
@@ -28,7 +30,8 @@ export function UpdateBanner({ compact = false }: { compact?: boolean }) {
   };
   const dispatchWaiting = pending && available !== null;
   if (!dispatchWaiting && pluginUpdates.length === 0) return null;
-  const next = available ? `v${available.version.replace(/^v/, '')}` : '';
+  // A hosted update state may carry no version, url or date (tolerated: the plain line needs none).
+  const next = available?.version ? `v${String(available.version).replace(/^v/, '')}` : '';
 
   const pluginsBlock = pluginUpdates.length > 0 && (
     <div role="region" aria-label="Plugin updates" style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0, padding: compact ? '12px 14px' : '12px 16px', background: 'color-mix(in srgb, var(--color-accent) 6%, transparent)', border: '1px solid color-mix(in srgb, var(--color-accent) 25%, transparent)', borderRadius: 'var(--radius-lg)' }}>
@@ -61,7 +64,7 @@ export function UpdateBanner({ compact = false }: { compact?: boolean }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <ArrowCircleUp size={compact ? 24 : 22} weight="fill" color="var(--color-accent)" style={{ flexShrink: 0 }} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: compact ? 15 : 13.5, fontWeight: 600, color: 'var(--color-text-primary)' }}>Dispatch {next} is available</div>
+          <div style={{ fontSize: compact ? 15 : 13.5, fontWeight: 600, color: 'var(--color-text-primary)' }}>{usesPlainWording() || !next ? PLAIN['update.available'] : `Dispatch ${next} is available`}</div>
           <div style={{ marginTop: 2, fontSize: compact ? 12 : 11.5, color: 'var(--color-text-secondary)', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {currentVersion && <span>You run v{currentVersion}.</span>}
             {available.url && <a href={available.url} target="_blank" rel="noreferrer" style={{ color: 'var(--color-accent)', textDecoration: 'none' }}>Release notes</a>}
@@ -77,9 +80,9 @@ export function UpdateBanner({ compact = false }: { compact?: boolean }) {
       </div>
       {failReason && (
         <div style={{ fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
-          Couldn't update automatically: {failReason}{' '}
-          {hosted
-            ? 'Your workspace updates when it is rebuilt onto a newer image — ask an administrator if this keeps failing.'
+          {usesPlainWording() ? hostDetail(failReason) : <>Couldn't update automatically: {failReason}</>}{' '}
+          {hosted || usesPlainWording()
+            ? PLAIN['update.failed.hint']
             : <>Run <code style={{ font: '400 11px var(--font-mono)' }}>dispatch update</code> manually instead.</>}
         </div>
       )}

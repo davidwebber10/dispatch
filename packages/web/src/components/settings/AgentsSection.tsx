@@ -16,6 +16,7 @@ import { Segmented } from '../common/Segmented';
 import { HARNESS_MARK } from '../common/HarnessStrip';
 import { useSubPage } from './subPageNav';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { hostCopy } from '../../lib/hostCopy';
 import { Button, IconButton } from '../ui';
 
 /**
@@ -83,7 +84,7 @@ export function AgentsSection() {
       const next = await api.putHarnessSettings(patch);
       setData(next); setErr('');
       useSpinnerWords.getState().set(next.settings?.['claude-code']?.spinnerVerbs ?? null);
-    } catch { setErr('Could not save. Is the daemon reachable?'); }
+    } catch { setErr(hostCopy('settings.save.failed', 'Could not save. Is the daemon reachable?')); }
   }
 
   const agents = HARNESSES.filter((h) => h.provider !== null);

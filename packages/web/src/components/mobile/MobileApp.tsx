@@ -50,6 +50,7 @@ import { Spinner } from '../common/Spinner';
 import { SortableList } from '../common/SortableList';
 import { timeAgo } from '../../lib/time';
 import { OverseerView } from '../overseer/LazyOverseerView';
+import { can } from '../../lib/profile';
 import { useStableOrder } from '../../hooks/useStableOrder';
 import { ChatMode } from '../endless/LazyChatMode';
 
@@ -280,13 +281,13 @@ export function MobileApp() {
           <div ref={level0Ref} style={{ ...slot, display: 'flex', flexDirection: 'column' }}>
             {bottomTab === 'chat' ? (
               <ChatMode mobile />
-            ) : bottomTab === 'analytics' ? (
+            ) : bottomTab === 'analytics' && can('analytics') ? (
               <Suspense fallback={analyticsFallback}><AnalyticsView /></Suspense>
             ) : bottomTab === 'settings' ? (
               <MobileSettingsList onOpen={openSettingsSection} />
-            ) : bottomTab === 'plugins' ? (
+            ) : bottomTab === 'plugins' && can('settings.plugins') ? (
               <PluginsTab onOpen={openPluginScreen} />
-            ) : bottomTab.startsWith('plugin:') ? (
+            ) : bottomTab.startsWith('plugin:') && can('settings.plugins') ? (
               <PluginView viewKey={bottomTab} />
             ) : bottomTab === 'agents' ? (
               <AllAgentsView onOpenAgent={openAgentFromList} />
@@ -377,7 +378,7 @@ export function MobileApp() {
         <div data-testid="bottom-tabs" style={{ flexShrink: 0, display: 'flex', borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
           {/* The first tab follows the Projects ⇄ Threads switch: its label and icon name
               whichever list it opens to. */}
-          {([['projects', projectsView === 'threads' ? 'Threads' : 'Projects', projectsView === 'threads' ? THREADS_ICON : PROJECTS_ICON], ['chat', 'Chat', ChatCircleDots], ['analytics', 'Analytics', ChartBar], ...promotedViews.map((v) => [v.key, v.label, pluginIcon(v.icon)] as const), ...(anyPlugin ? [['plugins', 'Plugins', PuzzlePiece] as const] : []), ['settings', 'Settings', Gear]] as readonly (readonly [BottomTab, string, Icon])[]).map(([key, label, Icon]) => {
+          {([['projects', projectsView === 'threads' ? 'Threads' : 'Projects', projectsView === 'threads' ? THREADS_ICON : PROJECTS_ICON], ...(can('endless') ? [['chat', 'Chat', ChatCircleDots] as const] : []), ...(can('analytics') ? [['analytics', 'Analytics', ChartBar] as const] : []), ...(can('settings.plugins') ? promotedViews.map((v) => [v.key, v.label, pluginIcon(v.icon)] as const) : []), ...(anyPlugin && can('settings.plugins') ? [['plugins', 'Plugins', PuzzlePiece] as const] : []), ['settings', 'Settings', Gear]] as readonly (readonly [BottomTab, string, Icon])[]).map(([key, label, Icon]) => {
             const on = bottomTab === key || (key === 'plugins' && bottomTab.startsWith('plugin:') && !promotedViews.some((v) => v.key === bottomTab));
             return (
               <button key={key} onClick={() => onTab(key)}

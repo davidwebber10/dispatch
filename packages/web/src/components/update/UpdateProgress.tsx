@@ -4,6 +4,8 @@ import { api } from '../../api/client';
 import { useUpdate } from '../../stores/update';
 import { Spinner } from '../common/Spinner';
 import { reloadFresh } from '../../lib/shellCache';
+import { hostCopy, hostDetail, PLAIN } from '../../lib/hostCopy';
+import { usesPlainWording } from '../../lib/hostContext';
 import type { UpdateProgress, UpdateStepName } from '../../api/types';
 
 /** The page reload, as a seam the tests replace. */
@@ -16,7 +18,7 @@ export const STEP_LABEL: Record<UpdateStepName, string> = {
   install: 'Installing packages',
   build: 'Building',
   tools: 'Updating tools',
-  restart: 'Restarting',
+  restart: hostCopy('update.step.restart', 'Restarting'),
 };
 
 /**
@@ -97,13 +99,13 @@ export function UpdateRunning() {
   return (
     <>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
-        <span style={{ fontWeight: 600, fontSize: 15, color: 'var(--color-text-primary)' }}>{restarting ? 'Restarting Dispatch…' : 'Updating Dispatch…'}</span>
+        <span style={{ fontWeight: 600, fontSize: 15, color: 'var(--color-text-primary)' }}>{usesPlainWording() ? PLAIN['update.progress.title'] : restarting ? 'Restarting Dispatch…' : 'Updating Dispatch…'}</span>
         <Elapsed since={p?.startedAt ?? null} />
       </div>
       <div style={{ marginTop: 6, fontSize: 12.5, color: 'var(--color-text-secondary)' }}>
-        {restarting ? 'The server is restarting. ' : ''}The page reloads by itself when the update is done.
+        {usesPlainWording() ? PLAIN['update.progress.restarting'] : <>{restarting ? 'The server is restarting. ' : ''}The page reloads by itself when the update is done.</>}
       </div>
-      {p && p.state !== 'idle' && <StepList p={p} failed={false} />}
+      {p && p.state !== 'idle' && !usesPlainWording() && <StepList p={p} failed={false} />}
       {details && <LogBox lines={p?.log ?? []} />}
       <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'center' }}>
         <button type="button" onClick={() => setDetails((d) => !d)} style={ghost}>{details ? 'Hide details' : 'Show details'}</button>
@@ -124,7 +126,7 @@ export function UpdateFailed({ onRetry, retrying }: { onRetry: () => void; retry
       <div style={{ marginTop: 6, fontWeight: 600, fontSize: 15, color: 'var(--color-text-primary)' }}>Update failed</div>
       {p && <StepList p={p} failed />}
       <div style={{ marginTop: 12, fontSize: 12.5, lineHeight: 1.5, color: 'var(--color-status-red)', textAlign: 'left', wordBreak: 'break-word' }}>{p?.error ?? failure}</div>
-      {!restartStep && <div style={{ marginTop: 6, fontSize: 12, color: 'var(--color-text-secondary)', textAlign: 'left' }}>Dispatch still runs the old version, so nothing is broken.</div>}
+      {!restartStep && <div style={{ marginTop: 6, fontSize: 12, color: 'var(--color-text-secondary)', textAlign: 'left' }}>{hostCopy('update.failed.hint', 'Dispatch still runs the old version, so nothing is broken.')}</div>}
       <LogBox lines={p?.log ?? []} />
       <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'center' }}>
         <button type="button" onClick={() => useUpdate.setState({ runFailed: false, failure: null, progress: null })} style={ghost}>Close</button>
@@ -155,7 +157,7 @@ export function UpdateDone() {
       <CheckCircle size={30} weight="fill" color="var(--color-accent)" />
       <div style={{ marginTop: 6, fontWeight: 600, fontSize: 15, color: 'var(--color-text-primary)' }}>Update done</div>
       <div style={{ marginTop: 6, fontSize: 12.5, color: 'var(--color-text-secondary)' }}>
-        {version ? `Dispatch v${version.replace(/^v/, '')} is installed.` : 'The new version is installed.'} Reload to start using it.
+        {usesPlainWording() ? PLAIN['update.done.body'] : <>{version ? `Dispatch v${version.replace(/^v/, '')} is installed.` : 'The new version is installed.'} Reload to start using it.</>}
       </div>
       <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'center' }}>
         <button type="button" onClick={() => useUpdate.setState({ donePlaying: true })} style={ghost}>Keep playing</button>

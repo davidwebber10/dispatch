@@ -38,7 +38,7 @@ export const PLAIN = {
   'thread.reconnecting': 'Reconnecting…',
   'thread.why.none': 'No explanation is available. Try again in a moment.',
   'thread.why.noEvents': 'Nothing was recorded for this thread yet.',
-  'settings.group.machine': 'WORKSPACE',
+  'settings.group.machine': 'THIS WORKSPACE',
   'settings.save.failed': 'Could not save. Try again in a moment.',
   'accounts.load.failed': 'Could not load the accounts. Try again in a moment.',
   'accounts.cli.description': 'The sign-in that your workspace uses by default. You can rename it.',
@@ -64,4 +64,16 @@ export function hostCopy(key: HostCopyKey, local: string): string {
 export function hostDetail(local: string): string | null {
   const ctx = realHostContext();
   return usesPlainWording() && ctx.profile === 'developer' && ctx.hosted ? local : null;
+}
+
+/** The daemon's stock name of the CLI login (core/src/auth/accounts.ts CLI_LABEL). */
+export const STOCK_CLI_ACCOUNT_LABEL = 'CLI login (this computer)';
+
+/**
+ * An account's name as the page shows it. With plain wording the CLI login's stock name ("CLI login
+ * (this computer)") becomes "Your Claude account" / "Your Codex account"; a name the person chose stays.
+ */
+export function accountDisplayLabel(provider: 'claude' | 'codex', label: string, isCli: boolean): string {
+  if (!isCli || label !== STOCK_CLI_ACCOUNT_LABEL || !usesPlainWording()) return label;
+  return provider === 'claude' ? 'Your Claude account' : 'Your Codex account';
 }

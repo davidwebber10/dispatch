@@ -3,6 +3,8 @@ import { useSetup } from '../../stores/setup';
 import { UpdatesSection } from './UpdatesSection';
 import { TelemetrySetting } from './TelemetrySetting';
 import { SettingsPage, SettingsGroup, SettingsRow, IconTile } from './ui';
+import { can } from '../../lib/profile';
+import { realHostContext } from '../../lib/hostContext';
 
 const REPO = 'https://github.com/davidwebber10/dispatch';
 
@@ -20,19 +22,22 @@ export function AboutSection({ onDone }: { onDone?: () => void }) {
     <SettingsPage>
       <UpdatesSection />
 
-      <SettingsGroup title="Setup">
-        <SettingsRow label="Re-run setup wizard" ariaLabel="Re-run setup wizard" hint="Agent CLIs, phone access and secrets, step by step."
-          onClick={() => { openSetup(); onDone?.(); }} />
-      </SettingsGroup>
+      {/* The wizard: the full one locally; on a hosted workspace only its account step, for a developer (lib/profile.ts 'setup'). */}
+      {(can('setup') || (realHostContext().hosted && can('threads.cli'))) && (
+        <SettingsGroup title="Setup">
+          <SettingsRow label="Re-run setup wizard" ariaLabel="Re-run setup wizard" hint={can('setup') ? 'Agent CLIs, phone access and secrets, step by step.' : 'Sign in to your agent accounts.'}
+            onClick={() => { openSetup(); onDone?.(); }} />
+        </SettingsGroup>
+      )}
 
       {/* Renders nothing until the daemon answers. */}
-      <TelemetrySetting />
+      {can('settings.telemetry') && <TelemetrySetting />}
 
-      <SettingsGroup title="Links">
+      {can('about.report') && <SettingsGroup title="Links">
         <LinkRow icon={ClockCounterClockwise} label="Release history" hint="Every version and its notes." href={`${REPO}/releases`} />
         <LinkRow icon={BookOpen} label="Documentation" hint="Setup, providers, remote access." href={`${REPO}#readme`} />
         <LinkRow icon={Bug} label="Report a problem" hint="Open an issue on GitHub." href={`${REPO}/issues/new`} />
-      </SettingsGroup>
+      </SettingsGroup>}
     </SettingsPage>
   );
 }

@@ -5,6 +5,9 @@ import { useHost } from '../../stores/host';
 import { useSetup } from '../../stores/setup';
 import { HARNESSES, INSTALL_COMMAND, LOGIN_COMMAND } from '../../lib/harnesses';
 import { SecretsSection } from '../settings/SecretsSection';
+import { can } from '../../lib/profile';
+import { realHostContext } from '../../lib/hostContext';
+import { useNavigation } from '../../stores/navigation';
 
 type Step = 'agents' | 'mobile' | 'secrets' | 'done';
 const ORDER: Step[] = ['agents', 'mobile', 'secrets', 'done'];
@@ -21,7 +24,24 @@ const INSTALL: Record<ProviderName, { label: string; install: string; login: str
   ]),
 ) as Record<ProviderName, { label: string; install: string; login: string }>;
 
+/**
+ * Which steps this workspace gets (lib/profile.ts 'setup'). Local: all of them. A hosted workspace has
+ * nothing to install, no Tailscale and no Doppler, so a developer there gets only the accounts step;
+ * a business person gets no wizard at all (ConnectAccountPrompt is their one entry point).
+ */
+function wizardSteps(): Step[] | null {
+  if (can('setup')) return ORDER;
+  if (!can('threads.cli')) return null;
+  return realHostContext().hosted ? ['agents', 'done'] : ORDER;
+}
+
 export function SetupWizard() {
+  const steps = wizardSteps();
+  if (!steps) return null;
+  return <SetupWizardSteps order={steps} />;
+}
+
+function SetupWizardSteps({ order: ORDER }: { order: Step[] }) {
   const forceOpen = useSetup((s) => s.forceOpen);
   const closeForce = useSetup((s) => s.close);
   const [state, setState] = useState<SetupState | null>(null);
@@ -46,7 +66,7 @@ export function SetupWizard() {
           <strong style={{ fontSize: 16 }}>Set up Dispatch</strong>
           <button onClick={finish} style={{ background: 'none', border: 'none', color: 'var(--color-text-tertiary)', cursor: 'pointer', fontSize: 13 }}>Skip all</button>
         </div>
-        {step === 'agents' && <AgentsStep providers={state.providers} />}
+        {step === 'agents' && <AgentsStep providers={state.providers} accountsOnly={!can('setup')} onAccounts={finish} />}
         {step === 'mobile' && <MobileStep tailscale={state.tailscale} />}
         {step === 'secrets' && (
           <div>
@@ -70,7 +90,7 @@ export function btn(primary: boolean): React.CSSProperties {
   return { height: 34, padding: '0 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', cursor: 'pointer', fontWeight: 600, fontSize: 13, background: primary ? 'var(--color-accent)' : 'transparent', color: primary ? 'var(--color-on-accent)' : 'var(--color-text-secondary)' };
 }
 
-function AgentsStep({ providers: initial }: { providers: ProviderStatus[] }) {
+function AgentsStep({ providers: initial, accountsOnly = false, onAccounts }: { providers: ProviderStatus[]; accountsOnly?: boolean; onAccounts?: () => void }) {
   const [providers, setProviders] = useState(initial);
   const [checking, setChecking] = useState(false);
   const [installErrors, setInstallErrors] = useState<Partial<Record<ProviderName, string>>>({});
@@ -91,7 +111,7 @@ function AgentsStep({ providers: initial }: { providers: ProviderStatus[] }) {
   };
   return (
     <div>
-      <p style={{ color: 'var(--color-text-secondary)', fontSize: 13, marginTop: 0 }}>Dispatch drives your local Claude Code, Codex, Grok and OpenCode CLIs. Install and sign in to the ones you want.</p>
+      <p style={{ color: 'var(--color-text-secondary)', fontSize: 13, marginTop: 0 }}>{accountsOnly ? 'Sign in to the agent accounts you want to use.' : 'Dispatch drives your local Claude Code, Codex, Grok and OpenCode CLIs. Install and sign in to the ones you want.'}</p>
       {providers.map((p) => {
         const meta = INSTALL[p.name];
         const ok = p.installed && p.signedIn === true;
@@ -104,11 +124,18 @@ function AgentsStep({ providers: initial }: { providers: ProviderStatus[] }) {
                 {p.installed ? (p.signedIn === true ? 'signed in' : p.signedIn === 'unknown' ? 'installed · sign-in unknown' : 'installed · signed out') : 'not found'}
               </span>
             </div>
-            {!ok && (
+            {/* A hosted workspace has the CLIs already: no commands, one way to sign in. */}
+            {!ok && accountsOnly && p.installed && (
+              <button onClick={() => { onAccounts?.(); useNavigation.getState().navigate({ view: 'settings', section: 'accounts' }); }}
+                style={{ ...btn(false), marginTop: 8, height: 28, fontSize: 12, borderColor: 'var(--color-accent)', color: 'var(--color-accent)' }}>
+                Sign in under Settings › Accounts
+              </button>
+            )}
+            {!ok && !accountsOnly && (
               <pre style={{ margin: '8px 0 0', font: '400 11.5px var(--font-mono)', background: 'var(--color-elevated)', borderRadius: 'var(--radius-md)', padding: '8px 10px', whiteSpace: 'pre-wrap' }}>{meta.install}{'\n'}{meta.login}</pre>
             )}
             {installErrors[p.name] && <pre role="alert" style={{ color: 'var(--color-status-red)', fontSize: 11, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 160, overflowY: 'auto' }}>{installErrors[p.name]}</pre>}
-            {!p.installed && (
+            {!p.installed && !accountsOnly && (
               <button onClick={() => void install(p.name)} disabled={installing !== null}
                 style={{ ...btn(false), marginTop: 8, height: 28, fontSize: 12, borderColor: 'var(--color-accent)', color: 'var(--color-accent)' }}>
                 {installing === p.name ? 'Installing…' : `Install ${meta.label}`}

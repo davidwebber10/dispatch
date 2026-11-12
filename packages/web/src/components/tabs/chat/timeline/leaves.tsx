@@ -11,6 +11,7 @@ import { Spinner } from '../../../common/Spinner';
 import { ToolCall, editDiffStat } from '../../ToolCall';
 import { useToolGroupExpanded, useThoughtExpanded, uiKeyOf } from '../../../../hooks/useToolUIState';
 import { useRecentlyChanged } from '../../../../hooks/useThrottledValue';
+import { hostCopy } from '../../../../lib/hostCopy';
 import { stableId } from './stableId';
 
 // The leaf rows are memoized (W1-F): renderTimeline builds new elements on every walk, and a walk
@@ -150,7 +151,7 @@ export function ReconnectingState() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, height: '55vh', color: 'var(--color-text-secondary)', fontSize: 13.5 }}>
       <Spinner size={22} />
-      <span>Reconnecting…</span>
+      <span>{hostCopy('thread.reconnecting', 'Reconnecting…')}</span>
     </div>
   );
 }

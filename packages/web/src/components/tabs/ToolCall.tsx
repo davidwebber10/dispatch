@@ -3,6 +3,7 @@ import type { ConvItem } from '../../api/types';
 import { langFromPath } from '../../lib/markdown';
 import { HighlightedCode } from '../HighlightedCode';
 import { getToolView, parseToolInput } from './toolviews/registry';
+import { can } from '../../lib/profile';
 import { useToolExpanded, useToolTab, uiKeyOf } from '../../hooks/useToolUIState';
 
 /**
@@ -104,7 +105,9 @@ export function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?
   const lines = hasOut ? out.split('\n').length : 0;
   const view = getToolView(tool.toolName, parseToolInput(tool.toolInput));
   const headerName = view?.label?.(tool) ?? name;
-  const expandable = hasIn || hasOut;
+  // The raw input/output expander is a developer feature (lib/profile.ts 'tool-json'); a tool with
+  // its own readable view (a diff, a file) still opens. The one-line row always shows.
+  const expandable = (hasIn || hasOut) && (can('tool-json') || !!view?.expanded);
   const effTab: 'input' | 'output' = (tab === 'input' && hasIn) ? 'input' : (hasOut ? 'output' : 'input');
   const content = effTab === 'input' ? input : out;
   const lang = effTab === 'input' ? (tool.toolName === 'Bash' ? 'bash' : 'json') : langFromPath(tool.toolFile);
@@ -200,7 +203,7 @@ export function ToolResult({ item }: { item: ConvItem }) {
   // reset an open shelf (2026-11-06).
   const [open, setOpen] = useToolExpanded(uiKeyOf(item), false);
   const text = item.text ?? '';
-  if (!text.trim()) return null;
+  if (!text.trim() || !can('tool-json')) return null;
   const lines = text.split('\n').length;
   const err = item.isError;
   const color = err ? 'var(--color-status-red)' : 'var(--color-text-secondary)';

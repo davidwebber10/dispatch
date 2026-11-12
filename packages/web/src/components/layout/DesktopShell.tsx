@@ -30,6 +30,7 @@ import { useReconnect } from '../../stores/reconnect';
 import { useSettings } from '../../stores/settings';
 import { useGroups } from '../panes/store';
 import { useUI } from '../../stores/ui';
+import { can } from '../../lib/profile';
 
 // The desktop shell: the icon rail and the view it shows (engineering program 2026-11-09, W2-E).
 // App.tsx loads this module only at a desktop width, and the phone shell (mobile/MobileApp) only
@@ -54,7 +55,9 @@ export function DesktopShell() {
   const activeId = useProjects((s) => s.activeId);
   // The Control Plane's open decisions, for the collapsed details toggle (pinned card spec, Unit 7).
   const openDecisions = useLedgerCard((s) => openDecisionCount((activeId && s.byProject[activeId]?.card) || null));
-  const view = useUI((s) => s.view);
+  // A view the profile hides (a link, a remembered view, a plugin screen) shows the workspace instead.
+  const rawView = useUI((s) => s.view);
+  const view = (rawView === 'analytics' && !can('analytics')) || (rawView === 'chat' && !can('endless')) || (isPluginView(rawView) && !can('settings.plugins')) ? 'workspace' : rawView;
   const agentFocused = useAgentUI((s) => s.focused);
   const agentSelected = useAgents((s) => s.selectedId);
   const editing = useAgentUI((s) => s.editing);

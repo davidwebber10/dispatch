@@ -6,6 +6,7 @@ import { useTabs } from '../../stores/tabs';
 import { useThreadStatus } from '../../stores/threadStatus';
 import { useAccounts, accountProviderOf, threadAccount } from '../../stores/accounts';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { hostCopy } from '../../lib/hostCopy';
 import { Modal } from './Modal';
 
 const HARNESS_NAME: Record<string, string> = { 'claude-code': 'Claude Code', codex: 'Codex' };
@@ -59,7 +60,7 @@ export function AccountSwitchModal({ tab, onClose }: { tab: Terminal; onClose: (
     <Modal open sheet={isMobile} title="Switch account" onClose={onClose} maxWidth={420}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {!view ? (
-          <span style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>The daemon has no accounts yet. Update it to use more than one login.</span>
+          <span style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>{hostCopy('accounts.none', 'The daemon has no accounts yet. Update it to use more than one login.')}</span>
         ) : !provider ? (
           <span style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>Only a Claude Code or Codex thread runs on an account.</span>
         ) : (

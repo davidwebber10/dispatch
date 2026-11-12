@@ -14,17 +14,21 @@
 //   (the button, the menu row, the palette command); do not delete code.
 // - `developer` must stay true for every key: profile.test.ts checks it.
 // - Keyboard shortcuts and command-palette entries that lead to a hidden feature are gated too.
-import { hostContext, type Profile } from './hostContext';
+import { hostContext, realHostContext, type Profile } from './hostContext';
 
 export interface FeatureRule {
   business: boolean;
   developer: true;
+  /** False: hidden on a hosted workspace in EVERY profile (the feature cannot work there). */
+  hosted?: false;
   /** What the key covers, for the person who edits this map. */
   note: string;
 }
 
 const show = (note: string): FeatureRule => ({ business: true, developer: true, note });
 const hide = (note: string): FeatureRule => ({ business: false, developer: true, note });
+/** Hidden for business people, and on a hosted workspace for everyone (it needs the person's own computer). */
+const localOnly = (note: string): FeatureRule => ({ business: false, developer: true, hosted: false, note });
 
 /** EDIT HERE. The proposal for business people (to be revised after the design session). */
 export const FEATURES = {
@@ -42,7 +46,6 @@ export const FEATURES = {
   update: show('The update prompt (plain wording when hosted)'),
   'settings.appearance': show('Settings > Appearance (only the OS themes when hosted)'),
   'settings.notifications': show('Settings > Notifications'),
-  'settings.dictation': show('Settings > Dictation'),
   'settings.about': show('Settings > About & updates'),
 
   // ── Hidden from a business person ───────────────────────────────────────────
@@ -59,14 +62,18 @@ export const FEATURES = {
   'settings.integrations': hide('Settings > Integrations (add an MCP server)'),
   'settings.secrets': hide('Settings > Secrets (Doppler)'),
   'settings.tools': hide('Settings > Tools'),
-  'settings.devices': hide('Settings > Devices & access (pairing)'),
-  'settings.servers': hide('Settings > Servers and the server switcher'),
+  'settings.dictation': hide('Settings > Dictation: its API key lives in Doppler, which a business workspace has not'),
+  'settings.devices': localOnly('Settings > Devices & access (pairing): a hosted workspace has no device list'),
+  'settings.servers': localOnly('Settings > Servers and the server switcher: other Dispatch machines'),
+  'about.report': hide('Settings > About: "Report a problem" on GitHub'),
+  setup: localOnly('The setup wizard (install CLIs, Tailscale, Doppler). A hosted developer gets only the account step'),
   'settings.plugins': hide('Settings > Plugins, plugin settings sections and plugin screens in the rail'),
   'settings.skills': hide('Settings > Skills marketplace'),
   'settings.telemetry': hide('Telemetry settings'),
   'model-picker': hide('The model picker (the default model applies)'),
   'effort-picker': hide('The effort picker'),
   'tool-json': hide('Raw tool-call JSON expanders (the one-line tool row stays)'),
+  'projects.path': hide('The folder path picker of New Project (a hosted developer keeps it under Advanced)'),
   'settings.editor': hide('Settings > Appearance > "Open docs in" (an editor on the computer)'),
   'themes.all': hide('Every theme; a business person picks only OS light, OS dark or System'),
 } as const satisfies Record<string, FeatureRule>;
@@ -80,8 +87,10 @@ export function featureFor(feature: Feature, profile: Profile): boolean {
   return rule[profile];
 }
 
-/** May this page's person see `feature`? For code outside React. */
+/** May this page's person see `feature`? For code outside React. A `hosted: false` feature is hidden on every hosted workspace. */
 export function can(feature: Feature): boolean {
+  const rule = FEATURES[feature] as FeatureRule | undefined;
+  if (rule?.hosted === false && realHostContext().hosted) return false;
   return featureFor(feature, hostContext().profile);
 }
 

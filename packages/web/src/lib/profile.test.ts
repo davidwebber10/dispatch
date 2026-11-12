@@ -16,10 +16,10 @@ describe('the feature map', () => {
   it('the business profile hides the power-user features and keeps the rest', () => {
     const hidden = keys.filter((k) => !featureFor(k, 'business')).sort();
     expect(hidden).toEqual([
-      'analytics', 'control-plane', 'effort-picker', 'missions', 'model-picker', 'review.diff',
-      'settings.agents', 'settings.devices', 'settings.editor', 'settings.integrations', 'settings.plugins',
+      'about.report', 'analytics', 'control-plane', 'effort-picker', 'missions', 'model-picker', 'projects.path', 'review.diff',
+      'settings.agents', 'settings.devices', 'settings.dictation', 'settings.editor', 'settings.integrations', 'settings.plugins',
       'settings.secrets', 'settings.servers', 'settings.skills', 'settings.telemetry', 'settings.tools', 'settings.usage',
-      'themes.all', 'threads.browser', 'threads.cli', 'threads.git', 'threads.shell', 'tool-json',
+      'setup', 'themes.all', 'threads.browser', 'threads.cli', 'threads.git', 'threads.shell', 'tool-json',
     ]);
     for (const k of ['threads.chat', 'tabs.notes', 'tabs.files', 'previews', 'needs-you', 'automations', 'endless', 'accounts', 'approvals', 'attachments', 'update'] as Feature[]) {
       expect(featureFor(k, 'business'), k).toBe(true);
@@ -28,6 +28,16 @@ describe('the feature map', () => {
 
   it('every key explains itself', () => {
     for (const k of keys) expect(FEATURES[k].note.length, k).toBeGreaterThan(5);
+  });
+
+  it('a hosted workspace hides what cannot work there, in every profile', () => {
+    setHostContextForTest({ hosted: true, profile: 'developer' });
+    expect(can('settings.devices')).toBe(false);
+    expect(can('settings.servers')).toBe(false);
+    expect(can('setup')).toBe(false);
+    expect(can('threads.cli')).toBe(true);
+    setHostContextForTest({});
+    expect(can('settings.devices')).toBe(true);
   });
 
   it('can() follows the page profile', () => {

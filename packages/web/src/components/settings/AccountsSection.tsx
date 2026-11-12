@@ -10,6 +10,7 @@ import { SettingsPage, SettingsGroup, SettingsRow, SettingsSubPage, StatusMark, 
 import { useSubPage } from './subPageNav';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { USAGE_ACCESS_TEXT, updatedAgo, usageAccessOf } from '../../stores/accounts';
+import { hostCopy } from '../../lib/hostCopy';
 import { Button } from '../ui';
 
 /**
@@ -61,7 +62,7 @@ export function AccountsSection() {
   };
 
   const load = async () => {
-    try { setView(await api.getAccounts()); setError(null); } catch { setError('Could not load the accounts. Is the daemon up to date?'); }
+    try { setView(await api.getAccounts()); setError(null); } catch { setError(hostCopy('accounts.load.failed', 'Could not load the accounts. Is the daemon up to date?')); }
   };
   useEffect(() => { void load(); }, []);
 
@@ -136,7 +137,7 @@ export function AccountsSection() {
       <div ref={nav.top}>
         <SettingsSubPage testId={`account-detail-${provider}-${a.id}`} icon={MARK[provider]} title={a.label}
           subtitle={`${PROVIDER_TITLE[provider]}${isDefault ? ' · Default for new threads' : ''}`}
-          description={a.isCli ? "The login signed in on the daemon's computer. It always stays here; you can rename it." : undefined}
+          description={a.isCli ? hostCopy('accounts.cli.description', "The login signed in on the daemon's computer. It always stays here; you can rename it.") : undefined}
           backLabel="Accounts" onBack={nav.isMobile ? undefined : nav.close}>
           {error && <div role="alert" style={errText}>{error}</div>}
 
@@ -284,7 +285,7 @@ function AccountName({ account: a, isMobile, onSave }: { account: Account; isMob
   return (
     <SettingsRow label="Name" hint={a.isCli ? 'Leave it empty to use the stock name.' : 'How the account reads in the New Thread window and Usage limits.'}>
         <div style={{ display: 'flex', gap: 8, minWidth: 0 }}>
-          <input aria-label="New name" value={draft} placeholder={a.isCli ? 'CLI login (this computer)' : 'Name'}
+          <input aria-label="New name" value={draft} placeholder={a.isCli ? hostCopy('accounts.cli.placeholder', 'CLI login (this computer)') : 'Name'}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void save(); } if (e.key === 'Escape') setDraft(initial); }}
             style={{ ...fieldFor(isMobile), flex: 1, minWidth: 0, boxSizing: 'border-box' }} />

@@ -8,6 +8,7 @@ import {
   EFFORT_LEVELS, parseSlash, resolveEffortArg, resolveModelArg, slashCommandsFor, type ModelChoice,
   type SlashHarness, type SlashSurface,
 } from '../../../lib/slash';
+import { can } from '../../../lib/profile';
 import { SlashList, type SlashItem } from './SlashList';
 
 /**
@@ -206,6 +207,8 @@ export async function runModelEffortCommand(o: {
   pickModel: (value: string) => Promise<string | void | undefined>;
   pickEffort: (level: string) => Promise<string | void | undefined>;
 }): Promise<string | void> {
+  // The model and effort pickers are developer features (lib/profile.ts): the default model applies.
+  if (!can(o.name === 'model' ? 'model-picker' : 'effort-picker')) throw new Error('Choosing a model is not available in your workspace.');
   if (!o.args) { o.openPicker(); return; }
   if (o.name === 'model') {
     const r = resolveModelArg(o.models, o.args);
