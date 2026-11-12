@@ -80,14 +80,16 @@ export function createUpgradeHandler(i: UpgradeInputs): (request: http.IncomingM
     // the events socket would just never connect.
     const stripped = stripPrefix(request.url || '', i.basePath);
     if (stripped === null) {
-      socket.destroy();
+      socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;
     }
     // Express middleware never runs for an upgrade, so the box-token check has to be
     // repeated here. Protecting only the HTTP routes would leave every terminal and
     // structured socket — full interactive access to the box — wide open.
     if (!upgradeAllowed(i.boxToken, request)) {
-      socket.destroy();
+      // A real HTTP answer, not a dropped socket: a client (and the router's logs) can tell
+      // "refused" from "the box is down" (box defects 2026-11-11, #9).
+      socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: 26\r\n\r\n{"error":"unauthorized"}\r\n');
       return;
     }
     const url = stripped;

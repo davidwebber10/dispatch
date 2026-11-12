@@ -1,3 +1,4 @@
+import { expandHome } from './project-dir.js';
 import { redactKeys } from '../auth/redact-keys.js';
 import { clientMessage } from '../http/client-message.js';
 import os from 'os';
@@ -168,7 +169,7 @@ export class ThreadSpawner {
     const session = sessionsDb.getById(this.db, terminal.session_id);
     if (!session) throw new Error('Session not found');
 
-    const workDir = terminal.working_dir || session.working_dir;
+    const workDir = expandHome(terminal.working_dir || session.working_dir);
 
     // Runner terminals (agent runs) persist their prompt in config and always
     // launch the headless autonomous command — never resume/interactive.
@@ -648,7 +649,7 @@ export class ThreadSpawner {
     // messages. With an external_id, spawnStructured resumes the same conversation.
     const session = sessionsDb.getById(this.db, terminal.session_id);
     if (!session) return false;
-    const workDir = terminal.working_dir || session.working_dir;
+    const workDir = expandHome(terminal.working_dir || session.working_dir);
     try {
       this.spawnStructured(terminal, config, workDir);
       this.lastSpawnError.delete(terminalId);

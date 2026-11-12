@@ -1,3 +1,5 @@
+import { expandHome, hostedProjectDir } from './project-dir.js';
+import { isHostedBox } from '../os/hosted-mode.js';
 import { StatusService } from '../status/service.js';
 import type { UsageLimitService } from '../limits/service.js';
 import type { PromptSource } from '../plugins/thread-events.js';
@@ -330,7 +332,10 @@ export class SessionService {
   create(input: CreateSessionInput): Session {
     const id = uuid();
     const name = input.name || 'New Project';
-    const workingDir = input.workingDir || '~';
+    // `~` is expanded here, once (box defect #3: a stored `~/x` reached chdir(2) unexpanded). A hosted box
+    // creates a project from a name alone: ~/projects/<safe-name>, made and de-duplicated (defect #4).
+    const given = input.workingDir?.trim();
+    const workingDir = given ? expandHome(given) : isHostedBox() ? hostedProjectDir(name) : '~';
 
     // Ensure the project directory exists. A session row alone is not enough: the
     // first thread spawns a PTY with cwd=workingDir and dies with ENOENT if the
@@ -467,8 +472,8 @@ export class SessionService {
     this.assertRoomForLiveThread(sessionId);
 
     const resolvedDir = workingDir
-      ? workingDir.replace(/^~/, os.homedir())
-      : session.working_dir;
+      ? expandHome(workingDir)
+      : expandHome(session.working_dir);
 
     if (workingDir && !isWorktreeFolder(resolvedDir)) {
       appState.set(this.db, 'last_directory', resolvedDir);
