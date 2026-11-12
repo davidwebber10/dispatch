@@ -27,7 +27,7 @@ import type {
 } from './manager.js';
 import { CodexTranslator, buildApprovalResponse, type ApprovalMethod, type TranslatedAction } from './codex-translate.js';
 import { adaptForPolicy } from '../overseer/policy-adapter.js';
-import { inheritedEnv } from '../platform/inherited-env.js';
+import { childEnv } from '../platform/inherited-env.js';
 import { randomUUID } from 'node:crypto';
 import { blockedEvent, blockedResolvedEvent, approvalTitle, type BlockedAction, type Approvals } from '../os/approvals.js';
 import { EventRing } from './shared/event-ring.js';
@@ -242,7 +242,7 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
    *  thread/start + thread/resume `config` instead; see CodexSession.threadConfig). */
   private ensureConnection(opts: StructuredSpawnOpts): JsonRpcStdioClient {
     if (this.conn?.alive) return this.conn;
-    const env = { ...inheritedEnv(), ...this.defaultEnv, ...opts.env } as Record<string, string>;
+    const env = childEnv(this.defaultEnv, opts.env);
     this.connSpec = { command: opts.command, args: opts.args, cwd: opts.workDir, env };
     this.conn = this.makeConnection(this.connSpec);
     return this.conn;

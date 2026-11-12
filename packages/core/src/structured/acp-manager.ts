@@ -42,7 +42,7 @@ import type {
   StatusDeclaration,
 } from './manager.js';
 import { GrokTranslator, buildPermissionResponse, type AcpPermissionOption, type GrokAction } from './grok-translate.js';
-import { inheritedEnv } from '../platform/inherited-env.js';
+import { childEnv } from '../platform/inherited-env.js';
 import { acpSmartAllows } from '../os/approvals.js';
 import { EventRing } from './shared/event-ring.js';
 import type { JournalRecorder, ThreadRecorder } from '../journal/recorder.js';
@@ -135,7 +135,7 @@ export class AcpStructuredSessionManager extends StructuredEmitter implements IS
 
   spawn(terminalId: string, opts: StructuredSpawnOpts): number {
     if (this.sessions.has(terminalId)) this.kill(terminalId);
-    const env = { ...inheritedEnv(), ...this.defaultEnv, ...opts.env } as Record<string, string>;
+    const env = childEnv(this.defaultEnv, opts.env);
     const conn = openAgent(opts.command, opts.args, opts.workDir, env);
     const session: GrokSession = {
       terminalId,

@@ -5,7 +5,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import * as readline from 'readline';
 import { looksLikeQuestion } from '../status/question.js';
 import { broadKillDenial } from './broad-kill-guard.js';
-import { inheritedEnv } from '../platform/inherited-env.js';
+import { childEnv } from '../platform/inherited-env.js';
 import { redactKeys } from '../auth/redact-keys.js';
 import { detectClaudeLimit, pauseLabel, type UsageLimit } from '../limits/detect.js';
 import { killWithGrace } from '../platform/kill-grace.js';
@@ -450,7 +450,7 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
     if (this.sessions.has(terminalId)) this.kill(terminalId);
     const child = spawn(opts.command, opts.args, {
       cwd: opts.workDir,
-      env: { ...inheritedEnv(), ...this.defaultEnv, ...opts.env },
+      env: childEnv(this.defaultEnv, opts.env),
       stdio: ['pipe', 'pipe', 'pipe'],
     }) as ChildProcessWithoutNullStreams;
     child.stdin.on('error', () => {}); // Fix 2: suppress EPIPE if child closes stdin while alive

@@ -20,7 +20,7 @@ import { createCodexRefresh, type CodexRefresh } from '../limits/codex-refresh.j
 import { createCodexPoll, type CodexPoll } from '../limits/codex-poll.js';
 import { createClaudeProbe } from '../limits/claude-probe.js';
 import { createClaudeUsageReader, readClaudeToken } from '../limits/claude-usage.js';
-import { inheritedEnv } from '../platform/inherited-env.js';
+import { childEnv } from '../platform/inherited-env.js';
 import { createClaudeGetUsageProbe } from '../limits/claude-get-usage.js';
 import { usageWithoutToken } from '../os/hosted-mode.js';
 
@@ -107,7 +107,7 @@ export function wireLimits(i: LimitInputs): LimitServices {
   // account reads with its own token; an added Codex account reads under its own CODEX_HOME.
   const codexEnvFor = (accountId: string): Record<string, string> => {
     const dir = accountId === 'cli' ? null : accounts.codexHome(accountId);
-    return { ...inheritedEnv(), ...i.spawnEnv(), ...(dir ? { CODEX_HOME: dir } : {}) };
+    return childEnv(i.spawnEnv(), dir ? { CODEX_HOME: dir } : {});
   };
   const codexRootsFor = (accountId: string) => {
     const dir = accountId === 'cli' ? null : accounts.codexHome(accountId);
@@ -123,7 +123,7 @@ export function wireLimits(i: LimitInputs): LimitServices {
   // An added account runs it with its own token: its `setup-token` token cannot read the usage endpoint (2026-11-07).
   const probeClaude = createClaudeProbe({
     snapshots: limitSnapshots, accountFor: limitAccount,
-    env: (accountId = 'cli') => ({ ...inheritedEnv(), ...i.spawnEnv(), ...(accountId === 'cli' ? {} : accounts.spawnEnv('claude-code', { accountId })) }),
+    env: (accountId = 'cli') => childEnv(i.spawnEnv(), accountId === 'cli' ? {} : accounts.spawnEnv('claude-code', { accountId })),
   });
   // Claude's usage as claude.ai shows it (claude-usage.ts): every window, Fable included, and the extra-usage
   // spend. `cli` reads with the CLI's own login (file or keychain); an added account with its saved token.
@@ -142,7 +142,7 @@ export function wireLimits(i: LimitInputs): LimitServices {
   const tokenless = usageWithoutToken(i.env);
   const getUsage = createClaudeGetUsageProbe({
     snapshots: limitSnapshots, accountFor: limitAccount,
-    env: (accountId = 'cli') => ({ ...inheritedEnv(), ...i.spawnEnv(), ...(accountId === 'cli' ? {} : accounts.spawnEnv('claude-code', { accountId })) }),
+    env: (accountId = 'cli') => childEnv(i.spawnEnv(), accountId === 'cli' ? {} : accounts.spawnEnv('claude-code', { accountId })),
   });
   const remote = !i.network ? {}
     : tokenless

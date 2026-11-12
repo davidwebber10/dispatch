@@ -61,7 +61,7 @@ import { createContinuityRouter } from '../os/continuity.js';
 import { setProfileSource, resolveProfile } from '../os/profile.js';
 import { IntegrationsService, type IntegrationLauncher } from '../integrations/service.js';
 import { HeartbeatService } from '../platform/heartbeat.js';
-import { inheritedEnv } from '../platform/inherited-env.js';
+import { childEnv } from '../platform/inherited-env.js';
 import { platform } from '../platform/index.js';
 import { UsageRecorder } from '../usage/recorder.js';
 import { closeInterruptedTurns } from '../analytics/recorder.js';
@@ -401,7 +401,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     catch { return null; }
   };
   const accounts = new AccountsStore(dataDir);
-  const titleCliDeps = { env: () => ({ ...inheritedEnv(), ...spawnEnv.current() }) };
+  const titleCliDeps = { env: () => childEnv(spawnEnv.current()) };
   /** Every account assist may sign in as, the default of each harness first; OpenRouter last, when a key is set. */
   const assistSignedIn = async (): Promise<{ harness: AssistHarness; accountId: string }[]> => {
     const out: { harness: AssistHarness; accountId: string }[] = [];
@@ -506,7 +506,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   // A hosted box (or DISPATCH_CLAUDE_LOGIN=cli) signs in with Claude Code's own `claude auth login`:
   // no token is read, kept or injected (auth/claude-cli-login.ts). A local install keeps setup-token.
   if (useCleanClaudeLogin(env)) {
-    claudeLogin.useCleanLogin(new ClaudeCliLogin({ env: () => ({ ...inheritedEnv(), ...spawnEnv.current() }) }), { ownerEmail: env.DISPATCH_OWNER_EMAIL });
+    claudeLogin.useCleanLogin(new ClaudeCliLogin({ env: () => childEnv(spawnEnv.current()) }), { ownerEmail: env.DISPATCH_OWNER_EMAIL });
     claudeLogin.onAccountConfigDir = ({ id, label, configDir, status }) => {
       accounts.upsertClaudeConfigDir({ id, label, configDir, ...(status.email ? { email: status.email } : {}), ...(planOf(status) ? { plan: planOf(status)! } : {}) });
     };
@@ -514,7 +514,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   // Added Codex accounts sign in with `codex login --device-auth` under the threads' spawn env
   // (PATH with the bundled tools), so it runs the same `codex` the threads do.
   const codexLogin = new CodexLoginService({
-    env: () => ({ ...inheritedEnv(), ...spawnEnv.current() }),
+    env: () => childEnv(spawnEnv.current()),
     isSignedIn: (home) => fs.existsSync(path.join(home, 'auth.json')),
   });
   const limits = wireLimits({

@@ -14,7 +14,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { platform } from '../platform/index.js';
-import { inheritedEnv } from '../platform/inherited-env.js';
+import { childEnv } from '../platform/inherited-env.js';
 
 type Version = [number, number, number];
 
@@ -55,7 +55,7 @@ export function setClaudeProbeEnv(env: Record<string, string>): void {
 
 function claudeVersionOutput(): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile('claude', ['--version'], { timeout: 15_000, env: { ...inheritedEnv(), ...probeEnv } }, (err, stdout) => (err ? reject(err) : resolve(String(stdout))));
+    execFile('claude', ['--version'], { timeout: 15_000, env: childEnv(probeEnv) }, (err, stdout) => (err ? reject(err) : resolve(String(stdout))));
   });
 }
 
