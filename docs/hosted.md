@@ -305,6 +305,14 @@ Not covered: Codex keeps the servers of the person's own `~/.codex/config.toml` 
 requirement needs fixed names; the platform's systems are per person). OpenCode has no account
 connectors; its global config still loads. Grok was not measured.
 
+**Harnesses for a business person.** Claude Code and Codex only (the platform gates Codex on its side).
+`POST /api/sessions/:id/terminals` refuses OpenCode and Grok with `403 not_available_in_profile`
+(rule `thread.create`), and a saved OpenCode or Grok thread cannot be driven (`thread.not-chat`). The
+reason: a project file the agent writes without a question (`<project>/opencode.json`, a plugin in
+`<project>/.opencode/`) replaces the thread's `permission` block, adds servers, or runs as code at the
+next start. Every OpenCode process on a hosted box also gets `OPENCODE_DISABLE_PROJECT_CONFIG=1`, so
+only the thread's own `OPENCODE_CONFIG` file and the global config apply.
+
 **The check stage runs.** At each start of a hosted Claude Code thread the box logs one line from the
 harness's first `system/init` frame, names only:
 

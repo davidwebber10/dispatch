@@ -105,7 +105,9 @@ describe('the MCP servers of a hosted thread, per profile', () => {
     expect(hostedClaudeArgs('claude-code', ['--strict-mcp-config', ...args], true)).toEqual(['--strict-mcp-config', ...args]);
     expect(hostedClaudeEnv('claude-code', true)).toEqual({ ENABLE_CLAUDEAI_MCP_SERVERS: 'false', CLAUDE_CODE_ARTIFACT: '0' });
     expect(hostedClaudeEnv('claude-code', false)).toEqual({});
-    expect(hostedClaudeEnv('opencode', true)).toEqual({});
+    expect(hostedClaudeEnv('opencode', true)).toEqual({ OPENCODE_DISABLE_PROJECT_CONFIG: '1' });
+    expect(hostedClaudeEnv('opencode', false)).toEqual({});
+    expect(hostedClaudeEnv('codex', true)).toEqual({});
     expect(CLAUDE_HOSTED_MCP_ARGS).toEqual(['--strict-mcp-config']);
     expect(CLAUDE_HOSTED_MCP_ENV).toEqual({ ENABLE_CLAUDEAI_MCP_SERVERS: 'false', CLAUDE_CODE_ARTIFACT: '0' });
     // The Pretty manager's own default (v4.6.1): Artifact on for a local install, off on a hosted box,

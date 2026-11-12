@@ -68,9 +68,19 @@ export function hostedClaudeArgs(type: string, args: string[], hosted: boolean =
   return [...CLAUDE_HOSTED_MCP_ARGS, ...args];
 }
 
-/** The environment layer of the same rule: the account's claude.ai connectors are not fetched. */
+/** OpenCode on a hosted box loads no project config: no `<project>/opencode.json`, no `.opencode/` plugin or server. */
+export const OPENCODE_HOSTED_ENV: Readonly<Record<string, string>> = { OPENCODE_DISABLE_PROJECT_CONFIG: '1' };
+
+/**
+ * The environment layer of the same rule. Claude Code: the account's claude.ai connectors are not
+ * fetched. OpenCode: a file the agent wrote in the project cannot replace the thread's approval rules,
+ * add a server or run a plugin at the next start (only the thread's own OPENCODE_CONFIG applies).
+ */
 export function hostedClaudeEnv(type: string, hosted: boolean = isHostedBox()): Record<string, string> {
-  return hosted && type === 'claude-code' ? { ...CLAUDE_HOSTED_MCP_ENV } : {};
+  if (!hosted) return {};
+  if (type === 'claude-code') return { ...CLAUDE_HOSTED_MCP_ENV };
+  if (type === 'opencode') return { ...OPENCODE_HOSTED_ENV };
+  return {};
 }
 
 /** What ThreadSpawner needs. Every field is required. */

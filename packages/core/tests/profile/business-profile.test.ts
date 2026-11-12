@@ -68,6 +68,17 @@ describe('business profile: threads', () => {
     expectRefused(r, 'thread.create');
   });
 
+  test('OpenCode is refused, as a chat thread too (a project file could replace its approval rules); Claude Code and Codex are not', async () => {
+    const k = business();
+    const sid = await project(k);
+    const s = await k.server();
+    expectRefused(await request(s).post(`/api/sessions/${sid}/terminals`).send({ type: 'opencode' }), 'thread.create');
+    expectRefused(await request(s).post(`/api/sessions/${sid}/terminals`).send({ type: 'opencode', config: { transport: 'structured' } }), 'thread.create');
+    expectRefused(await request(s).post(`/api/sessions/${sid}/terminals`).send({ type: 'grok' }), 'thread.create');
+    expect((await request(s).post(`/api/sessions/${sid}/terminals`).send({ type: 'claude-code', label: 'chat' })).status).toBe(201);
+    expect((await request(s).post(`/api/sessions/${sid}/terminals`).send({ type: 'codex', label: 'chat' })).body.code).toBeUndefined();
+  });
+
   test('a harness with no transport named becomes a structured chat thread with smart approvals', async () => {
     const k = business();
     const sid = await project(k);
@@ -415,7 +426,7 @@ describe('business profile: what runs', () => {
     const sid = await project(k);
     const { v4: uuid } = await import('uuid');
     const add = (type: string, config: Record<string, unknown>) => { const id = uuid(); terminalsDb.create(k.db, { id, sessionId: sid, type, label: 't', config }); return id; };
-    for (const id of [add('shell', {}), add('claude-code', { transport: 'pty' }), add('claude-code', { transport: 'structured', role: 'agent' }), add('claude-code', { transport: 'structured', approvals: 'auto' }), add('codex', { transport: 'structured', runner: true, runnerPrompt: 'go' })]) {
+    for (const id of [add('shell', {}), add('claude-code', { transport: 'pty' }), add('claude-code', { transport: 'structured', role: 'agent' }), add('claude-code', { transport: 'structured', approvals: 'auto' }), add('codex', { transport: 'structured', runner: true, runnerPrompt: 'go' }), add('opencode', { transport: 'structured', approvals: 'smart' })]) {
       for (const [method, url, body] of [
         ['post', `/api/terminals/${id}/message`, { text: 'ls', source: 'user' }],
         ['post', `/api/terminals/${id}/relaunch`, {}],

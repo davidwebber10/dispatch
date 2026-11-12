@@ -55,6 +55,15 @@ export const ALWAYS_SMART = 'In your workspace, risky actions always ask first.'
 export const NO_AUTOMATIONS = 'Automations and agents that run on their own are not available in your workspace yet. Ask in a chat thread instead.';
 export const NOT_A_CHAT = 'This thread is not a chat thread. Start a new chat thread instead.';
 export const AGENT_REFUSED = 'An agent cannot do this in this workspace. Ask the person to do it.';
+export const NO_HARNESS = 'This assistant is not available in your workspace. Start a Claude Code chat thread instead.';
+
+/**
+ * The harnesses a business person may chat with. Claude Code, and Codex (which the platform gates on
+ * its side). OpenCode is not one: a file the agent writes in the project (`opencode.json`, a plugin in
+ * `.opencode/`) replaces the thread's approval rules or runs as code at the next start, and the
+ * business rules let the agent edit project files without a question.
+ */
+export const BUSINESS_HARNESSES: readonly string[] = ['claude-code', 'codex'];
 
 /**
  * A thread config that would run a harness with approvals skipped or by itself: an agent or runner
@@ -85,13 +94,14 @@ function hasChatTransport(type: string): boolean {
 export function businessMayDrive(thread: { type: string; config: Record<string, unknown> }): boolean {
   if (thread.type === 'notes' || thread.type === 'file') return true;
   if (thread.type === 'shell' || thread.type === 'browser') return false;
-  if (!isPtyType(thread.type)) return false;
+  if (!isPtyType(thread.type) || !BUSINESS_HARNESSES.includes(thread.type)) return false;
   return thread.config.transport === 'structured' && !unsafeConfig(thread.config);
 }
 
 /**
  * POST /api/sessions/:id/terminals. A business person gets chat threads and notes/file tabs only:
  *   - `shell` (including the CLI sign-in shell) and `browser`: refused;
+ *   - a harness other than BUSINESS_HARNESSES (OpenCode, for one): refused;
  *   - a harness with no structured transport, or one asked for as a CLI (transport 'pty'): refused;
  *   - a harness with no transport named: made structured, the chat form.
  * A new chat thread is saved with `approvals: 'smart'` (os/approvals.ts).
@@ -102,6 +112,7 @@ export const threadCreate: BusinessCheck = (req) => {
   if (type === 'shell') return { message: NO_TERMINAL };
   if (type === 'browser') return { message: NO_BROWSER };
   if (!isPtyType(type)) return null; // notes, file, or an invalid type (the route answers 400 for that)
+  if (!BUSINESS_HARNESSES.includes(type)) return { message: NO_HARNESS };
   const config = body.config && typeof body.config === 'object' && !Array.isArray(body.config) ? body.config : {};
   if (config.transport === 'pty' || !hasChatTransport(type)) return { message: NO_TERMINAL };
   // An agent, runner, role or autonomous thread, or a queued agent: it would run with approvals off.
