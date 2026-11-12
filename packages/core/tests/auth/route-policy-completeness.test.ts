@@ -61,6 +61,9 @@ const EXPECTED_KEY_ROUTES: string[] = [
   'GET /api/terminals/:terminalId/journal',
   // Final review of v4.5.0 (I2): an image that the journal keeps outside its payload; the same key rules.
   'GET /api/terminals/:terminalId/journal/images/:imageId',
+  // subagents-v1: a thread's subagents and one subagent's journal; the key rules of the journal page.
+  'GET /api/terminals/:terminalId/agents',
+  'GET /api/terminals/:terminalId/agents/:agentId/journal',
   'GET /api/terminals/:terminalId/permission',
   'POST /api/terminals/:terminalId/message',
   'POST /api/terminals/:terminalId/permission',

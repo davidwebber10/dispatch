@@ -69,6 +69,7 @@ import { createAppearanceRouter } from './routes/appearance.js';
 import { createWatchesRouter } from './routes/watches.js';
 import { createOutboxRouter } from './routes/outbox.js';
 import { createJournalRouter } from './routes/journal.js';
+import { createSubagentsRouter } from './routes/subagents.js';
 import { createAnalyticsRouter } from './routes/analytics.js';
 import { createEndlessRouter } from './routes/endless.js';
 import { createUsageLimitsRouter } from './routes/usage-limits.js';
@@ -201,6 +202,12 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   mount('/api/sessions', createSessionsRouter(d.sessionService, d.broadcaster, d.db));
   mount('/api', createTerminalsRouter(d.sessionService, d.terminalsBroadcaster, d.statusService));
   if (d.journal) mount('/api', createJournalRouter(d.journal, (id) => !!d.sessionService.getTerminal(id))); // W3-D
+  // subagents-v1: the subagents of a thread (list, one subagent's journal, stop).
+  mount('/api', createSubagentsRouter({
+    journal: d.journal,
+    thread: (id) => d.sessionService.getTerminal(id),
+    manager: (id) => d.sessionService.structuredManagerForTerminal(id),
+  }));
   mount('/api', createThreadSecretsRouter(d.db, { broadcast: (e) => d.terminalsBroadcaster?.broadcast(e) }));
   mount('/api', createLedgerRouter(d.ledgerService));
   // Inbox → Send a secret (2026-11-12): the owner's secrets for a thread, by a short ID. Under the Inbox plugin's path

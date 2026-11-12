@@ -419,6 +419,16 @@ export class ThreadRecorder {
   }
 
   private result(e: Frame): void {
+    // A subagent's turn end (a Codex sub-thread, subagents-v1) closes only that subagent's stream: the
+    // main agent and the other subagents stream on.
+    const parent = typeof e.parent_tool_use_id === 'string' && e.parent_tool_use_id ? e.parent_tool_use_id : '';
+    if (parent) {
+      this.flush(parent);
+      const stream = this.streams.get(parent);
+      if (stream) stream.open = false;
+      this.write('result', undefined, e, e);
+      return;
+    }
     this.flush(); // a turn end closes every block; their rows come before the footer
     for (const stream of this.streams.values()) stream.open = false; // and every message
     this.compacting = null;
@@ -432,8 +442,9 @@ export class ThreadRecorder {
     if (e.subtype === 'status') { this.compacting = e.status === 'compacting' ? e : null; return; }
     // A daemon warning in the thread (an MCP server or tool the workspace did not give, a refused
     // action) is kept: after a reload or a restart the person still sees it.
+    // A subagent's state change (subagents-v1) is kept: the agent list of a thread is read from it after a restart.
     if ((e.subtype === 'model' && e.switched === true) || e.subtype === 'settings_refused' || e.subtype === 'spawn_error'
-      || (e.subtype === 'dispatch_notice' && e.level === 'warning')) {
+      || (e.subtype === 'dispatch_notice' && e.level === 'warning') || e.subtype === 'subagent') {
       this.write('notice', undefined, e, e);
     }
   }

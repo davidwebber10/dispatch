@@ -393,8 +393,19 @@ describe('itemsFromEvent', () => {
       { type: 'assistant', message: { content: [] } },
       { type: 'journal', subtype: 'gap' },
       { type: 'journal', subtype: 'idempotency', response: { status: 204 } },
+      // subagents-v1: a subagent's turn end and its lifecycle frame are not the thread's lines.
+      { type: 'result', subtype: 'codex_turn', is_error: false, parent_tool_use_id: 'sub-1' },
+      { type: 'system', subtype: 'subagent', id: 'sub-1', state: 'done', title: 'Review' },
       null, 'text', 7,
     ]) expect(itemsFromEvent(event, undefined, 1)).toEqual([]);
+  });
+
+  test("subagents-v1: a subagent's turn end on the socket adds no footer and keeps the thread's card", () => {
+    const view = renderHook(() => useStructuredChat('t1'));
+    act(() => cbs.onEvent({ type: 'result', subtype: 'codex_turn', is_error: false, parent_tool_use_id: 'sub-1' }));
+    expect(view.result.current.items.some((i) => i.kind === 'result')).toBe(false);
+    view.unmount();
+    threadViewCache.clear();
   });
 });
 

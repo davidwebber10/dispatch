@@ -229,6 +229,32 @@ export class MessageJournal {
     return { items: rows.slice(0, limit).reverse().map(toItem), firstSeq, lastSeq, hasMore };
   }
 
+  /**
+   * A window of ONE subagent's items (subagents-v1), oldest first, with the same cursors as `page`:
+   * its frames (`parent_tool_use_id` = `agentId`) and its lifecycle frames. `firstSeq`/`lastSeq` are
+   * the thread's; `hasMore` is about this subagent's rows.
+   */
+  pageAgent(terminalId: string, agentId: string, opts: JournalPageOptions = {}): JournalPage {
+    const limit = Math.min(MAX_PAGE_LIMIT, Math.max(1, Math.floor(opts.limit ?? DEFAULT_PAGE_LIMIT)));
+    const floor = this.floorOf(terminalId);
+    const lastSeq = (this.q.lastSeq.get(terminalId) as { seq: number }).seq;
+    const firstSeq = (this.q.firstSeqAbove.get(terminalId, floor) as { seq: number }).seq;
+    const base = { terminal_id: terminalId, agent: agentId, floor, limit: limit + 1 };
+    if (opts.afterSeq !== undefined) {
+      const rows = this.q.agentAfter.all({ ...base, after: Math.max(floor, Math.floor(opts.afterSeq)) }) as JournalRow[];
+      return { items: rows.slice(0, limit).map(toItem), firstSeq, lastSeq, hasMore: rows.length > limit };
+    }
+    const rows = (opts.beforeSeq !== undefined
+      ? this.q.agentBefore.all({ ...base, before: Math.floor(opts.beforeSeq) })
+      : this.q.agentNewest.all(base)) as JournalRow[];
+    return { items: rows.slice(0, limit).reverse().map(toItem), firstSeq, lastSeq, hasMore: rows.length > limit };
+  }
+
+  /** The lifecycle frames (`system/subagent`) of every subagent of a thread, oldest first. */
+  subagentFrames(terminalId: string): unknown[] {
+    return (this.q.agentFrames.all(terminalId) as JournalRow[]).map((r) => toItem(r).payload).filter((p) => p !== null);
+  }
+
   /** The newest sequence of the thread, or 0 when the journal has no row for it. */
   lastSeq(terminalId: string): number {
     return (this.q.lastSeq.get(terminalId) as { seq: number }).seq;

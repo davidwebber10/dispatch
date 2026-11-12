@@ -136,6 +136,55 @@ export function readSessionBackfill(workDir: string, sessionId: string, limit = 
   }
 }
 
+/** The most of a subagent's sidechain transcript that one read takes (its tail). */
+const MAX_SIDECHAIN_BYTES = 8 * 1024 * 1024;
+
+/**
+ * The steps of ONE subagent from its own transcript (subagents-v1, the agent journal route). Claude
+ * Code writes a subagent's lines to `<project>/<session>/subagents/agent-<agentId>.jsonl` (every line
+ * `isSidechain: true`) with `agent-<agentId>.meta.json` naming the Agent call (`toolUseId`). The
+ * main-thread readers above keep skipping these lines: a subagent's words are never the thread's
+ * messages. Here they come back as stream events tagged `parent_tool_use_id: <agentCallId>`, the way
+ * the live stream tags them. `nativeId` (Claude's own agent id) finds the file at once; without it the
+ * meta files are searched for the call id. Newest `limit` events; [] when nothing is found. Never throws.
+ */
+export function readSidechainEvents(workDir: string, sessionId: string, agentCallId: string, nativeId?: string, limit = 2000): unknown[] {
+  try {
+    const file = resolveTranscriptPath(workDir, sessionId);
+    if (!file) return [];
+    const dir = path.join(path.dirname(file), sessionId, 'subagents');
+    let agentFile: string | undefined;
+    if (nativeId && /^[A-Za-z0-9_-]+$/.test(nativeId) && fs.existsSync(path.join(dir, `agent-${nativeId}.jsonl`))) agentFile = path.join(dir, `agent-${nativeId}.jsonl`);
+    if (!agentFile && fs.existsSync(dir)) {
+      for (const name of fs.readdirSync(dir)) {
+        if (!/^agent-[A-Za-z0-9_-]+\.meta\.json$/.test(name)) continue;
+        try {
+          const meta = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf-8'));
+          if (meta?.toolUseId === agentCallId) { agentFile = path.join(dir, name.replace(/\.meta\.json$/, '.jsonl')); break; }
+        } catch { /* a meta file being written: skip it */ }
+      }
+    }
+    if (!agentFile || !fs.existsSync(agentFile)) return [];
+    const { text } = readTail(agentFile, MAX_SIDECHAIN_BYTES);
+    const out: unknown[] = [];
+    for (const line of text.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let o: any;
+      try { o = JSON.parse(trimmed); } catch { continue; }
+      if (!o || (o.type !== 'user' && o.type !== 'assistant') || o.isMeta) continue;
+      const msg = o.message;
+      if (!msg || typeof msg !== 'object') continue;
+      const c = msg.content;
+      if (!(typeof c === 'string' ? c.trim() : Array.isArray(c) && c.length)) continue;
+      out.push({ type: o.type, message: msg, parent_tool_use_id: agentCallId, ...(typeof o.uuid === 'string' ? { uuid: o.uuid } : {}) });
+    }
+    return out.length > limit ? out.slice(out.length - limit) : out;
+  } catch {
+    return [];
+  }
+}
+
 /**
  * The newest 'user' transcript-line uuid carrying REAL text content (not a bare
  * tool_result, which is also written as a `type: 'user'` line) that ISN'T already in
