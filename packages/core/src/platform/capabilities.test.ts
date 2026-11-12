@@ -5,7 +5,7 @@ import { createOsToolsRouter } from '../os/tools-proxy.js';
 
 describe('the advertised capabilities are true of this tree', () => {
   test('the list', () => {
-    expect([...BOX_CAPABILITIES]).toEqual(['base-path', 'os-tools-proxy', 'profile', 'headless-v1', 'idle-info', 'gate-v2', 'inbox-v1', 'live-tools-v1']);
+    expect([...BOX_CAPABILITIES]).toEqual(['base-path', 'os-tools-proxy', 'profile', 'headless-v1', 'idle-info', 'gate-v2', 'inbox-v1', 'live-tools-v1', 'subagents-v1']);
   });
   test('inbox-v1: the Inbox routes exist, each has a row in the business table, and the secret value is refused there', async () => {
     const { createInboxRouter } = await import('../routes/inbox.js');
@@ -29,6 +29,22 @@ describe('the advertised capabilities are true of this tree', () => {
     expect(typeof OsToolCatalog.prototype.onToolsChanged).toBe('function');
     expect(BUSINESS_ROUTES['GET /api/os/mcp/:system']?.keys).toEqual(['thread']);
     expect(BUSINESS_ROUTES['POST /api/os/connections/refresh']?.keys).toBeUndefined();
+  });
+  test('subagents-v1: the subagent routes exist with rows in the business table, and both managers track subagents', async () => {
+    const { createSubagentsRouter } = await import('../routes/subagents.js');
+    const { BUSINESS_ROUTES } = await import('../profile/business-routes.js');
+    const { ClaudeStructuredSessionManager } = await import('../structured/manager.js');
+    const { CodexStructuredSessionManager } = await import('../structured/codex-manager.js');
+    expect(typeof createSubagentsRouter).toBe('function');
+    for (const id of [
+      'GET /api/terminals/:terminalId/agents', 'GET /api/terminals/:terminalId/agents/:agentId/journal',
+      'POST /api/terminals/:terminalId/agents/:agentId/stop', 'POST /api/terminals/:terminalId/agents/stop-all',
+    ]) expect(BUSINESS_ROUTES[id]?.business, id).toBe('allow');
+    for (const M of [ClaudeStructuredSessionManager, CodexStructuredSessionManager]) {
+      expect(typeof M.prototype.listSubagents).toBe('function');
+      expect(typeof M.prototype.stopSubagent).toBe('function');
+      expect(typeof M.prototype.stopAllSubagents).toBe('function');
+    }
   });
   test('base-path', () => {
     expect(normalizeBasePath('/dispatch/')).toBe('/dispatch');
