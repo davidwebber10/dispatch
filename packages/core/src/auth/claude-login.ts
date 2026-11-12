@@ -171,7 +171,8 @@ export class ClaudeLoginService {
       if (t && t.kind === 'account' && configDir) await this.onAccountConfigDir?.({ id: t.id, label: t.label, configDir, status });
       this.onChangeCb?.();
     };
-    void login.authStatus().then(() => this.onChangeCb?.());
+    // After the build: the env provider can name services that do not exist yet (found in a box run).
+    setImmediate(() => { void login.authStatus().then(() => this.onChangeCb?.()); });
   }
 
   get usesCleanLogin(): boolean { return this.clean !== null; }

@@ -136,7 +136,9 @@ export class ClaudeCliLogin {
   }
 
   private env(configDir: string | null): NodeJS.ProcessEnv {
-    const base = { ...(this.opts.env?.() ?? process.env) };
+    let provided: NodeJS.ProcessEnv | undefined;
+    try { provided = this.opts.env?.(); } catch { provided = undefined; } // a provider not wired yet: the daemon's env
+    const base = { ...(provided ?? process.env) };
     // Never a token: the CLI's own login is the point. BROWSER no-op: the localhost URL is useless here.
     base.CLAUDE_CODE_OAUTH_TOKEN = '';
     base.BROWSER = 'true';
