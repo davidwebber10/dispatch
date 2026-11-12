@@ -1,0 +1,6 @@
+{"_note":"SYNTHESISED from the codex-cli 0.167.2 generated types: a subagent started in one main turn and `completed` after that turn ended (the main agent idle), as a new subAgentActivity item. $MAIN = the main thread id."}
+{"method":"item/completed","params":{"threadId":"$MAIN","turnId":"turn-fake-1","item":{"type":"subAgentActivity","id":"call_started_c","model":"gpt-6.1-sol","reasoningEffort":"high","kind":"started","agentThreadId":"01a1d207-0000-7000-8000-00000000000c","agentPath":"/root/summarise_the_notes"}}}
+{"method":"item/completed","params":{"threadId":"$MAIN","turnId":"turn-fake-1","item":{"type":"agentMessage","id":"msg-c","text":"Started.","phase":"final_answer","memoryCitation":null}}}
+{"method":"turn/completed","params":{"threadId":"$MAIN","turn":{"id":"turn-fake-1","items":[],"itemsView":"notLoaded","status":"completed","durationMs":4}}}
+{"wait":50}
+{"method":"item/completed","params":{"threadId":"$MAIN","item":{"type":"subAgentActivity","id":"call_completed_c","model":null,"reasoningEffort":null,"kind":"completed","agentThreadId":"01a1d207-0000-7000-8000-00000000000c","agentPath":"/root/summarise_the_notes","completedAtMs":1794525000000}}}
