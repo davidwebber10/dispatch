@@ -42,6 +42,19 @@ const NO_PLUGINS = 'Adding or turning on plugins is not available in your worksp
 const NO_SKILLS = 'Adding skills is not available in your workspace.';
 const NO_INTEGRATIONS = 'Changing tool connections is not available in your workspace. Ask your administrator.';
 const ALWAYS_SMART = 'In your workspace, risky actions always ask first.';
+const NO_AUTOMATIONS = 'Automations and agents that run on their own are not available in your workspace yet. Ask in a chat thread instead.';
+
+/**
+ * A thread config that would run a harness with approvals skipped or by itself: an agent or runner
+ * thread (the runner command skips every approval: providers/claude-code.ts buildRunnerCommand, Codex's
+ * bypass flag), a role, a coordinator, the autonomous dial, approvals other than `smart`, or the CLI.
+ */
+function unsafeConfig(config: Record<string, unknown>): boolean {
+  return !!(config.role || config.runner || config.runnerPrompt || config.agentType || config.roleAuthority)
+    || config.autonomy === 'autonomous'
+    || (config.approvals !== undefined && config.approvals !== 'smart')
+    || config.transport === 'pty';
+}
 
 /** True when the harness has a structured (chat) transport on this daemon. */
 function hasChatTransport(type: string): boolean {
@@ -66,6 +79,8 @@ function threadCreate(req: Request): Denial | null {
   if (!isPtyType(type)) return null; // notes, file, or an invalid type (the route answers 400 for that)
   const config = body.config && typeof body.config === 'object' ? body.config : {};
   if (config.transport === 'pty' || !hasChatTransport(type)) return { message: NO_TERMINAL };
+  // An agent, runner, role or autonomous thread, or a queued agent: it would run with approvals off.
+  if ((body as { queued?: unknown }).queued || unsafeConfig(config)) return { message: NO_AUTOMATIONS };
   config.transport = 'structured';
   const plain = !config.role && !config.runner && !config.roleAuthority;
   if (plain) config.approvals = 'smart';
@@ -90,6 +105,26 @@ export const BUSINESS_RULES: readonly BusinessRule[] = [
   {
     id: 'thread.approvals', method: 'POST', path: /^\/api\/terminals\/[^/]+\/approvals\/?$/,
     check: (req) => ((req.body as { mode?: unknown } | undefined)?.mode === 'smart' ? null : { message: ALWAYS_SMART }),
+  },
+  // Automations and agents (2026-11-11 audit): every route that creates, changes, enables or runs one,
+  // or that turns a thread autonomous. A run starts its harness with every approval skipped, so a
+  // business person may list, cancel and delete them, but never start one.
+  { id: 'automation.create', method: 'POST', path: /^\/api\/agents\/schedules\/?$/, check: deny(NO_AUTOMATIONS) },
+  { id: 'automation.update', method: 'PATCH', path: /^\/api\/agents\/schedules\/[^/]+\/?$/, check: deny(NO_AUTOMATIONS) },
+  { id: 'automation.run', method: 'POST', path: /^\/api\/agents\/schedules\/[^/]+\/run-now\/?$/, check: deny(NO_AUTOMATIONS) },
+  { id: 'role.enable', method: 'POST', path: /^\/api\/roles\/[^/]+\/enable\/?$/, check: deny(NO_AUTOMATIONS) },
+  { id: 'coordinator.create', method: 'POST', path: /^\/api\/sessions\/[^/]+\/overseer\/coordinator\/?$/, check: deny(NO_AUTOMATIONS) },
+  { id: 'thread.start-queued', method: 'POST', path: /^\/api\/terminals\/[^/]+\/start\/?$/, check: deny(NO_AUTOMATIONS) },
+  {
+    id: 'thread.autonomy', method: 'POST', path: /^\/api\/terminals\/[^/]+\/autonomy\/?$/,
+    check: (req) => ((req.body as { mode?: unknown } | undefined)?.mode === 'supervised' ? null : { message: ALWAYS_SMART }),
+  },
+  {
+    id: 'thread.config', method: 'PATCH', path: /^\/api\/terminals\/[^/]+\/?$/,
+    check: (req) => {
+      const config = (req.body as { config?: unknown } | undefined)?.config;
+      return config && typeof config === 'object' && unsafeConfig(config as Record<string, unknown>) ? { message: NO_AUTOMATIONS } : null;
+    },
   },
   // Worktrees: making one. Listing them and removing one stay allowed.
   { id: 'worktree.create', method: 'POST', path: /^\/api\/sessions\/[^/]+\/worktrees\/?$/, check: deny(NO_WORKTREE) },

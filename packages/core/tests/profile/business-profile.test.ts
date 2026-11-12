@@ -157,6 +157,58 @@ describe('business profile: machine features', () => {
   });
 });
 
+describe('business profile: automations and agents (runs with approvals skipped)', () => {
+  test('every route that creates, changes, enables or runs one is refused with 403', async () => {
+    const k = business();
+    const sid = await project(k);
+    const s = await k.server();
+    const cases: Array<[string, string, Record<string, unknown>, string]> = [
+      ['post', '/api/agents/schedules', { projectId: sid, name: 'n', provider: 'claude-code', prompt: 'p' }, 'automation.create'],
+      ['patch', '/api/agents/schedules/a1', { enabled: true }, 'automation.update'],
+      ['post', '/api/agents/schedules/a1/run-now', {}, 'automation.run'],
+      ['post', '/api/roles/reviewer/enable', {}, 'role.enable'],
+      ['post', `/api/sessions/${sid}/overseer/coordinator`, {}, 'coordinator.create'],
+      ['post', '/api/terminals/t1/start', {}, 'thread.start-queued'],
+      ['post', '/api/terminals/t1/autonomy', { mode: 'autonomous' }, 'thread.autonomy'],
+      ['patch', '/api/terminals/t1', { config: { transport: 'structured', role: 'agent' } }, 'thread.config'],
+      ['patch', '/api/terminals/t1', { config: { transport: 'structured', approvals: 'auto' } }, 'thread.config'],
+    ];
+    for (const [method, url, body, rule] of cases) {
+      const r = await (request(s) as unknown as Record<string, (u: string) => request.Test>)[method](url).send(body);
+      expectRefused(r, rule);
+    }
+    // A thread created as an agent, a runner, a role or a queued agent: refused.
+    for (const body of [
+      { type: 'claude-code', config: { role: 'agent' } },
+      { type: 'claude-code', config: { runner: true, runnerPrompt: 'go' } },
+      { type: 'codex', config: { agentType: 'implementer' } },
+      { type: 'claude-code', config: { roleAuthority: 'reviewer' } },
+      { type: 'claude-code', config: { autonomy: 'autonomous' } },
+      { type: 'claude-code', config: { approvals: 'auto' } },
+      { type: 'claude-code', queued: true, task: 'x' },
+    ]) expectRefused(await request(s).post(`/api/sessions/${sid}/terminals`).send(body), 'thread.create');
+  });
+
+  test('listing, cancelling and deleting stay allowed; a supervised dial and a label rename pass', async () => {
+    const k = business();
+    const s = await k.server();
+    for (const url of ['/api/agents/schedules', '/api/agents/runs', '/api/roles']) expect((await request(s).get(url)).status, url).not.toBe(403);
+    expect((await request(s).delete('/api/agents/schedules/a1')).body.code).toBeUndefined();
+    expect((await request(s).post('/api/agents/runs/r1/cancel').send({})).body.code).toBeUndefined();
+    expect((await request(s).post('/api/terminals/t1/autonomy').send({ mode: 'supervised' })).body.code).toBeUndefined();
+    expect((await request(s).patch('/api/terminals/t1').send({ label: 'x', config: { transport: 'structured', approvals: 'smart' } })).body.code).toBeUndefined();
+  });
+
+  test('developer: the same routes are not refused by the gate', async () => {
+    const k = developer();
+    const s = await k.server();
+    for (const [method, url] of [['post', '/api/agents/schedules'], ['post', '/api/agents/schedules/a1/run-now'], ['post', '/api/roles/x/enable'], ['post', '/api/terminals/t1/autonomy']] as const) {
+      const r = await request(s)[method](url).send({ mode: 'autonomous' });
+      expect(r.body.code, url).toBeUndefined();
+    }
+  });
+});
+
 describe('developer profile', () => {
   test('nothing is refused by the profile gate', async () => {
     const k = developer();
@@ -186,7 +238,7 @@ describe('GET /api/host-context', () => {
   test('a local build: developer, not hosted', async () => {
     const r = await request(await developer().server()).get('/api/host-context');
     expect(r.status).toBe(200);
-    expect(r.body).toEqual({ profile: 'developer', hosted: false, osBaseUrl: null, ownerEmail: null, capabilities: ['base-path', 'os-tools-proxy', 'profile'] });
+    expect(r.body).toEqual({ profile: 'developer', hosted: false, osBaseUrl: null, ownerEmail: null, capabilities: ['base-path', 'os-tools-proxy', 'profile', 'headless-v1', 'idle-info'] });
   });
 
   test('a business build reports its profile', async () => {
@@ -251,7 +303,7 @@ describe('one live profile: OS wins, without a restart', () => {
       await k.daemon.services.osConnections.refresh();
       const ctx = (await request(s).get('/api/host-context')).body;
       expect(ctx.profile).toBe('business');
-      expect(ctx.capabilities).toEqual(['base-path', 'os-tools-proxy', 'profile']);
+      expect(ctx.capabilities).toEqual(['base-path', 'os-tools-proxy', 'profile', 'headless-v1', 'idle-info']);
       expectRefused(await request(s).post(`/api/sessions/${sid}/terminals`).send({ type: 'shell' }), 'thread.create');
       os.set('developer');
       await k.daemon.services.osConnections.refresh();
