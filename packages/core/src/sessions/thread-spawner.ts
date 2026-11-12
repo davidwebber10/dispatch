@@ -19,6 +19,8 @@ import { approvalsFor, claudeSmartAskRules, claudeSmartSettings } from '../os/ap
 import { osServerNames } from '../os/os-servers.js';
 import { currentProfile } from '../os/profile.js';
 import { businessMayDrive, NOT_A_CHAT } from '../profile/business-gate.js';
+import { harnessPolicyIsStrict, NOT_A_BUSINESS_IMAGE } from '../os/harness-policy.js';
+import { isHostedBox } from '../os/hosted-mode.js';
 import { boxLog } from '../os/box-log.js';
 import { resolveSpawnModel, isClaudeTierAlias } from '../overseer/spawn-model.js';
 import { COORDINATOR_DISALLOWED_TOOLS, makeCoordinatorPolicy } from '../overseer/coordinator-policy.js';
@@ -357,6 +359,9 @@ export class ThreadSpawner {
   private assertProfileAllowsSpawn(terminal: terminalsDb.TerminalRow, config: Record<string, any>): void {
     if (currentProfile() !== 'business') return;
     if (!businessMayDrive({ type: terminal.type, config })) throw new Error(NOT_A_CHAT);
+    // A hosted box: the image must carry the strict harness policy (os/harness-policy.ts). On a developer
+    // image a harness an agent starts by itself could skip approvals, so no business thread runs there.
+    if (isHostedBox() && !harnessPolicyIsStrict()) throw new Error(NOT_A_BUSINESS_IMAGE);
   }
 
   private spawnStructured(terminal: terminalsDb.TerminalRow, config: Record<string, any>, workDir: string): void {

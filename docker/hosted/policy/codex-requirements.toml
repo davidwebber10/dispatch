@@ -1,0 +1,6 @@
+# Codex requirements for a hosted workspace (read by Codex from /etc/codex/requirements.toml; a
+# value outside these sets is replaced by the first allowed one, and Codex says so).
+# No "never" approval policy and no "danger-full-access" sandbox: the flag that skips approvals and
+# the sandbox has no effect, for a thread Dispatch starts and for a `codex` an agent starts itself.
+allowed_approval_policies = ["untrusted", "on-request"]
+allowed_sandbox_modes = ["read-only", "workspace-write"]
