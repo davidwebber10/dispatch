@@ -66,7 +66,8 @@ export function EmptyWorkspace({ onSelectTab }: { onSelectTab: (id: string) => v
       </div>
       {project && (
         <div style={{ height: 26, flexShrink: 0, background: 'var(--color-pane)', borderTop: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 12px', font: '400 11px var(--font-mono)', color: 'var(--color-text-dim)' }}>
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{homeAbbrev(project.workingDir)}</span>
+          {/* The folder is a machine detail (lib/profile.ts 'projects.path'). */}
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{can('projects.path') ? homeAbbrev(project.workingDir) : project.name}</span>
           <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--color-border-hover)', border: '1px solid var(--color-text-faint)', boxSizing: 'border-box' }} />
             {threadCount} {threadCount === 1 ? 'thread' : 'threads'} · idle
