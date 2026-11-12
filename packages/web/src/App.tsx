@@ -27,6 +27,7 @@ import { useUpdate } from './stores/update';
 import { applyPluginEvent } from './plugins/host';
 import { useHost } from './stores/host';
 import { useAnalyticsFeed } from './stores/analytics';
+import { useOsConnections } from './stores/osConnections';
 import { useReconnect } from './stores/reconnect';
 import { useResume } from './hooks/useResume';
 import { resumeSockets } from './lib/resumeSockets';
@@ -144,6 +145,7 @@ export default function App() {
         useAgents.getState().applyEvent(e);
         useAnalyticsFeed.getState().applyEvent(e);
         useLedgerCard.getState().applyEvent(e);
+        useOsConnections.getState().applyEvent(e);
         useEndless.getState().applyEvent(e);
         useUsageLimits.getState().applyEvent(e);
         applyPluginEvent(e);

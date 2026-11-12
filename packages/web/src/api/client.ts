@@ -504,6 +504,10 @@ export const api = {
   },
   // Accounts per harness (multi-account spec 2026-11-06).
   getAccounts: () => req<AccountsView>('/api/accounts'),
+  // Company connections on a hosted box (core os/tools-proxy.ts). A local daemon answers hosted:false.
+  getOsConnections: () => req<OsConnections>('/api/os/connections'),
+  refreshOsConnections: () => req<OsConnections>('/api/os/connections/refresh', { method: 'POST' }),
+  getOsTools: () => req<OsToolsList>('/api/os/tools'),
   /** A new Claude account; with `accountId`, "Sign in again" for that saved account (its token is replaced in place). */
   accountsClaudeLogin: (label: string, accountId?: string) => req<ClaudeLoginSessionT>('/api/accounts/claude/login', { method: 'POST', body: body({ label, ...(accountId ? { accountId } : {}) }) }),
   /** "Check again": the daemon reads that Claude account's usage and profile now, whatever its wait. */
@@ -718,3 +722,25 @@ export const api = {
   removeWorktree: (sessionId: string, path: string) =>
     req<{ removed: true; path: string; branch: string }>(`/api/sessions/${sessionId}/worktrees/remove`, { method: 'POST', body: body({ path }) }),
 };
+
+/** What OS last said about the person's company connections (GET /api/os/connections). No secrets. */
+export interface OsConnections {
+  hosted: boolean;
+  reachable: boolean;
+  error: string | null;
+  fetchedAt: string | null;
+  entitled: boolean | null;
+  profile: 'business' | 'developer' | null;
+  osPublicUrl: string | null;
+  osToolsEnabled: boolean;
+  needsConsent: Array<{ system: string; label: string; connectUrl: string }>;
+  servers: string[];
+}
+
+/** OS's company tools as the Company connections panel lists them (GET /api/os/tools). */
+export interface OsToolsList {
+  enabled: boolean;
+  reachable: boolean;
+  error?: string;
+  tools: Array<{ name: string; title: string | null; description: string | null; system: string | null; readOnly: boolean | null }>;
+}
