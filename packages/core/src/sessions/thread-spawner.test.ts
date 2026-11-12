@@ -177,14 +177,19 @@ describe('SpawnInjection', () => {
 });
 
 // Owner decision 2026-11-12: a chat thread on a hosted box has no status tool and no instruction to
-// report a status; a thread with a role keeps both. A local install is unchanged.
+// report a status; a thread with a role keeps both. On a local install (4.6.2) a thread the owner started
+// has no report_status either (DISPATCH_REPORT_STATUS=0, no rule), and gets no hosted reply rule.
 describe('a hosted chat thread: no status tool, the reply rule', () => {
   it('the dispatch server and the peer prompt, per thread kind', () => {
     terminalsDb.create(db, { id: 'chat', sessionId: 's1', type: 'claude-code', label: 'chat', config: { transport: 'structured' } });
     terminalsDb.create(db, { id: 'agent', sessionId: 's1', type: 'claude-code', label: 'agent', config: { transport: 'structured', role: 'agent' } });
-    const local = injection.agencyServerSpec('chat', 's1', 0);
+    const local = injection.agencyServerSpec('chat', 's1', 0, false, false);
     expect(local.env?.DISPATCH_NO_STATUS_TOOL).toBeUndefined();
-    expect(injection.peerPromptFor(terminalsDb.getById(db, 'chat')!)).toContain('report_status');
+    expect(local.env?.DISPATCH_REPORT_STATUS).toBe('0');
+    const localPrompt = injection.peerPromptFor(terminalsDb.getById(db, 'chat')!);
+    expect(localPrompt).not.toContain('report_status');
+    expect(localPrompt).not.toContain('YOUR REPLY IS THE ANSWER');
+    expect(injection.peerPromptFor(terminalsDb.getById(db, 'agent')!)).toContain('report_status');
     const saved = { base: process.env.OS_BASE_URL, token: process.env.OS_BOX_TOKEN };
     process.env.OS_BASE_URL = 'http://platform.invalid'; process.env.OS_BOX_TOKEN = 'proof-token';
     try {
