@@ -21,7 +21,7 @@ export function modelMatches(requested: string | null, reported: string | null):
 }
 
 /** `thread.model`: info when the harness runs what was asked (or nothing was asked), warn when it does not. */
-export function logThreadModel(terminalId: string, harness: string, requested: string | null, reported: string | null): void {
+export function logThreadModel(terminalId: string, harness: string, requested: string | null, reported: string | null, extra: Record<string, unknown> = {}): void {
   const match = modelMatches(requested, reported);
-  boxLog('thread.model', { thread: terminalId, harness, requested, reported, match }, match ? 'info' : 'warn');
+  boxLog('thread.model', { thread: terminalId, harness, requested, reported, match, ...extra }, match ? 'info' : 'warn');
 }

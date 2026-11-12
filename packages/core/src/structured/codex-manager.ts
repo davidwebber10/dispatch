@@ -37,6 +37,8 @@ import { JsonRpcStdioClient, METHOD_NOT_FOUND, type RpcId } from './shared/jsonr
 import { settleTurn, type SettleDeps } from './shared/settle-turn.js';
 import { StructuredEmitter } from './shared/events.js';
 import { logThreadModel } from './model-log.js';
+import { codexServiceTier, isTierRefusal } from './codex-fast.js';
+import { boxLog } from '../os/box-log.js';
 import { refusedModelMessage } from '../providers/catalog.js';
 
 /** A refusal said in plain words for the person: shown as its message alone, with no "Error:" in front. */
@@ -75,6 +77,10 @@ function openAppServer(spec: { command: string; args: string[]; cwd: string; env
 }
 
 interface CodexSession {
+  /** The app-server refused the service tier once: this session asks for none again (codex-fast.ts). */
+  tierRefused?: boolean;
+  /** The service tier the thread was started or resumed with (undefined: standard speed). */
+  serviceTier?: string;
   /** Smart approvals (os/approvals.ts): on-request + workspace-write + the auto_review reviewer. */
   smart?: boolean;
   /** Reviewer denials nobody answered yet (the in-thread cards), with the raw notification for approveGuardianDeniedAction. */
@@ -179,7 +185,7 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
   private readonly sandbox: 'read-only' | 'workspace-write' | 'danger-full-access';
   private readonly releaseTimeoutMs: number;
   private readonly modelListTimeoutMs: number;
-  private effortCache?: { at: number; map: Record<string, string[]>; defaults: Record<string, string> };
+  private effortCache?: { at: number; map: Record<string, string[]>; defaults: Record<string, string>; tiers?: Record<string, string[]> };
   /** The declared-status chain of a turn end (shared/settle-turn.ts). `summary` is the completed agentMessage text. */
   private readonly settleDeps: SettleDeps = {
     idle: (terminalId, detail) => { this.fire('idle', terminalId, detail); },
@@ -282,10 +288,11 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
   private async startThread(session: CodexSession, conn: JsonRpcStdioClient): Promise<void> {
     await conn.ready;
     if (session.resumeId) {
-      const res = await conn.request('thread/resume', {
+      const res = await this.withTier(session, (tier) => conn.request('thread/resume', {
         threadId: session.resumeId,
         cwd: session.cwd,
         model: session.model ?? null,
+        ...(tier ? { serviceTier: tier } : {}),
         // Carry a governed thread's per-spawn override through crash recovery too — otherwise a
         // coordinator resumed after the shared app-server child restarts would silently fall
         // back to the manager-wide default (see CodexSession.approvalPolicy/sandbox doc comment).
@@ -297,21 +304,22 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
         // is what survives a resume / crash recovery (codex-persona.contract.test.ts pins both).
         // Consequence: a persona CHANGE only reaches a thread started fresh.
         ...(session.systemPrompt ? { developerInstructions: session.systemPrompt } : {}),
-      });
+      }));
       const threadId = res?.thread?.id ?? session.resumeId;
       if (this.endedWhileStarting(session, conn, threadId)) return;
       this.bindThread(session, threadId, res?.model);
       await this.backfill(session, conn, res?.thread?.turns).catch(() => { /* backfill is best-effort */ });
     } else {
-      const res = await conn.request('thread/start', {
+      const res = await this.withTier(session, (tier) => conn.request('thread/start', {
         cwd: session.cwd,
         model: session.model ?? null,
+        ...(tier ? { serviceTier: tier } : {}),
         ...approvalParams(session, this.approvalPolicy, this.sandbox),
         ...threadConfigParam(session),
         // TOP-LEVEL, camelCase — NOT `settings.developer_instructions` (the OpenAI-documented
         // spelling is silently ignored by codex-cli; verified live on codex-cli 0.155.1).
         ...(session.systemPrompt ? { developerInstructions: session.systemPrompt } : {}),
-      }).catch((err) => {
+      })).catch((err) => {
         // A new thread on a model this account cannot use fails with a plain sentence (spawn_error), never on another model.
         if (session.model && isModelRefusal(err)) throw new PlainRefusal(refusedModelMessage(session.model));
         throw err;
@@ -320,6 +328,25 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
       if (typeof threadId !== 'string' || !threadId) throw new Error('thread/start returned no threadId');
       if (this.endedWhileStarting(session, conn, threadId)) return;
       this.bindThread(session, threadId, res?.model);
+    }
+  }
+
+  /**
+   * Run a thread/start or thread/resume with the session's service tier (codex-fast.ts). When the app-server
+   * refuses the TIER (an account without it), say so in the box log and run it again without one: the thread
+   * runs at standard speed rather than not at all. Any other error is the caller's.
+   */
+  private async withTier<T>(session: CodexSession, call: (tier: string | undefined) => Promise<T>): Promise<T> {
+    const tier = this.serviceTierFor(session);
+    session.serviceTier = tier;
+    try {
+      return await call(tier);
+    } catch (err) {
+      if (!tier || !(err instanceof CodexRpcError) || !isTierRefusal(err.message)) throw err;
+      session.tierRefused = true;
+      session.serviceTier = undefined;
+      boxLog('thread.fast.refused', { thread: session.terminalId, tier, reason: err.message }, 'warn');
+      return call(undefined);
     }
   }
 
@@ -360,7 +387,7 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
       throw new Error(`Codex thread ${threadId} is already open in another Dispatch thread`);
     }
     session.threadId = threadId;
-    logThreadModel(session.terminalId, 'codex', session.model ?? null, model ?? null);
+    logThreadModel(session.terminalId, 'codex', session.model ?? null, model ?? null, { serviceTier: session.serviceTier ?? null });
     if (model) session.model = model;
     this.threadToTerminal.set(threadId, session.terminalId);
     if (!session.sessionId) {
@@ -761,6 +788,14 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
   modelEfforts(): Record<string, string[]> | null { return this.effortCache?.map ?? null; }
   /** The effort each model runs at by default, from the same `model/list`. */
   modelDefaultEfforts(): Record<string, string> | null { return this.effortCache?.defaults ?? null; }
+  /** The service tier ids each model offers, from the same `model/list` (codex-fast.ts), or null if never asked. */
+  modelServiceTiers(): Record<string, string[]> | null { return this.effortCache?.tiers ?? null; }
+
+  /** The tier this thread asks for (hosted: the fast tier, unless switched off or the model does not offer it). */
+  private serviceTierFor(session: CodexSession): string | undefined {
+    if (session.tierRefused) return undefined;
+    return codexServiceTier(session.model, (m) => this.effortCache?.tiers?.[m] ?? null);
+  }
 
   /**
    * Ask the running app-server which efforts each model takes (live-checked: they differ by model). Cached
@@ -783,12 +818,14 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
         ]);
       } finally { clearTimeout(timer); }
       const map: Record<string, string[]> = {};
+      const tiers: Record<string, string[]> = {};
       const defaults: Record<string, string> = {};
       let cursor: string | null = null;
       for (let page = 0; page < 5; page++) {
         const res: any = await conn.request('model/list', { includeHidden: true, limit: 100, ...(cursor ? { cursor } : {}) }, this.modelListTimeoutMs);
         for (const m of res?.data ?? []) {
           const efforts = (m?.supportedReasoningEfforts ?? []).map((e: any) => e?.reasoningEffort).filter((e: unknown): e is string => typeof e === 'string' && !!e);
+          if (typeof m?.model === 'string') tiers[m.model] = (Array.isArray(m?.serviceTiers) ? m.serviceTiers : []).map((t: any) => t?.id).filter((t: unknown): t is string => typeof t === 'string' && !!t);
           if (typeof m?.model === 'string' && efforts.length) {
             map[m.model] = efforts;
             if (typeof m?.defaultReasoningEffort === 'string' && efforts.includes(m.defaultReasoningEffort)) defaults[m.model] = m.defaultReasoningEffort;
@@ -797,7 +834,7 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
         cursor = typeof res?.nextCursor === 'string' && res.nextCursor ? res.nextCursor : null;
         if (!cursor) break;
       }
-      if (Object.keys(map).length) this.effortCache = { at: Date.now(), map, defaults };
+      if (Object.keys(map).length) this.effortCache = { at: Date.now(), map, defaults, tiers };
       return this.effortCache?.map ?? null;
     } catch {
       return c?.map ?? null;

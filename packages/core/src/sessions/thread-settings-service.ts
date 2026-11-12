@@ -1,3 +1,4 @@
+import { codexDefaultEffort } from '../structured/codex-fast.js';
 import type Database from 'better-sqlite3';
 import * as terminalsDb from '../db/terminals.js';
 import { PTYManager } from '../pty/manager.js';
@@ -290,7 +291,8 @@ export class ThreadSettings {
   /** The saved Codex effort, if the thread's model still takes it. */
   codexEffortFor(config: Record<string, any>, model?: string): string | undefined {
     const e = config.effort;
-    if (typeof e !== 'string') return undefined;
+    // No pick: a hosted Sol thread runs at low, as Ask does (structured/codex-fast.ts); every other thread at the model's default.
+    if (typeof e !== 'string') return codexDefaultEffort(typeof (model ?? config.model) === 'string' ? (model ?? config.model) : undefined);
     const m = model ?? config.model;
     // No model known yet (the thread runs the app-server's default): the effort was checked against the model the thread
     // ran when it was picked, so keep it; if the default model does not take it, Codex refuses it on the first turn and the

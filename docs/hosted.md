@@ -204,6 +204,15 @@ LibreOffice, ImageMagick, Ghostscript, a browser, LaTeX, Java. `/etc/dispatch/to
 tool with its version and purpose; a thread's environment note has one line that points to it. Cost:
 about 940 MB on disk and 290 MB more to pull (compressed), most of it pyarrow, duckdb and pandoc.
 
+**Codex fast mode.** A Codex thread on a hosted box always asks for the fast service tier (`priority`,
+"Fast" in Codex's model list) on thread start and resume, for every model that offers it, and a Sol
+thread with no effort picked runs at `low` (as Ask does). There is no switch for the person. The task
+environment can change both without an image build: `DISPATCH_CODEX_SERVICE_TIER=off` (standard speed
+for the whole fleet) or another tier id, and `DISPATCH_CODEX_SOL_EFFORT=medium`. When an account
+refuses the tier, the thread starts again at standard speed and the box log has `thread.fast.refused`.
+The `thread.model` line names the tier each thread runs with. Claude Code's fast mode (`--fast-mode`) is
+not turned on.
+
 **No program gains rights.** Every setuid and setgid bit is removed at build (`su`, `mount`, `umount`,
 `passwd`, `chsh`, `chfn`, `newgrp`, `gpasswd`, `chage`, `expiry`, `unix_chkpwd`). `/app`, the CLIs and
 the policy files are root-owned and not writable by the runtime user.
