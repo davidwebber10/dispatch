@@ -2,6 +2,8 @@ import type http from 'http';
 import type { Duplex } from 'node:stream';
 import type { WebSocketServer } from 'ws';
 import { upgradeAllowed } from '../auth/box-token.js';
+import { upgradeAllowedForProfile } from '../profile/business-gate.js';
+import type { Profile } from '../profile/host-context.js';
 import type { AccessGate } from '../auth/access-gate.js';
 import type { DeviceStore } from '../auth/devices.js';
 import { refuseKeyUpgrade } from '../auth/request-principal.js';
@@ -38,6 +40,8 @@ export interface UpgradeInputs {
   sockets: DaemonSockets;
   basePath: string;
   boxToken: string | undefined;
+  /** The business profile opens no PTY terminal socket (profile/business-gate.ts). Absent: developer. */
+  profile?: Profile;
   accessGate: AccessGate | undefined;
   devices: DeviceStore | undefined;
   sessionService: SessionService;
@@ -119,6 +123,11 @@ export function createUpgradeHandler(i: UpgradeInputs): (request: http.IncomingM
     }
     // No key opens a WebSocket (spec 6.4): the browser owns these sockets.
     if (refuseKeyUpgrade(request)) {
+      socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+      return;
+    }
+    // The business profile has no terminal: its PTY sockets are refused like a key's.
+    if (!upgradeAllowedForProfile(i.profile ?? 'developer', url)) {
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;
     }

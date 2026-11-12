@@ -39,6 +39,7 @@ import type { NoCredentialStats } from '../auth/no-credential-stats.js';
 import type { TailscaleAccess } from '../auth/tailscale-access.js';
 import { securityHeaders } from '../auth/security-headers.js';
 import { mountApiRoutes, type ApiRouteDeps } from '../server-routes.js';
+import { readHostContext } from '../profile/host-context.js';
 import { jsonErrorHandler } from '../http/error-handler.js';
 import { createJsonBody } from '../http/json-body.js';
 import { jsonCompression } from '../http/compress.js';
@@ -325,6 +326,8 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   const basePath = normalizeBasePath(env.DISPATCH_BASE_PATH);
   /** Shared secret the router injects on every request to a hosted box. Unset ⇒ open (local). */
   const boxToken = env.DISPATCH_BOX_TOKEN?.trim() || undefined;
+  // The person's profile and the host facts (profile/host-context.ts): read once, at build.
+  const hostContext = readHostContext(env);
   // The daemon's own address for first-party callers (hooks, the shim, MCP helpers): loopback, the
   // bound port and the base path. It is also the only destination that a thread key may be sent to.
   // null until a port is known: a build that never listens tells no thread an address.
@@ -569,9 +572,10 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     reachableAddresses: auth.reachableAddresses, refreshPtyEnv: spawnEnv.refresh,
     endless: opts.endless ?? endless, usageLimits: opts.usageLimits ?? limits.routeDeps,
     watchCatchUp: (id) => watchDispatcher.catchUp(id), outbox, journal: journalWiring.journal,
+    hostContext,
   });
   const webDist = opts.webDist === undefined ? defaultWebDist(env) : opts.webDist;
-  const servesWeb = mountWeb(app, { webDist, basePath, dataDir, plugins });
+  const servesWeb = mountWeb(app, { webDist, basePath, dataDir, plugins, hostContext });
   // Last: every error that no route answered becomes a JSON status and message, never a stack trace.
   app.use(jsonErrorHandler);
 
@@ -589,7 +593,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   let stopTimers: (() => void) | null = null;
   let stopped = false;
   const onUpgrade = createUpgradeHandler({
-    sockets, basePath, boxToken: auth.boxToken, accessGate: auth.accessGate, devices: auth.devices,
+    sockets, basePath, boxToken: auth.boxToken, profile: hostContext.profile, accessGate: auth.accessGate, devices: auth.devices,
     sessionService, statusService, ptyManager, terminalMonitor, claudeManager: harnesses.claude,
   });
   return {

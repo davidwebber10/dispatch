@@ -7,6 +7,7 @@ import { compressedAssets, createIndexProvider, IMMUTABLE } from '../web-assets.
 import { pluginAssetHandler } from '../routes/plugins.js';
 import { customIconHandler } from '../routes/appearance.js';
 import type { PluginRegistry } from '../plugins/registry.js';
+import { indexHtmlWithHostContext, type HostContext } from '../profile/host-context.js';
 
 /** Where the built web client is: `DISPATCH_WEB_DIST`, or `packages/web/dist` next to this package (the same from src/ and from dist/). */
 export function defaultWebDist(env: NodeJS.ProcessEnv): string {
@@ -18,7 +19,7 @@ export function defaultWebDist(env: NodeJS.ProcessEnv): string {
  * The SPA fallback returns index.html for any non-/api, non-WS GET.
  * Returns true when a web build is served.
  */
-export function mountWeb(app: express.Express, i: { webDist: string | null; basePath: string; dataDir: string; plugins: PluginRegistry }): boolean {
+export function mountWeb(app: express.Express, i: { webDist: string | null; basePath: string; dataDir: string; plugins: PluginRegistry; hostContext?: HostContext }): boolean {
   // Plugin files, with or without a web build (the dev server proxies /plugins here).
   app.get('/plugins/:id/*', ...pluginAssetHandler(i.plugins));
   const webDist = i.webDist;
@@ -27,8 +28,11 @@ export function mountWeb(app: express.Express, i: { webDist: string | null; base
   // prefix. It is read again when the file changes (one stat per request): a web rebuild
   // gives new script names, and a page must not get the names of a build that is gone.
   const indexHtml = createIndexProvider(path.join(webDist, 'index.html'), i.basePath);
+  // A hosted box or a set profile adds one <meta> with the host context (profile/host-context.ts), so the
+  // page knows its profile and theme before the first paint. A local install sends the file unchanged.
+  const hostContext = i.hostContext;
   const sendIndex = (_req: express.Request, res: express.Response) => {
-    res.type('html').send(indexHtml());
+    res.type('html').send(hostContext ? indexHtmlWithHostContext(indexHtml(), hostContext) : indexHtml());
   };
   app.get('/icons/:name', publicRoute, customIconHandler(i.dataDir));
   // Build files: content-hashed, so compressed once and cached forever (web-assets.ts).

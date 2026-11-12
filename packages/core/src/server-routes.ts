@@ -70,6 +70,8 @@ import { createAnalyticsRouter } from './routes/analytics.js';
 import { createEndlessRouter } from './routes/endless.js';
 import { createUsageLimitsRouter } from './routes/usage-limits.js';
 import { createBootstrapRouter } from './routes/bootstrap.js';
+import { businessProfileGate } from './profile/business-gate.js';
+import type { HostContext } from './profile/host-context.js';
 
 /** Everything the `/api` routes need. `createApp` (tests) and `startServer` (daemon) both build one. */
 export interface ApiRouteDeps {
@@ -124,6 +126,8 @@ export interface ApiRouteDeps {
   outbox?: import('./delivery/outbox.js').DeliveryOutbox;
   /** The message journal (W3-D): GET /api/terminals/:terminalId/journal reads its pages. */
   journal?: import('./journal/journal.js').MessageJournal;
+  /** The profile and host facts (profile/host-context.ts). Absent (a bare createApp): developer, not hosted. */
+  hostContext?: HostContext;
   usageLimits?: {
     /** The Refresh button of the usage window (2026-11-09): read every account now. */
     refresh?: () => Promise<void>;
@@ -145,7 +149,15 @@ export interface ApiRouteDeps {
  */
 export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   const d = deps;
+  const hostContext: HostContext = d.hostContext ?? { profile: 'developer', hosted: false, osBaseUrl: null, ownerEmail: null };
+  // The business profile's refusals, in front of every route (profile/business-gate.ts). Developer: a no-op.
+  app.use(businessProfileGate(hostContext.profile));
   app.get('/api/whoami', publicRoute, whoamiHandler);
+  // What the page needs at launch to choose its profile, theme and way back to OS. No secrets.
+  app.get('/api/host-context', ownerOnly, (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache');
+    res.json(hostContext);
+  });
   app.get('/api/access/no-credential-stats', ownerOnly, noCredentialStatsHandler(d.noCredentialStats));
   // The owner (a signed-in or local browser) makes a code; a thread key gets owner_only. The code
   // is the only secret that leaves the daemon: the token itself is never served. Strict (W1-B): a code signs a
