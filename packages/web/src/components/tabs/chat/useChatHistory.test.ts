@@ -6,7 +6,7 @@
 import { renderHook, act } from '@testing-library/react';
 import { test, expect, vi, beforeEach, describe } from 'vitest';
 import { useStructuredChat } from './useStructuredChat';
-import { ResumeTracker } from './useChatHistory';
+import { ResumeTracker, FILL_TARGET, prependJournalRows } from './useChatHistory';
 import { itemsFromEvent } from './convItems';
 import * as sock from '../../../api/structured-socket';
 import { api } from '../../../api/client';
@@ -98,10 +98,11 @@ test('older pages come from the journal route, anchored on the oldest seq', asyn
   const getConversation = vi.spyOn(api, 'getConversation');
   journal(frame([row(5, userEvent('q3')), row(6, assistantEvent('a3'))], { firstSeq: 1, hasMore: true }));
   expect(result.current.hasMore).toBe(true); // the journal has more, though this harness has no transcript
-  act(() => result.current.loadOlder());
+  // Newest first: right after the first window, one page fills the view up to FILL_TARGET items.
   await flush();
-  expect(getJournal).toHaveBeenLastCalledWith('t1', { before: 5, limit: 120 });
+  expect(getJournal).toHaveBeenLastCalledWith('t1', { before: 5, limit: FILL_TARGET - 2 });
   expect(seqs(result.current.items)).toEqual([3, 4, 5, 6]);
+  // Further pages only on demand.
   act(() => result.current.loadOlder());
   await flush();
   expect(getJournal).toHaveBeenLastCalledWith('t1', { before: 3, limit: 120 });
@@ -464,5 +465,81 @@ describe('ResumeTracker', () => {
     expect(t.cursor()).toBeUndefined();
     t.reset();
     expect(t.cursor()).toBeUndefined();
+  });
+});
+
+// ---- newest first (2026-11-12): a small first window, one fill page, older pages on demand ----
+
+describe('newest first', () => {
+  const rows = (from: number, to: number) => {
+    const out: JournalItem[] = [];
+    for (let s = from; s <= to; s++) out.push(row(s, s % 2 ? userEvent(`q${s}`) : assistantEvent(`a${s}`)));
+    return out;
+  };
+
+  test('the first window shows at once; one page fills it up to FILL_TARGET, before the oldest seq', async () => {
+    const { result } = renderHook(() => useStructuredChat('t1', undefined, { pageableHistory: false }));
+    let resolve!: (p: any) => void;
+    const getJournal = vi.spyOn(api, 'getJournal').mockReturnValue(new Promise((r) => { resolve = r; }) as any);
+    journal(frame(rows(941, 1000), { firstSeq: 1, hasMore: true }));
+    // The newest 60 are on screen before any page answers.
+    expect(result.current.items).toHaveLength(60);
+    expect(seqs(result.current.items).at(-1)).toBe(1000);
+    expect(getJournal).toHaveBeenCalledTimes(1);
+    expect(getJournal).toHaveBeenCalledWith('t1', { before: 941, limit: FILL_TARGET - 60 });
+    expect(result.current.loadingOlder).toBe(true); // the quiet pill
+    // A live item lands while the page is on its way: it goes at the end.
+    live({ ...userEvent('live one'), seq: 1001 });
+    resolve({ items: rows(801, 940), firstSeq: 1, lastSeq: 1001, hasMore: true });
+    await flush();
+    const s = seqs(result.current.items);
+    expect(s).toHaveLength(201);
+    expect(s[0]).toBe(801);
+    expect(s.at(-1)).toBe(1001);
+    expect([...s].sort((a, b) => a! - b!)).toEqual(s); // in sequence order: nothing reordered
+    expect(new Set(s).size).toBe(s.length);            // nothing twice
+    expect(result.current.loadingOlder).toBe(false);
+    expect(result.current.hasMore).toBe(true);
+    // No more pages until the person asks.
+    await flush();
+    expect(getJournal).toHaveBeenCalledTimes(1);
+  });
+
+  test('no fill when the window is the whole journal, and none on a reconnect that keeps the view', async () => {
+    const { result } = renderHook(() => useStructuredChat('t1', undefined, { pageableHistory: false }));
+    const getJournal = vi.spyOn(api, 'getJournal').mockResolvedValue({ items: [], firstSeq: 1, lastSeq: 3, hasMore: false });
+    journal(frame(rows(1, 3), { firstSeq: 1, hasMore: false }));
+    journal(frame(rows(4, 5), { reset: false, after: 3, firstSeq: 1, hasMore: false }));
+    await flush();
+    expect(getJournal).not.toHaveBeenCalled();
+    expect(result.current.hasMore).toBe(false); // the view is the start of the thread
+  });
+
+  test('a fill asked for by a socket that was replaced since is dropped', async () => {
+    const { result } = renderHook(() => useStructuredChat('t1', undefined, { pageableHistory: false }));
+    let resolve!: (p: any) => void;
+    vi.spyOn(api, 'getJournal').mockReturnValue(new Promise((r) => { resolve = r; }) as any);
+    journal(frame(rows(41, 100), { firstSeq: 1, hasMore: true }));
+    act(() => cbs.onReset!()); // the socket reconnects: its replay replaces the view
+    journal(frame(rows(51, 110), { firstSeq: 1, hasMore: false }));
+    resolve({ items: rows(1, 40), firstSeq: 1, lastSeq: 110, hasMore: false });
+    await flush();
+    expect(seqs(result.current.items)[0]).toBe(51); // the old page did not land
+  });
+
+  test('prependJournalRows: rows the view has already are not added again; order is kept', () => {
+    const prev = itemsFromEvent(userEvent('q5'), undefined, 5).concat(itemsFromEvent(assistantEvent('a6'), undefined, 6));
+    const next = prependJournalRows(prev, [row(4, assistantEvent('a4')), row(5, userEvent('q5'))], undefined);
+    expect(seqs(next)).toEqual([4, 5, 6]);
+    expect(prependJournalRows(prev, [row(5, userEvent('q5'))], undefined)).toBe(prev); // nothing new: the same array
+  });
+
+  test('a question card does not depend on the window: the permission frame shows it with its request far above', () => {
+    const { result } = renderHook(() => useStructuredChat('t1'));
+    journal(frame(rows(941, 1000), { firstSeq: 1, hasMore: false }));
+    const pending = { requestId: 'r1', toolName: 'AskUserQuestion', toolUseId: 'tu-old', questions: [{ question: 'Which?', options: ['A', 'B'] }] };
+    act(() => cbs.onEvent({ type: 'permission', pending }));
+    expect(result.current.items.some((i) => i.toolId === 'tu-old')).toBe(false); // its tool call is not in the window
+    expect(result.current.pending?.requestId).toBe('r1');
   });
 });
