@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.0
+
+**Send a secret**: the other direction. In the Inbox (the view, a thread's tab, a project's sheet) the owner
+sends a thread a secret (a name and a value) and gets a 6-character ID. The thread calls the new tool
+`inbox_secret` with the ID, and Dispatch writes the value to a file of the project (a `NAME=value` line, or
+the whole file, mode 0600) or to Doppler. The value never enters the chat; the thread reads it only when the
+owner turned on "Let the thread read it". One use; an unused secret is gone after 24 hours. The value lives in
+the daemon (`<data dir>/inbox-secrets`), never in the plugin's documents.
+
 ## 1.1.0
 
 Previews is now named **Drops** in the app (the plugin id, the stored data and the `preview` tool keep
