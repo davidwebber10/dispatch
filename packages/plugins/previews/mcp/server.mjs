@@ -55,7 +55,9 @@ const TOOLS = [{
     '`secret` for a token or password (masked, removed after 24 hours; never repeat it in title or note); ' +
     '`steps` for a short procedure (`steps`: [{ text, command? }], max 30); `diff` for a unified diff; ' +
     '`table` for CSV `text` or one .csv/.json file. Without `kind`, images show as pictures, a URL as a link, ' +
-    'markdown as a document and other text as text to copy.',
+    'markdown as a document and other text as text to copy. ' +
+    'Never ask the user to paste a password, token or API key into the chat: ask them to use Inbox → Send a secret ' +
+    'and give you its ID, then call `inbox_secret`.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -70,6 +72,39 @@ const TOOLS = [{
       title: { type: 'string', description: 'A short name for the drop (default: the first file name, or a name for the kind).' },
       note: { type: 'string', description: 'One line of context: what this is and why it matters.' },
     },
+  },
+}, {
+  name: 'inbox_secret',
+  description:
+    'Use a secret the user sent you through Inbox → Send a secret: they give you its ID (6 characters, e.g. K7Q2M4). ' +
+    'Never ask the user to paste a password, token or API key into the chat; ask them to use Send a secret and to give you the ID. ' +
+    'Dispatch writes the value for you, so it never enters this conversation. Pick ONE destination: ' +
+    '`file` { path, name? } writes it into a file of this project (with `name`: a NAME=value line in a dotenv file such as .env.local; ' +
+    'without: the value is the whole file), mode 0600; `doppler` { name } sets it as a Doppler secret; ' +
+    '`reveal: true` returns the value only when the user allowed this thread to read it. One use: the value is then removed from the Inbox. ' +
+    'Then use it by reference (load the file into the command\'s environment, or doppler run). Never print the value.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      id: { type: 'string', description: 'The ID the user gave you (6 characters, e.g. K7Q2M4).' },
+      file: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'A file inside this project, relative or absolute (e.g. .env.local).' },
+          name: { type: 'string', description: 'The variable name for a NAME=value line (e.g. STRIPE_KEY). Leave it out to write the value as the whole file.' },
+        },
+        required: ['path'],
+        description: 'Write the value into a file of this project.',
+      },
+      doppler: {
+        type: 'object',
+        properties: { name: { type: 'string', description: 'The Doppler secret name (upper case, e.g. STRIPE_KEY).' } },
+        required: ['name'],
+        description: 'Set the value as a Doppler secret.',
+      },
+      reveal: { type: 'boolean', description: 'Return the value itself. Works only when the user allowed it; prefer file or doppler.' },
+    },
+    required: ['id'],
   },
 }];
 
@@ -134,8 +169,30 @@ async function prune() {
   }
 }
 
+/**
+ * Inbox → Send a secret (2026-11-12): the daemon does the write (a project file or Doppler) under this thread's
+ * key, so the value never comes to this process; only `reveal`, which the owner allows per secret, brings it.
+ */
+async function inboxSecret(args) {
+  const a = args && typeof args === 'object' ? args : {};
+  if (typeof a.id !== 'string' || !a.id.trim()) throw new Error('give the `id` the user sent you (6 characters, e.g. K7Q2M4)');
+  const body = { id: a.id.trim() };
+  if (a.file !== undefined && a.file !== null) {
+    const f = a.file && typeof a.file === 'object' ? a.file : {};
+    // Relative to this server's cwd (the thread's folder, a worktree perhaps), as the preview tool does.
+    body.file = { ...(typeof f.path === 'string' && f.path.trim() ? { path: path.resolve(process.cwd(), f.path.trim()) } : {}), ...(f.name !== undefined ? { name: f.name } : {}) };
+  }
+  if (a.doppler !== undefined && a.doppler !== null) body.doppler = a.doppler;
+  if (a.reveal !== undefined && a.reveal !== false) body.reveal = a.reveal;
+  const r = await call('POST', '/api/inbox/secrets/use', body);
+  const content = [{ type: 'text', text: String((r && r.message) || 'Done.') }];
+  if (r && typeof r.value === 'string') content.push({ type: 'text', text: r.value });
+  return content;
+}
+
 async function callTool(name, args) {
   try {
+    if (name === 'inbox_secret') return { content: await inboxSecret(args) };
     if (name !== 'preview') return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
     const result = await preview(args);
     return { content: [{ type: 'text', text: JSON.stringify(result) }] };
