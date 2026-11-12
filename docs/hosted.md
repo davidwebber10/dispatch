@@ -313,15 +313,21 @@ reason: a project file the agent writes without a question (`<project>/opencode.
 next start. Every OpenCode process on a hosted box also gets `OPENCODE_DISABLE_PROJECT_CONFIG=1`, so
 only the thread's own `OPENCODE_CONFIG` file and the global config apply.
 
-**The check stage runs.** At each start of a hosted Claude Code thread the box logs one line from the
-harness's first `system/init` frame, names only:
+**The check stage runs.** Every `system/init` frame of a hosted Claude Code thread is checked (Claude
+Code sends one each turn; a connector or a server can load after the first). The box logs one line for
+the first frame and for each frame with something new, names only:
 
-    {"event":"thread.mcp","thread":"<id>","harness":"claude-code","servers":[...],"expected":[...],"unexpected":[]}
+    {"event":"thread.mcp","thread":"<thread id>","harness":"claude-code","servers":[...],"expected":[...],"unexpected":[]}
 
-A name Dispatch did not pass, or an `Artifact` tool in the frame's `tools`, adds `{"event":"thread.mcp.unexpected","level":"warn",...}`, a
-`[mcp] WARNING` console line, and a notice in the thread. Stage must see `unexpected: []`, and no name
-that starts with `claude.ai `, for a person whose Claude account has connectors. The business drop-in
-logs `thread.mcp.policy` with `ok: false` only when it fails.
+A warning (`{"event":"thread.mcp.unexpected","level":"warn",...}`, a `[mcp] WARNING thread <id>` console
+line, and a notice in the thread) comes for: a server name Dispatch did not pass; an `Artifact` tool in
+the frame's `tools`; an MCP tool (`mcp__<server>__…`) whose server Dispatch did not pass (a connector can
+show its tools without a server entry); and a frame with no server list (`reason: "no server list in the
+init frame"`). Each name warns once per process. The notice is kept in the thread's journal, so it is
+still there after a reload or a restart. The `thread` field holds the real thread id (an id is not
+redacted). A server with an expected name and other tools cannot be told apart by names. Stage must see
+`unexpected: []`, and no name that starts with `claude.ai ` or `mcp__claude_ai_`, for a person whose Claude
+account has connectors. The business drop-in logs `thread.mcp.policy` with `ok: false` only when it fails.
 
 **Wording.** The company-systems note in a thread's prompt (`os/os-servers.ts` `osServersNote`) tells
 the agent: a system that is not set up in this workspace is "not set up yet", an administrator must set

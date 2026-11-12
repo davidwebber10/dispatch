@@ -941,3 +941,41 @@ it('mcpExpected: the init frame servers are logged; an unexpected one warns in t
     setBoxLogForTest();
   }
 });
+
+it('mcpExpected: every init frame is checked; a later connector, a connector tool and a frame with no server list warn once each', async () => {
+  const { setBoxLogForTest } = await import('../../src/os/box-log.js');
+  const lines: any[] = [];
+  setBoxLogForTest({ sink: (l) => lines.push(JSON.parse(l)), enabled: true });
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const notices = () => m.getEvents('t3').filter((e: any) => e.subtype === 'dispatch_notice');
+  try {
+    const ok = [{ name: 'dispatch', status: 'connected' }];
+    m.spawn('t3', { command: process.execPath, args: [fake], workDir: process.cwd(), env: { FAKE_MCP_SERVERS: JSON.stringify(ok), FAKE_TOOLS: JSON.stringify(['Bash', 'mcp__dispatch__read_thread']) }, mcpExpected: ['dispatch'] });
+    await waitForEvent(m, 't3', (e) => e.type === 'system' && e.subtype === 'init');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(notices()).toHaveLength(0);
+    // A later init frame (the next turn) with a connector's tool but no such server in the list.
+    m.sendMessage('t3', `TRIGGER_INIT:${JSON.stringify({ mcp_servers: ok, tools: ['Bash', 'mcp__claude_ai_Gmail__send_message'] })}`);
+    await waitForEvent(m, 't3', (e) => e.subtype === 'dispatch_notice');
+    expect(notices()[0].message).toContain('mcp__claude_ai_Gmail__send_message');
+    expect(lines.find((l) => l.event === 'thread.mcp.unexpected')).toMatchObject({ thread: 't3', tools: ['mcp__claude_ai_Gmail__send_message'] });
+    // The same frame again: no second warning.
+    m.sendMessage('t3', `TRIGGER_INIT:${JSON.stringify({ mcp_servers: ok, tools: ['mcp__claude_ai_Gmail__send_message'] })}`);
+    await waitForEvent(m, 't3', (e) => e.type === 'result' && m.getEvents('t3').filter((x: any) => x.type === 'result').length >= 2);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(notices()).toHaveLength(1);
+    // A server that loads after the first frame.
+    m.sendMessage('t3', `TRIGGER_INIT:${JSON.stringify({ mcp_servers: [...ok, { name: 'late', status: 'connected' }] })}`);
+    await waitForEvent(m, 't3', () => notices().length === 2);
+    expect(notices()[1].message).toContain('late');
+    // A frame with no server list.
+    m.sendMessage('t3', `TRIGGER_INIT:${JSON.stringify({ tools: ['Bash'] })}`);
+    await waitForEvent(m, 't3', () => notices().length === 3);
+    expect(notices()[2].message).toMatch(/did not report which tools/);
+    expect(lines.some((l) => l.event === 'thread.mcp.unexpected' && l.reason === 'no server list in the init frame')).toBe(true);
+  } finally {
+    warn.mockRestore();
+    setBoxLogForTest();
+    m.kill('t3');
+  }
+});

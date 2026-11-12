@@ -36,14 +36,24 @@ export function redactLogText(text: string, max = MAX_TEXT): string {
   return s.length > max ? `${s.slice(0, max)}…` : s;
 }
 
-function clean(v: unknown, depth = 0): unknown {
+/** A thread, project or session id: a UUID is an identifier, not a secret, and the log must name its thread. */
+const ID_KEYS = new Set(['thread', 'terminal', 'terminalId', 'session', 'sessionId', 'project']);
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** An MCP tool name (`mcp__<server>__<tool>`) in a list of tools or names: kept, so a warning names the tool. */
+const NAME_KEYS = new Set(['tools', 'unexpected']);
+const MCP_TOOL = /^mcp__[A-Za-z0-9_-]{1,64}__[A-Za-z0-9_-]{1,64}$/;
+
+function clean(v: unknown, depth = 0, key?: string): unknown {
+  if (typeof v === 'string' && key !== undefined && ID_KEYS.has(key) && UUID.test(v)) return v;
+  if (typeof v === 'string' && key !== undefined && NAME_KEYS.has(key) && MCP_TOOL.test(v)) return v;
   if (typeof v === 'string') return redactLogText(v);
   if (typeof v === 'number' || typeof v === 'boolean' || v === null) return v;
-  if (Array.isArray(v)) return depth > 2 ? '[list]' : v.slice(0, 50).map((x) => clean(x, depth + 1));
+  if (Array.isArray(v)) return depth > 2 ? '[list]' : v.slice(0, 50).map((x) => clean(x, depth + 1, key));
   if (v && typeof v === 'object') {
     if (depth > 2) return '[object]';
     const out: Record<string, unknown> = {};
-    for (const [k, x] of Object.entries(v)) if (x !== undefined) out[k] = clean(x, depth + 1);
+    for (const [k, x] of Object.entries(v)) if (x !== undefined) out[k] = clean(x, depth + 1, k);
     return out;
   }
   return undefined;

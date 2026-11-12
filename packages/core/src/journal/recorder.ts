@@ -430,7 +430,10 @@ export class ThreadRecorder {
   private system(e: Frame): void {
     if (e.subtype === 'auth_required') { this.auth = e; return; }
     if (e.subtype === 'status') { this.compacting = e.status === 'compacting' ? e : null; return; }
-    if ((e.subtype === 'model' && e.switched === true) || e.subtype === 'settings_refused' || e.subtype === 'spawn_error') {
+    // A daemon warning in the thread (an MCP server or tool the workspace did not give, a refused
+    // action) is kept: after a reload or a restart the person still sees it.
+    if ((e.subtype === 'model' && e.switched === true) || e.subtype === 'settings_refused' || e.subtype === 'spawn_error'
+      || (e.subtype === 'dispatch_notice' && e.level === 'warning')) {
       this.write('notice', undefined, e, e);
     }
   }

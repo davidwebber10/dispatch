@@ -52,6 +52,12 @@ rl.on('line', (line) => {
       send({ type: 'control_request', request_id: 'req-2', request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions: [{ question: 'Pick one', header: 'Choice', options: ['A', 'B'], multiSelect: false }] }, tool_use_id: 'tu-2' } });
       return;
     }
+    if (typeof text === 'string' && text.startsWith('TRIGGER_INIT:')) {
+      // A later init frame (Claude Code sends one each turn): `TRIGGER_INIT:<JSON of {mcp_servers?, tools?}>`.
+      send({ type: 'system', subtype: 'init', model: 'claude', session_id: 'sess-fake', ...JSON.parse(text.slice('TRIGGER_INIT:'.length)) });
+      send({ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: 'sess-fake' });
+      return;
+    }
     if (typeof text === 'string' && text.startsWith('TRIGGER_BASH:')) {
       // A Bash tool call asking permission for the given command (the broad-kill guard tests).
       send({ type: 'control_request', request_id: 'req-bash', request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: text.slice('TRIGGER_BASH:'.length) }, tool_use_id: 'tu-1' } });

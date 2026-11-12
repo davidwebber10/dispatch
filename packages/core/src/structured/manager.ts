@@ -17,7 +17,7 @@ import { settleTurn, type SettleDeps } from './shared/settle-turn.js';
 import { blockedEvent, blockedResolvedEvent, approvalTitle, allowedOnceMessage, sameToolCall, inputDetail, SMART_FALLBACK_NOTICE, ALLOW_ONCE_MS, type BlockedAction, type Approvals } from '../os/approvals.js';
 import { boxLog } from '../os/box-log.js';
 import { isHostedBox } from '../os/hosted-mode.js';
-import { forbiddenInitTools, initServerNames, unexpectedServers, unexpectedServersNotice } from '../os/hosted-mcp-policy.js';
+import { forbiddenInitTools, initServerNames, unexpectedInitMcpTools, unexpectedServers, unexpectedServersNotice, NO_SERVER_LIST_NOTICE } from '../os/hosted-mcp-policy.js';
 import { StructuredEmitter, type AnyStructuredListener, type StructuredListener, type StructuredManagerEventName, type StructuredManagerEvents } from './shared/events.js';
 
 /**
@@ -135,8 +135,12 @@ interface Session {
   allowOnce?: { toolName: string; input: unknown; known: boolean; timer: NodeJS.Timeout; /** Turn ends to let pass: the turn that was open when the person allowed the call. */ skipResults: number } | null;
   /** Our own control requests awaiting the CLI's control_response (set_model). */
   controls?: Map<string, { resolve: (r: any) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>;
-  /** StructuredSpawnOpts.mcpExpected; cleared once the first init frame was checked. */
+  /** StructuredSpawnOpts.mcpExpected: every init frame of the process is checked against it. */
   mcpExpected?: string[] | null;
+  /** True once an init frame was checked (the first one always logs its servers). */
+  mcpChecked?: boolean;
+  /** Names already warned about, so a frame each turn does not repeat the same warning. */
+  mcpWarned?: Set<string>;
 }
 
 /**
@@ -530,11 +534,8 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
       // The active model: init carries it on every turn; a lead assistant frame carries what
       // answered. A sub-agent's frame (parent_tool_use_id) and a synthetic frame never count.
       if (event?.type === 'system' && event?.subtype === 'init' && typeof event.model === 'string' && event.model) session.model = event.model;
-      if (event?.type === 'system' && event?.subtype === 'init' && session.mcpExpected) {
-        const expected = session.mcpExpected;
-        session.mcpExpected = null; // the first init of this process only
-        this.checkMcpServers(terminalId, expected, event);
-      }
+      // Every init frame (Claude Code sends one each turn): a connector or server can load after the first.
+      if (event?.type === 'system' && event?.subtype === 'init' && session.mcpExpected) this.checkMcpServers(terminalId, session, event);
       if (event?.type === 'assistant' && event?.parent_tool_use_id == null) {
         const m = event.message?.model;
         if (typeof m === 'string' && m && m !== SYNTHETIC) session.model = m;
@@ -921,18 +922,38 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
 
   /** A line in the thread for the viewers and the replay: a model/effort change the CLI refused. */
   /**
-   * The init-frame check of a hosted Claude Code thread (os/hosted-mcp-policy.ts). One `thread.mcp`
-   * line with the names the harness reports; a name Dispatch did not pass gives a warning line
-   * (`thread.mcp.unexpected`, the console too) and a notice in the thread's stream.
+   * The init-frame check of a hosted Claude Code thread (os/hosted-mcp-policy.ts), on EVERY init frame.
+   * One `thread.mcp` line on the first frame and on a frame with something new. A warning (the
+   * `thread.mcp.unexpected` line, the console, and a notice in the thread that the journal keeps) for:
+   * a server Dispatch did not pass, an Artifact tool, an MCP tool of a server Dispatch did not pass,
+   * and a frame with no server list. Each name is reported once per process.
    */
-  private checkMcpServers(terminalId: string, expected: readonly string[], event: unknown): void {
-    const reported = initServerNames(event) ?? [];
-    const tools = forbiddenInitTools(event);
-    const extra = [...unexpectedServers(expected, reported), ...tools];
-    boxLog('thread.mcp', { thread: terminalId, harness: 'claude-code', servers: reported, expected: [...expected], unexpected: extra });
+  private checkMcpServers(terminalId: string, session: Session, event: unknown): void {
+    const NO_LIST_KEY = '(no server list)'; // in `mcpWarned`: the no-list warning was given
+    const expected = session.mcpExpected ?? [];
+    const seen = (session.mcpWarned ??= new Set<string>());
+    const first = !session.mcpChecked;
+    session.mcpChecked = true;
+    const list = initServerNames(event);
+    const reported = list ?? [];
+    const tools = [...forbiddenInitTools(event), ...unexpectedInitMcpTools(expected, event)];
+    const all = [...unexpectedServers(expected, reported), ...tools];
+    const extra = all.filter((n) => !seen.has(n));
+    const noList = list === null && !seen.has(NO_LIST_KEY);
+    if (first || extra.length || noList) {
+      boxLog('thread.mcp', { thread: terminalId, harness: 'claude-code', servers: list ?? null, expected: [...expected], unexpected: all });
+    }
+    if (noList) {
+      seen.add(NO_LIST_KEY);
+      boxLog('thread.mcp.unexpected', { thread: terminalId, harness: 'claude-code', reason: 'no server list in the init frame' }, 'warn');
+      console.warn(`[mcp] WARNING thread ${terminalId}: the init frame has no server list; the servers could not be checked`);
+      this.postEvent(terminalId, { type: 'system', subtype: 'dispatch_notice', level: 'warning', message: NO_SERVER_LIST_NOTICE });
+    }
     if (extra.length === 0) return;
-    boxLog('thread.mcp.unexpected', { thread: terminalId, harness: 'claude-code', unexpected: extra, ...(tools.length ? { tools } : {}) }, 'warn');
-    console.warn(`[mcp] WARNING thread ${terminalId}: the harness loaded MCP servers Dispatch did not pass: ${extra.join(', ')}`);
+    for (const n of extra) seen.add(n);
+    const newTools = tools.filter((t) => extra.includes(t));
+    boxLog('thread.mcp.unexpected', { thread: terminalId, harness: 'claude-code', unexpected: extra, ...(newTools.length ? { tools: newTools } : {}) }, 'warn');
+    console.warn(`[mcp] WARNING thread ${terminalId}: the harness loaded MCP servers or tools Dispatch did not pass: ${extra.join(', ')}`);
     this.postEvent(terminalId, { type: 'system', subtype: 'dispatch_notice', level: 'warning', message: unexpectedServersNotice(extra) });
   }
 

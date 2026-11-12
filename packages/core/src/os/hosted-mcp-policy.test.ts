@@ -7,7 +7,7 @@ import type { McpServerSpec } from '../mcp/injection.js';
 import { composeInjection } from '../mcp/injection.js';
 import {
   allowListFor, applyBusinessDropIn, BUSINESS_DROPIN_FILE, businessDropIn, dropInFolderProblem, hostedServerSpecs,
-  forbiddenInitTools, initServerNames, unexpectedServers, unexpectedServersNotice, CLAUDE_HOSTED_MCP_ARGS, CLAUDE_HOSTED_MCP_ENV,
+  forbiddenInitTools, initServerNames, unexpectedInitMcpTools, unexpectedServers, unexpectedServersNotice, CLAUDE_HOSTED_MCP_ARGS, CLAUDE_HOSTED_MCP_ENV,
 } from './hosted-mcp-policy.js';
 import { BUSINESS_MCP_POLICY_MISSING, enforceHostedMcp } from '../sessions/spawn-injection.js';
 import { hostedClaudeArgs, hostedClaudeEnv } from '../sessions/thread-spawner.js';
@@ -190,6 +190,9 @@ describe('the init-frame check', () => {
     expect(unexpectedServers(['dispatch', 'acumatica'], ['dispatch', 'claude.ai Gmail'])).toEqual(['claude.ai Gmail']);
     expect(forbiddenInitTools({ tools: ['Bash', 'Read', 'Artifact', 'ArtifactComments', 'ArtifactData', 'mcp__dispatch__read_thread'] })).toEqual(['Artifact', 'ArtifactComments', 'ArtifactData']);
     expect(forbiddenInitTools({ tools: ['Bash'] })).toEqual([]);
+    expect(unexpectedInitMcpTools(['dispatch', 'plugin-previews', 'claude.ai x'], { tools: ['Bash', 'mcp__dispatch__read_thread', 'mcp__plugin-previews__preview', 'mcp__claude_ai_x__a', 'mcp__claude_ai_Gmail__send', 'mcp__evil__go'] }))
+      .toEqual(['mcp__claude_ai_Gmail__send', 'mcp__evil__go']);
+    expect(unexpectedInitMcpTools(['dispatch'], {})).toEqual([]);
     expect(unexpectedServersNotice(['claude.ai Gmail'])).toMatchInlineSnapshot(`"This thread's agent program loaded tools that the workspace did not give it: claude.ai Gmail. Do not use them for company data. Tell your administrator."`);
   });
 });

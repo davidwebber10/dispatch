@@ -15,6 +15,17 @@ describe('the hosted box log', () => {
     expect(lines[0]).not.toContain('AbCdEfGhIjKlMnOpQrSt');
   });
 
+  test('a thread id is kept (the warning must name its thread); a UUID in another field is still redacted', () => {
+    const lines: string[] = [];
+    setBoxLogForTest({ enabled: true, sink: (l) => lines.push(l) });
+    const id = '65302fe6-adf0-4c6c-abd9-c0a89e0c5fc0';
+    boxLog('thread.mcp.unexpected', { thread: id, note: `key ${id}`, thread2: { thread: 'token=sk-ant-oat01-AbCdEfGhIjKlMnOpQrSt' } });
+    const e = JSON.parse(lines[0]);
+    expect(e.thread).toBe(id);
+    expect(e.note).not.toContain(id);
+    expect(lines[0]).not.toContain('AbCdEfGhIjKlMnOpQrSt');
+  });
+
   test('a sink that throws never breaks the caller', () => {
     setBoxLogForTest({ enabled: true, sink: () => { throw new Error('closed'); } });
     expect(() => boxLog('x')).not.toThrow();

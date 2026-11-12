@@ -167,6 +167,29 @@ export function forbiddenInitTools(event: unknown): string[] {
   return tools.filter((t): t is string => typeof t === 'string' && /^Artifact/.test(t));
 }
 
+/** How Claude Code spells a server name inside a tool name (`mcp__<server>__<tool>`). */
+const toolServerSpelling = (name: string): string => name.replace(/[^A-Za-z0-9_-]/g, '_');
+
+/**
+ * MCP tools in the init frame's `tools` whose server Dispatch did not pass: a connector can show
+ * its tools there without being in `mcp_servers` (`mcp__claude_ai_Gmail__send_message`). A tool of an
+ * expected server is never flagged (the check is by server name; a server's own tool list is not).
+ */
+export function unexpectedInitMcpTools(expected: readonly string[], event: unknown): string[] {
+  const tools = (event as { tools?: unknown } | null)?.tools;
+  if (!Array.isArray(tools)) return [];
+  const ok = new Set(expected.map(toolServerSpelling));
+  return tools.filter((t): t is string => {
+    if (typeof t !== 'string') return false;
+    const m = /^mcp__(.+?)__/.exec(t);
+    return !!m && !ok.has(m[1]);
+  });
+}
+
+/** The line a thread shows when its harness's init frame names no MCP server list at all. */
+export const NO_SERVER_LIST_NOTICE = "This thread's agent program did not report which tools it loaded, so the workspace could not check them. "
+  + 'Do not use tools you do not recognise for company data. Tell your administrator.';
+
 /** The servers in `reported` that Dispatch did not pass. */
 export function unexpectedServers(expected: readonly string[], reported: readonly string[]): string[] {
   const ok = new Set(expected);
