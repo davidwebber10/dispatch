@@ -16,6 +16,7 @@ import { ThreadMenu, type ThreadMenuAt } from '../sidebar/ThreadMenu';
 import { ArchivedThreadsList } from './ArchivedThreadsList';
 import { isAgentStarted, startedByOf, startedByText } from '../../lib/startedBy';
 import { useMinuteTick } from '../../lib/autoArchive';
+import { fontVar } from '../../lib/fontSize';
 
 const FILTER_KEY = 'dispatch:mobileThreadsProject';
 // v2 (2026-11-06): the default became All. The old key mostly held 'mine' written automatically as
@@ -280,7 +281,7 @@ export function AllThreadsView({ onOpenThread, query = '', onQueryChange }: { on
   const tabBtn = (on: boolean): React.CSSProperties => ({
     padding: '8px 2px 7px', background: 'transparent', border: 'none', cursor: 'pointer', marginBottom: -1,
     borderBottom: on ? '2px solid var(--color-accent)' : '2px solid transparent',
-    color: on ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)', font: '700 12.5px var(--font-mono)', letterSpacing: '1px',
+    color: on ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)', font: `700 ${fontVar(12.5)} var(--font-mono)`, letterSpacing: '1px',
   });
 
   // The filters are the shared FilterBar (2026-11-07): one section per filter, a pill per filter
@@ -337,19 +338,19 @@ export function AllThreadsView({ onOpenThread, query = '', onQueryChange }: { on
         {tab === 'archived' ? <ArchivedThreadsList project={active.project} query={query} onOpenThread={onOpenThread} /> : <>
         {loading && !threads.length && <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><Spinner size={24} /></div>}
         {!loading && !threads.length && (
-          <div style={{ padding: '48px 28px', textAlign: 'center', color: 'var(--color-text-tertiary)', fontSize: 13.5, lineHeight: 1.6 }}>
+          <div style={{ padding: '48px 28px', textAlign: 'center', color: 'var(--color-text-tertiary)', fontSize: fontVar(13.5), lineHeight: 1.6 }}>
             <ChatsCircle size={30} style={{ opacity: 0.5 }} />
             <div style={{ marginTop: 10 }}>
               {withinHides > 0 ? `The filter "Active within: ${withinLabel}" hides ${withinHides} ${withinHides === 1 ? 'thread' : 'threads'}.`
                 : everyThread.length ? 'No threads match.' : 'No threads yet.'}
             </div>
             {withinHides > 0 && (
-              <button type="button" onClick={() => setWithin(null)} style={{ marginTop: 12, height: 34, padding: '0 14px', borderRadius: 'var(--radius-pill)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
+              <button type="button" onClick={() => setWithin(null)} style={{ marginTop: 12, height: 34, padding: '0 14px', borderRadius: 'var(--radius-pill)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', fontSize: fontVar(13), fontWeight: 500, cursor: 'pointer' }}>
                 Clear the filter
               </button>
             )}
             {otherFilter && otherCount > 0 && (
-              <button type="button" onClick={() => setStarter(otherFilter)} style={{ marginTop: 12, height: 34, padding: '0 14px', borderRadius: 'var(--radius-pill)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
+              <button type="button" onClick={() => setStarter(otherFilter)} style={{ marginTop: 12, height: 34, padding: '0 14px', borderRadius: 'var(--radius-pill)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', fontSize: fontVar(13), fontWeight: 500, cursor: 'pointer' }}>
                 {otherFilter === 'agents' ? `Show ${otherCount} agent ${otherCount === 1 ? 'thread' : 'threads'}` : `Show ${otherCount} of my threads`}
               </button>
             )}

@@ -4,6 +4,8 @@ import { useAuth } from '../../stores/auth';
 import { useTabs, findTerminal } from '../../stores/tabs';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import type { AuthRequest } from '../../api/types';
+import { fontVar, fontVarInput } from '../../lib/fontSize';
+import { PHONE_HEADER_H } from '../layout/headerButton';
 
 /**
  * Mirrors AUTH_SIGNALS in core's auth/url-detect.ts (web cannot import core). The
@@ -22,8 +24,8 @@ function isSignIn(req: AuthRequest): boolean {
   return AUTH_SIGNALS.some((s) => hay.includes(s));
 }
 
-const primary: React.CSSProperties = { height: 30, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: 12, cursor: 'pointer' };
-const ghost: React.CSSProperties = { height: 28, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-secondary)', fontSize: 12, cursor: 'pointer' };
+const primary: React.CSSProperties = { height: 30, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: fontVar(12), cursor: 'pointer' };
+const ghost: React.CSSProperties = { height: 28, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-secondary)', fontSize: fontVar(12), cursor: 'pointer' };
 
 export function AuthBanner() {
   // Select the STABLE array and derive here. A selector that returns `.filter(...)` hands
@@ -87,10 +89,10 @@ export function AuthBanner() {
   const signIn = isSignIn(req);
   const title = signIn ? 'Authentication required' : 'Link to open';
 
-  // The phone header is calc(50px + env(safe-area-inset-top)) tall, so on a phone the card
+  // The phone header is calc(PHONE_HEADER_H + env(safe-area-inset-top)) tall, so on a phone the card
   // starts under it (header and tab bar stay tappable) and spans the width instead of
   // floating centred at top:48 over the nav. Desktop keeps its centred overlay.
-  const belowHeader = 'calc(50px + env(safe-area-inset-top) + 6px)';
+  const belowHeader = `calc(${PHONE_HEADER_H} + env(safe-area-inset-top) + 6px)`;
   const tap = isMobile ? 44 : undefined;
   const tapBtn = (b: React.CSSProperties): React.CSSProperties => (tap ? { ...b, height: 'auto', minHeight: tap, minWidth: tap } : b);
   const label = agentLabel ? `${title} — ${agentLabel}` : title;
@@ -107,7 +109,7 @@ export function AuthBanner() {
         <button
           onClick={() => setMinimizedFor(null)}
           aria-label={`${signIn ? 'Sign-in pending' : 'Link to open'}${agentLabel ? ` — ${agentLabel}` : ''}`}
-          style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, minHeight: 44, padding: '0 10px 0 12px', background: 'none', border: 'none', color: 'var(--color-text-primary)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+          style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, minHeight: 44, padding: '0 10px 0 12px', background: 'none', border: 'none', color: 'var(--color-text-primary)', fontSize: fontVar(12), fontWeight: 600, cursor: 'pointer' }}
         >
           <span>{signIn ? '🔑' : '🔗'}</span>
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -132,9 +134,9 @@ export function AuthBanner() {
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
         <span style={{ color: 'var(--color-status-yellow)' }}>{signIn ? '🔑' : '🔗'}</span>
-        <span style={{ fontWeight: 600, fontSize: 13, minWidth: 0, overflowWrap: 'anywhere' }}>{label}</span>
+        <span style={{ fontWeight: 600, fontSize: fontVar(13), minWidth: 0, overflowWrap: 'anywhere' }}>{label}</span>
         {pending.length > 1 && (
-          <span style={{ font: '500 11px var(--font-mono)', color: 'var(--color-text-tertiary)', flexShrink: 0 }}>1 of {pending.length}</span>
+          <span style={{ font: `500 ${fontVar(11)} var(--font-mono)`, color: 'var(--color-text-tertiary)', flexShrink: 0 }}>1 of {pending.length}</span>
         )}
         <button onClick={() => setMinimizedFor(req.id)} aria-label="Minimize" title="Minimize" style={{ marginLeft: 'auto', flexShrink: 0, ...tapBtn(ghost) }}>
           –
@@ -145,9 +147,9 @@ export function AuthBanner() {
           {dismissLabel}
         </button>
       </div>
-      {dismissErr && <div role="alert" style={{ marginTop: 6, fontSize: 11, color: 'var(--color-status-red)', overflowWrap: 'anywhere' }}>{dismissErr}</div>}
+      {dismissErr && <div role="alert" style={{ marginTop: 6, fontSize: fontVar(11), color: 'var(--color-status-red)', overflowWrap: 'anywhere' }}>{dismissErr}</div>}
       <div data-testid="auth-banner-body" style={{ minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain' }}>
-        <div data-testid="auth-banner-url" style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-secondary)', margin: '8px 0', wordBreak: 'break-all', overflowWrap: 'anywhere' }}>{req.url}</div>
+        <div data-testid="auth-banner-url" style={{ font: `400 ${fontVar(11)} var(--font-mono)`, color: 'var(--color-text-secondary)', margin: '8px 0', wordBreak: 'break-all', overflowWrap: 'anywhere' }}>{req.url}</div>
         {/* A real anchor (not window.open) so a PWA opens the SYSTEM browser — Safari
             on iOS, the default browser on Mac — instead of an in-app browser. On the
             daemon's own device the localhost OAuth callback then returns automatically. */}
@@ -162,7 +164,7 @@ export function AuthBanner() {
         </a>
         {signIn && (
           <>
-            <div style={{ marginTop: 10, fontSize: 11, color: 'var(--color-text-tertiary)' }}>On this Mac it returns automatically. From another device (e.g. iPhone), copy the <code>localhost</code> URL Safari lands on and paste it here:</div>
+            <div style={{ marginTop: 10, fontSize: fontVar(11), color: 'var(--color-text-tertiary)' }}>On this Mac it returns automatically. From another device (e.g. iPhone), copy the <code>localhost</code> URL Safari lands on and paste it here:</div>
             <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
               {/* Pasting IS the action: a phone user's only step is paste, so forward on paste
                   rather than making them find and tap Forward as well. */}
@@ -174,11 +176,11 @@ export function AuthBanner() {
                 placeholder="http://localhost:…/callback?code=…"
                 autoCapitalize="off" autoCorrect="off" spellCheck={false} inputMode="url"
                 // 16px on a phone: anything smaller makes iOS zoom the page on focus.
-                style={{ flex: 1, minWidth: 0, height: tap ?? 30, padding: '0 10px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)', fontWeight: 400, fontSize: isMobile ? 16 : 11 }}
+                style={{ flex: 1, minWidth: 0, height: tap ?? 30, padding: '0 10px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)', fontWeight: 400, fontSize: isMobile ? fontVarInput(16) : fontVar(11) }}
               />
               <button onClick={() => void submit()} disabled={busy} style={{ flexShrink: 0, ...tapBtn(ghost) }}>{busy ? 'Forwarding…' : 'Forward'}</button>
             </div>
-            {err && <div role="alert" style={{ marginTop: 6, fontSize: 11, color: 'var(--color-status-red)', overflowWrap: 'anywhere' }}>{err}</div>}
+            {err && <div role="alert" style={{ marginTop: 6, fontSize: fontVar(11), color: 'var(--color-status-red)', overflowWrap: 'anywhere' }}>{err}</div>}
           </>
         )}
       </div>

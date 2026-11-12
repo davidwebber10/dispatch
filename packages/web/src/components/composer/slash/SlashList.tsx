@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react';
+import { fontVar } from '../../../lib/fontSize';
 
 /** One line in the "/" menu: a command, or (after `/model `) a model or effort to pick. */
 export interface SlashItem {
@@ -34,7 +35,7 @@ export function SlashList({ items, active, onHover, mobile, footer = true }: {
   const row = (isActive: boolean, disabled: boolean): CSSProperties => ({
     display: 'flex', alignItems: 'baseline', gap: 10, width: '100%', padding: mobile ? '12px 12px' : '6px 10px', border: 'none', borderRadius: 'var(--radius-md)',
     background: isActive && !disabled ? 'var(--color-hover)' : 'none', textAlign: 'left',
-    color: disabled ? 'var(--color-text-tertiary)' : 'var(--color-text-primary)', cursor: disabled ? 'default' : 'pointer', font: `500 ${mobile ? 15 : 13}px var(--font-sans)`,
+    color: disabled ? 'var(--color-text-tertiary)' : 'var(--color-text-primary)', cursor: disabled ? 'default' : 'pointer', font: `500 ${fontVar(mobile ? 15 : 13)} var(--font-sans)`,
   });
   return (
     <div role="listbox" aria-label="Commands" style={{ display: 'flex', flexDirection: 'column' }}>
@@ -50,14 +51,14 @@ export function SlashList({ items, active, onHover, mobile, footer = true }: {
           onClick={() => { if (!it.disabledReason) it.run(); }}
           style={row(i === active, !!it.disabledReason)}
         >
-          <span style={{ font: '600 13px var(--font-mono)', flex: 'none' }}>{it.label}</span>
-          <span style={{ flex: 1, minWidth: 0, font: '400 12px var(--font-sans)', color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <span style={{ font: `600 ${fontVar(13)} var(--font-mono)`, flex: 'none' }}>{it.label}</span>
+          <span style={{ flex: 1, minWidth: 0, font: `400 ${fontVar(12)} var(--font-sans)`, color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {it.disabledReason ?? it.description}
           </span>
-          {it.current && <span style={{ font: '400 11px var(--font-mono)', color: 'var(--color-accent)' }}>current</span>}
+          {it.current && <span style={{ font: `400 ${fontVar(11)} var(--font-mono)`, color: 'var(--color-accent)' }}>current</span>}
         </button>
       ))}
-      {footer && <div style={{ padding: '6px 10px 2px', font: '400 11px var(--font-sans)', color: 'var(--color-text-tertiary)' }}>{ESCAPE_NOTE}</div>}
+      {footer && <div style={{ padding: '6px 10px 2px', font: `400 ${fontVar(11)} var(--font-sans)`, color: 'var(--color-text-tertiary)' }}>{ESCAPE_NOTE}</div>}
     </div>
   );
 }

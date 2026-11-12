@@ -9,6 +9,7 @@ import {
   type SlashHarness, type SlashSurface,
 } from '../../../lib/slash';
 import { SlashList, type SlashItem } from './SlashList';
+import { fontVar } from '../../../lib/fontSize';
 
 /**
  * The "/" menu of Dispatch commands (slash menu, 2026-11-06). One hook per composer:
@@ -171,14 +172,14 @@ export function useSlashMenu(o: UseSlashMenuOptions): SlashMenu {
       {items.length > 0 ? (
         <div style={{ position: 'absolute', left: 0, right: 0, bottom: 'calc(100% + 6px)', zIndex: 40, padding: 6, maxHeight: 320, overflowY: 'auto', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', boxShadow: '0 12px 34px -10px var(--color-shadow)' }}>
           {notice && (
-            <div role={notice.error ? 'alert' : 'status'} style={{ padding: '4px 10px 6px', font: '400 12.5px var(--font-sans)', lineHeight: 1.4, color: notice.error ? 'var(--color-status-red)' : 'var(--color-text-secondary)' }}>
+            <div role={notice.error ? 'alert' : 'status'} style={{ padding: '4px 10px 6px', font: `400 ${fontVar(12.5)} var(--font-sans)`, lineHeight: 1.4, color: notice.error ? 'var(--color-status-red)' : 'var(--color-text-secondary)' }}>
               {notice.text}
             </div>
           )}
           <SlashList items={items} active={active} onHover={setActive} mobile={mobile} />
         </div>
       ) : notice ? (
-        <div role={notice.error ? 'alert' : 'status'} style={{ position: 'absolute', left: 6, right: 6, bottom: 'calc(100% + 4px)', font: '400 12.5px var(--font-sans)', lineHeight: 1.4, color: notice.error ? 'var(--color-status-red)' : 'var(--color-text-secondary)' }}>
+        <div role={notice.error ? 'alert' : 'status'} style={{ position: 'absolute', left: 6, right: 6, bottom: 'calc(100% + 4px)', font: `400 ${fontVar(12.5)} var(--font-sans)`, lineHeight: 1.4, color: notice.error ? 'var(--color-status-red)' : 'var(--color-text-secondary)' }}>
           {notice.text}
         </div>
       ) : null}

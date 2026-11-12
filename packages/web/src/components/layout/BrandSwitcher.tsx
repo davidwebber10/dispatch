@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Terminal } from '@phosphor-icons/react';
 import { useServers, currentServer, currentLabel } from '../../stores/servers';
 import { useUpdate } from '../../stores/update';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * The rail's logo button. Compact by necessity — it lives in the 64px icon rail —
@@ -39,10 +40,10 @@ export function BrandSwitcher() {
           <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 90 }} />
           <div style={{ position: 'absolute', top: 0, left: 40, zIndex: 91, minWidth: 250, background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', padding: 4, boxShadow: '0 20px 50px -20px var(--color-shadow-strong)' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, padding: '6px 8px 5px' }}>
-              <span style={{ fontWeight: 600, fontSize: 13, letterSpacing: '-0.3px', color: 'var(--color-text-primary)' }}>Dispatch</span>
-              {version && <span title="Daemon version" style={{ font: '500 10px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>v{version}</span>}
+              <span style={{ fontWeight: 600, fontSize: fontVar(13), letterSpacing: '-0.3px', color: 'var(--color-text-primary)' }}>Dispatch</span>
+              {version && <span title="Daemon version" style={{ font: `500 ${fontVar(10)} var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>v{version}</span>}
             </div>
-            <div style={{ font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)', padding: '2px 8px 5px' }}>SERVER</div>
+            <div style={{ font: `500 ${fontVar(10)} var(--font-mono)`, letterSpacing: '1.2px', color: 'var(--color-text-tertiary)', padding: '2px 8px 5px' }}>SERVER</div>
             {items.map((s) => {
               const active = s.origin === origin;
               return (
@@ -53,8 +54,8 @@ export function BrandSwitcher() {
                 }}>
                   <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: active ? 'var(--color-accent)' : 'var(--color-text-faint)' }} />
                   <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                    <span style={{ fontSize: 13, fontWeight: active ? 600 : 400 }}>Dispatch {s.label}</span>
-                    <span style={{ font: '400 10px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{new URL(s.origin).host}</span>
+                    <span style={{ fontSize: fontVar(13), fontWeight: active ? 600 : 400 }}>Dispatch {s.label}</span>
+                    <span style={{ font: `400 ${fontVar(10)} var(--font-mono)`, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{new URL(s.origin).host}</span>
                   </span>
                 </button>
               );

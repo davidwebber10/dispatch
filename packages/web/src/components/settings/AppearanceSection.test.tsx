@@ -220,3 +220,30 @@ describe('AppearanceSection — pinned files toggle', () => {
     expect(useSettings.getState().sidebarMaxFiles).toBe(10);
   });
 });
+
+describe('AppearanceSection — text scale', () => {
+  beforeEach(() => { useSettings.getState().setTextScale(1); });
+
+  it('the slider shows 100% and moves in 5% steps from 75% to 150%', () => {
+    render(<AppearanceSection />);
+    const slider = screen.getByLabelText('Text scale');
+    expect(slider).toHaveAttribute('step', '5');
+    expect(slider).toHaveAttribute('min', '75');
+    expect(slider).toHaveAttribute('max', '150');
+    expect(screen.getByText('100%')).toBeInTheDocument();
+    fireEvent.change(slider, { target: { value: '125' } });
+    expect(useSettings.getState().textScale).toBe(1.25);
+    expect(screen.getByText('125%')).toBeInTheDocument();
+  });
+
+  it('the reset button is off at 100% and puts the scale back to 100%', () => {
+    render(<AppearanceSection />);
+    expect(screen.getByLabelText('Reset Text scale')).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Text scale'), { target: { value: '90' } });
+    const reset = screen.getByLabelText('Reset Text scale');
+    expect(reset).not.toBeDisabled();
+    fireEvent.click(reset);
+    expect(useSettings.getState().textScale).toBe(1);
+    expect(screen.getByText('100%')).toBeInTheDocument();
+  });
+});

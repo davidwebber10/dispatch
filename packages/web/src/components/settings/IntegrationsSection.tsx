@@ -13,11 +13,12 @@ import {
 } from './ui';
 import { useSubPage } from './subPageNav';
 import { Button } from '../ui';
+import { fontVar } from '../../lib/fontSize';
 
-const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)', fontSize: 11.5 };
+const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)', fontSize: fontVar(11.5) };
 const oneLine: React.CSSProperties = { display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
 const codeBlock: React.CSSProperties = { ...mono, color: 'var(--color-text-body)', overflowWrap: 'anywhere', lineHeight: 1.5 };
-const errText: React.CSSProperties = { fontSize: 12, color: 'var(--color-status-red)', padding: '0 4px' };
+const errText: React.CSSProperties = { fontSize: fontVar(12), color: 'var(--color-status-red)', padding: '0 4px' };
 
 function parseKV(text: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -35,9 +36,9 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   const id = `integration-field-${label.toLowerCase()}`;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-      <label htmlFor={id} style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>{label}</label>
+      <label htmlFor={id} style={{ fontSize: fontVar(12.5), color: 'var(--color-text-secondary)' }}>{label}</label>
       {children(id)}
-      {hint && <span style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>{hint}</span>}
+      {hint && <span style={{ fontSize: fontVar(11.5), color: 'var(--color-text-tertiary)' }}>{hint}</span>}
     </div>
   );
 }
@@ -159,7 +160,7 @@ export function IntegrationsSection() {
                     return (
                       <div key={k} style={{ display: 'flex', gap: 10, minWidth: 0 }}>
                         <span style={{ ...mono, color: 'var(--color-text-secondary)', flexShrink: 0 }}>{k}</span>
-                        {shown ? <span style={{ ...codeBlock, minWidth: 0 }}>{shown}</span> : <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>Set</span>}
+                        {shown ? <span style={{ ...codeBlock, minWidth: 0 }}>{shown}</span> : <span style={{ fontSize: fontVar(12), color: 'var(--color-text-tertiary)' }}>Set</span>}
                       </div>
                     );
                   })}
@@ -248,7 +249,7 @@ export function IntegrationsSection() {
             </Field>
           </>
         )}
-        {sheetErr && <div style={{ fontSize: 12, color: 'var(--color-status-red)' }}>{sheetErr}</div>}
+        {sheetErr && <div style={{ fontSize: fontVar(12), color: 'var(--color-status-red)' }}>{sheetErr}</div>}
         <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
           <Button onClick={() => setSheet(false)} variant="ghost" size="sm" style={{ flex: 1, height: isMobile ? 40 : 32 }}>Cancel</Button>
           <Button aria-label="Add integration" onClick={() => void add()} disabled={!canAdd} variant="primary" size="sm" style={{ flex: 1, height: isMobile ? 40 : 32 }}>{busy ? 'Adding…' : 'Add'}</Button>

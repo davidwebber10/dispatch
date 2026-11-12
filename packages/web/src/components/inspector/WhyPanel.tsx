@@ -8,6 +8,7 @@ import { api } from '../../api/client';
 import type { ThreadDiagnostics } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
 import { useUI } from '../../stores/ui';
+import { fontVar } from '../../lib/fontSize';
 
 type Explanation = NonNullable<ThreadDiagnostics['explanation']>;
 type Step = Explanation['nextSteps'][number];
@@ -15,8 +16,8 @@ type Step = Explanation['nextSteps'][number];
 /** The events the panel lists. The route sends up to 200; `dispatch doctor --json` prints all of them. */
 const EVENT_ROWS = 20;
 
-const caption: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', margin: '16px 0 6px' };
-const stepButton: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, minHeight: 34, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13, cursor: 'pointer' };
+const caption: React.CSSProperties = { font: `500 ${fontVar(10)} var(--font-mono)`, letterSpacing: '1.2px', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', margin: '16px 0 6px' };
+const stepButton: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, minHeight: 34, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: fontVar(13), cursor: 'pointer' };
 const iconButton: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, width: 30, height: 30, padding: 0, background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-secondary)', cursor: 'pointer' };
 const th: React.CSSProperties = { textAlign: 'left', fontWeight: 500, color: 'var(--color-text-tertiary)', padding: '4px 8px 4px 0', borderBottom: '1px solid var(--color-border)', whiteSpace: 'nowrap' };
 const td: React.CSSProperties = { padding: '4px 8px 4px 0', borderBottom: '1px solid var(--color-border)', verticalAlign: 'top', overflowWrap: 'anywhere' };
@@ -120,7 +121,7 @@ export function WhyPanel({ terminalId, sessionId, onClose }: { terminalId: strin
 
   if (!data) {
     return (
-      <div style={{ padding: 16, fontSize: 13 }}>
+      <div style={{ padding: 16, fontSize: fontVar(13) }}>
         {loadError ? (
           <div role="alert" style={alertBox}>
             <WarningCircle size={18} aria-hidden style={{ flexShrink: 0, color: 'var(--color-status-red)', marginTop: 1 }} />
@@ -145,14 +146,14 @@ export function WhyPanel({ terminalId, sessionId, onClose }: { terminalId: strin
   const events = data.events ?? [];
 
   return (
-    <div style={{ padding: 16, fontSize: 13, lineHeight: 1.45, color: 'var(--color-text-primary)' }}>
+    <div style={{ padding: 16, fontSize: fontVar(13), lineHeight: 1.45, color: 'var(--color-text-primary)' }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
         {e && <Glyph size={22} weight="regular" aria-hidden style={{ flexShrink: 0, color, marginTop: 1 }} />}
         <div style={{ flex: 1, minWidth: 0 }}>
           {e ? (
             <>
-              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, lineHeight: 1.3, overflowWrap: 'anywhere' }}>{e.headline}</h3>
-              {e.since && <div style={{ marginTop: 2, color: 'var(--color-text-secondary)', fontSize: 12 }}>Since {localTime(e.since, true)}</div>}
+              <h3 style={{ margin: 0, fontSize: fontVar(16), fontWeight: 600, lineHeight: 1.3, overflowWrap: 'anywhere' }}>{e.headline}</h3>
+              {e.since && <div style={{ marginTop: 2, color: 'var(--color-text-secondary)', fontSize: fontVar(12) }}>Since {localTime(e.since, true)}</div>}
             </>
           ) : (
             <div role="alert" style={alertBox}>The daemon gave no explanation. Update Dispatch, then restart the daemon.</div>
@@ -165,7 +166,7 @@ export function WhyPanel({ terminalId, sessionId, onClose }: { terminalId: strin
 
       {loadError && <div role="alert" style={{ ...alertBox, marginTop: 12 }}>Could not read the thread state: {loadError}</div>}
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 18px', marginTop: 12, fontSize: 12 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 18px', marginTop: 12, fontSize: fontVar(12) }}>
         {data.status && <Fact label="Status" value={STATUS_WORDS[data.status] ?? data.status} />}
         {data.transport && <Fact label="Transport" value={data.transport === 'structured' ? 'Pretty' : 'CLI'} />}
         {data.process !== undefined && <Fact label="Process" value={data.process ? (data.process.alive ? 'Running' : 'Not running') : 'Not known'} />}
@@ -192,7 +193,7 @@ export function WhyPanel({ terminalId, sessionId, onClose }: { terminalId: strin
       {stepError && <div role="alert" style={{ ...alertBox, marginTop: 10 }}>{stepError}</div>}
 
       {data.captureFailure && (
-        <div style={{ marginTop: 12, color: 'var(--color-text-secondary)', fontSize: 12 }}>
+        <div style={{ marginTop: 12, color: 'var(--color-text-secondary)', fontSize: fontVar(12) }}>
           Capture failure: {data.captureFailure.reason} ({data.captureFailure.occurrences} times, last {localTime(data.captureFailure.observed_at, true)})
         </div>
       )}
@@ -200,7 +201,7 @@ export function WhyPanel({ terminalId, sessionId, onClose }: { terminalId: strin
       {deliveries.length > 0 && (
         <>
           <div style={caption}>Deliveries</div>
-          <table aria-label="Deliveries" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <table aria-label="Deliveries" style={{ width: '100%', borderCollapse: 'collapse', fontSize: fontVar(12) }}>
             <thead>
               <tr><th style={th}>State</th><th style={th}>Thread</th><th style={th}>Kind</th><th style={th}>Tries</th><th style={th}>Note</th></tr>
             </thead>
@@ -222,10 +223,10 @@ export function WhyPanel({ terminalId, sessionId, onClose }: { terminalId: strin
 
       <div style={caption}>Last events</div>
       {events.length === 0 ? (
-        <div style={{ color: 'var(--color-text-secondary)', fontSize: 12 }}>The daemon recorded no lifecycle event for this thread.</div>
+        <div style={{ color: 'var(--color-text-secondary)', fontSize: fontVar(12) }}>The daemon recorded no lifecycle event for this thread.</div>
       ) : (
         <>
-          <table aria-label="Last lifecycle events" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <table aria-label="Last lifecycle events" style={{ width: '100%', borderCollapse: 'collapse', fontSize: fontVar(12) }}>
             <thead>
               <tr><th style={th}>Time</th><th style={th}>Event</th><th style={th}>Status</th><th style={th}>Result</th></tr>
             </thead>
@@ -233,14 +234,14 @@ export function WhyPanel({ terminalId, sessionId, onClose }: { terminalId: strin
               {events.slice(0, EVENT_ROWS).map((x, n) => (
                 <tr key={n}>
                   <td style={{ ...td, whiteSpace: 'nowrap', color: 'var(--color-text-secondary)', fontVariantNumeric: 'tabular-nums' }} title={x.observed_at}>{localTime(x.observed_at, false)}</td>
-                  <td style={{ ...td, fontFamily: 'var(--font-mono)', fontSize: 11 }}>{x.event_type}</td>
+                  <td style={{ ...td, fontFamily: 'var(--font-mono)', fontSize: fontVar(11) }}>{x.event_type}</td>
                   <td style={td}>{x.status ?? ''}</td>
                   <td style={{ ...td, paddingRight: 0, color: x.disposition === 'applied' || x.disposition === 'inferred' ? 'var(--color-text-secondary)' : 'var(--color-status-amber)' }}>{x.disposition}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-          {events.length > EVENT_ROWS && <div style={{ marginTop: 6, color: 'var(--color-text-tertiary)', fontSize: 11.5 }}>The {EVENT_ROWS} newest of {events.length} events.</div>}
+          {events.length > EVENT_ROWS && <div style={{ marginTop: 6, color: 'var(--color-text-tertiary)', fontSize: fontVar(11.5) }}>The {EVENT_ROWS} newest of {events.length} events.</div>}
         </>
       )}
     </div>

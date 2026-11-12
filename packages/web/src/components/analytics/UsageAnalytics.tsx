@@ -16,6 +16,8 @@ import {
 import type {
   AnalyticsPoint, AnalyticsRecords, AnalyticsSummary, AnalyticsTopRow,
 } from '../../api/types';
+import { fontVar } from '../../lib/fontSize';
+import { useSettings } from '../../stores/settings';
 
 /* ------------------------------------------------------------------- data */
 
@@ -115,6 +117,8 @@ export function UsageAnalytics({ from, projectId, provider, filtered }: {
   // Recharts takes real colors, read from the theme tokens; read again when the theme changes.
   const themeId = useActiveTheme((s) => s.theme.id);
   const theme = useMemo(() => resolveChartTheme(), [themeId]);
+  // Chart text is SVG that Recharts sizes and measures itself, so it gets a number: the pixel size times the text scale.
+  const textScale = useSettings((s) => s.textScale);
 
   const [data, setData] = useState<Loaded | null>(null);
   const [domain, setDomain] = useState<Domain | null>(null);
@@ -284,11 +288,11 @@ export function UsageAnalytics({ from, projectId, provider, filtered }: {
   const noUsageTitle = 'No usage was ever reported for these turns, so there is nothing to count. This is not a measured zero.';
 
   const chartH = isMobile ? 200 : 240;
-  const axisTick = { fill: theme.muted, fontSize: 11 };
+  const axisTick = { fill: theme.muted, fontSize: 11 * textScale };
   const tokenTooltip = chartTooltip(theme, (v, name) => [fmtTokens(Number(v)), String(name)]);
   const legend = (
     <Legend
-      formatter={(v: string) => <span style={{ color: theme.muted, fontSize: 11 }}>{v}</span>}
+      formatter={(v: string) => <span style={{ color: theme.muted, fontSize: fontVar(11) }}>{v}</span>}
       wrapperStyle={{ paddingTop: 4 }}
     />
   );
@@ -299,7 +303,7 @@ export function UsageAnalytics({ from, projectId, provider, filtered }: {
 
       {isEmpty ? (
         <div style={{ ...panel, padding: 24 }}>
-          <div style={{ fontSize: 15, color: 'var(--color-text-primary)' }}>
+          <div style={{ fontSize: fontVar(15), color: 'var(--color-text-primary)' }}>
             {filtered
               ? `No turns match these filters — analytics started ${trackingDate}.`
               : `No turns recorded yet — analytics started ${trackingDate}.`}
@@ -352,7 +356,7 @@ export function UsageAnalytics({ from, projectId, provider, filtered }: {
                   <BarChart data={tokensChart.rows} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                     <CartesianGrid stroke={theme.grid} vertical={false} />
                     <XAxis dataKey="day" tickFormatter={fmtDay} tick={axisTick} tickLine={false} axisLine={{ stroke: theme.grid }} />
-                    <YAxis tickFormatter={fmtTokens} tick={axisTick} tickLine={false} axisLine={false} width={48} />
+                    <YAxis tickFormatter={fmtTokens} tick={axisTick} tickLine={false} axisLine={false} width={Math.round(48 * textScale)} />
                     {tokenTooltip}
                     {tokensChart.keys.length > 1 && legend}
                     {tokensChart.keys.map((k) => (
@@ -377,7 +381,7 @@ export function UsageAnalytics({ from, projectId, provider, filtered }: {
                   <LineChart data={outputChart.rows} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                     <CartesianGrid stroke={theme.grid} vertical={false} />
                     <XAxis dataKey="day" tickFormatter={fmtDay} tick={axisTick} tickLine={false} axisLine={{ stroke: theme.grid }} />
-                    <YAxis tickFormatter={fmtTokens} tick={axisTick} tickLine={false} axisLine={false} width={48} />
+                    <YAxis tickFormatter={fmtTokens} tick={axisTick} tickLine={false} axisLine={false} width={Math.round(48 * textScale)} />
                     {tokenTooltip}
                     {/* One series, so the title names it and no legend is needed. */}
                     <Line type="monotone" dataKey="output" name="output tokens" stroke={SERIES[0]} strokeWidth={2} dot={false} isAnimationActive={false} />
@@ -393,7 +397,7 @@ export function UsageAnalytics({ from, projectId, provider, filtered }: {
                   <BarChart data={outcomeChart.rows} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                     <CartesianGrid stroke={theme.grid} vertical={false} />
                     <XAxis dataKey="day" tickFormatter={fmtDay} tick={axisTick} tickLine={false} axisLine={{ stroke: theme.grid }} />
-                    <YAxis allowDecimals={false} tick={axisTick} tickLine={false} axisLine={false} width={36} />
+                    <YAxis allowDecimals={false} tick={axisTick} tickLine={false} axisLine={false} width={Math.round(36 * textScale)} />
                     {chartTooltip(theme)}
                     {outcomeChart.keys.length > 1 && legend}
                     {outcomeChart.keys.map((k) => (
@@ -422,7 +426,7 @@ export function UsageAnalytics({ from, projectId, provider, filtered }: {
                   <BarChart data={durationChart.rows} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                     <CartesianGrid stroke={theme.grid} vertical={false} />
                     <XAxis dataKey="day" tickFormatter={fmtDay} tick={axisTick} tickLine={false} axisLine={{ stroke: theme.grid }} />
-                    <YAxis tickFormatter={(v: number) => fmtSeconds(v)} tick={axisTick} tickLine={false} axisLine={false} width={48} />
+                    <YAxis tickFormatter={(v: number) => fmtSeconds(v)} tick={axisTick} tickLine={false} axisLine={false} width={Math.round(48 * textScale)} />
                     {chartTooltip(theme, (v) => [fmtSeconds(Number(v)), 'avg turn'])}
                     {/* One series, so the title names it and no legend is needed. */}
                     <Bar dataKey="seconds" name="avg turn duration" fill={SERIES[0]} radius={[4, 4, 0, 0]} isAnimationActive={false} />
@@ -467,9 +471,9 @@ export function UsageAnalytics({ from, projectId, provider, filtered }: {
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10, ...muted }}>
-                <span style={{ font: '400 10px var(--font-mono)' }}>less</span>
+                <span style={{ font: `400 ${fontVar(10)} var(--font-mono)` }}>less</span>
                 {HEAT.map((c) => <span key={c} style={{ width: 11, height: 11, borderRadius: 'var(--radius-xs)', background: c }} />)}
-                <span style={{ font: '400 10px var(--font-mono)' }}>more</span>
+                <span style={{ font: `400 ${fontVar(10)} var(--font-mono)` }}>more</span>
               </div>
             </Block>
           </div>
@@ -519,7 +523,7 @@ function Record({ label, value }: { label: string; value: string }) {
   return (
     <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, borderBottom: '1px solid var(--color-border)', padding: '6px 0' }}>
       <span style={{ ...muted }}>{label}</span>
-      <span style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)' }}>{value}</span>
+      <span style={{ font: `400 ${fontVar(11.5)} var(--font-mono)`, color: 'var(--color-text-secondary)' }}>{value}</span>
     </div>
   );
 }
@@ -535,13 +539,14 @@ function RankedBars({ rows, color, theme, height }: {
   theme: ChartTheme;
   height: number;
 }) {
+  const textScale = useSettings((s) => s.textScale);
   if (rows.length === 0) return <NoData height={height} />;
   return (
     <ResponsiveContainer width="100%" height={Math.max(height, rows.length * 26)} minHeight={height}>
       <BarChart data={rows} layout="vertical" margin={{ top: 0, right: 12, left: 0, bottom: 0 }}>
         <CartesianGrid stroke={theme.grid} horizontal={false} />
-        <XAxis type="number" tickFormatter={fmtTokens} tick={{ fill: theme.muted, fontSize: 11 }} tickLine={false} axisLine={false} />
-        <YAxis type="category" dataKey="label" width={116} tick={{ fill: theme.muted, fontSize: 11 }} tickLine={false} axisLine={false} />
+        <XAxis type="number" tickFormatter={fmtTokens} tick={{ fill: theme.muted, fontSize: 11 * textScale }} tickLine={false} axisLine={false} />
+        <YAxis type="category" dataKey="label" width={Math.round(116 * textScale)} tick={{ fill: theme.muted, fontSize: 11 * textScale }} tickLine={false} axisLine={false} />
         {chartTooltip(theme, (v) => [fmtTokens(Number(v)), 'tokens'])}
         <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={14} isAnimationActive={false}>
           {rows.map((r) => <Cell key={r.key} fill={color(r.key)} />)}

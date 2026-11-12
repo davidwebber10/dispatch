@@ -5,6 +5,7 @@ import { useUpdate } from '../../stores/update';
 import { Spinner } from '../common/Spinner';
 import { reloadFresh } from '../../lib/shellCache';
 import type { UpdateProgress, UpdateStepName } from '../../api/types';
+import { fontVar } from '../../lib/fontSize';
 
 /** The page reload, as a seam the tests replace. */
 export const pageReload = { run: () => { void reloadFresh(); } };
@@ -49,7 +50,7 @@ function Elapsed({ since }: { since: string | null }) {
   useEffect(() => { const t = setInterval(() => setNow((n) => n + 1), 1000); return () => clearInterval(t); }, []);
   if (!since) return null;
   const s = Math.max(0, Math.floor((Date.now() - Date.parse(since)) / 1000));
-  return <span style={{ font: '400 12px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{Math.floor(s / 60)}:{String(s % 60).padStart(2, '0')}</span>;
+  return <span style={{ font: `400 ${fontVar(12)} var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>{Math.floor(s / 60)}:{String(s % 60).padStart(2, '0')}</span>;
 }
 
 function StepList({ p, failed }: { p: UpdateProgress; failed: boolean }) {
@@ -61,13 +62,13 @@ function StepList({ p, failed }: { p: UpdateProgress; failed: boolean }) {
         const state = failed && k === at ? 'failed' : k < at || (k === at && p.state === 'done') ? 'done' : k === at ? 'current' : 'pending';
         const color = state === 'failed' ? 'var(--color-status-red)' : state === 'pending' ? 'var(--color-text-tertiary)' : 'var(--color-text-primary)';
         return (
-          <li key={step} style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 13, color }}>
+          <li key={step} style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: fontVar(13), color }}>
             <span style={{ width: 16, display: 'flex', justifyContent: 'center' }}>
               {state === 'current' ? <Spinner size={14} /> : state === 'failed' ? <XCircle size={16} weight="fill" />
                 : skipped ? <MinusCircle size={16} /> : state === 'done' ? <CheckCircle size={16} weight="fill" color="var(--color-accent)" /> : <Circle size={16} />}
             </span>
             <span>{STEP_LABEL[step]}</span>
-            {skipped && <span style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>· skipped, no changes</span>}
+            {skipped && <span style={{ fontSize: fontVar(11.5), color: 'var(--color-text-tertiary)' }}>· skipped, no changes</span>}
           </li>
         );
       })}
@@ -79,13 +80,13 @@ function LogBox({ lines }: { lines: string[] }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => { if (ref.current) ref.current.scrollTop = ref.current.scrollHeight; }, [lines]);
   return (
-    <div ref={ref} style={{ marginTop: 10, maxHeight: 170, overflowY: 'auto', textAlign: 'left', font: '400 11px/1.5 var(--font-mono)', color: 'var(--color-text-secondary)', background: 'color-mix(in srgb, var(--color-canvas) 70%, transparent)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', padding: '7px 9px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+    <div ref={ref} style={{ marginTop: 10, maxHeight: 170, overflowY: 'auto', textAlign: 'left', font: `400 ${fontVar(11)}/1.5 var(--font-mono)`, color: 'var(--color-text-secondary)', background: 'color-mix(in srgb, var(--color-canvas) 70%, transparent)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', padding: '7px 9px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
       {lines.length ? lines.map((l, k) => <div key={k}>{l}</div>) : <div>No output yet.</div>}
     </div>
   );
 }
 
-const ghost: React.CSSProperties = { height: 34, padding: '0 14px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-secondary)', fontSize: 13, cursor: 'pointer' };
+const ghost: React.CSSProperties = { height: 34, padding: '0 14px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-secondary)', fontSize: fontVar(13), cursor: 'pointer' };
 const primary: React.CSSProperties = { ...ghost, background: 'var(--color-accent)', border: 'none', color: 'var(--color-on-accent)', fontWeight: 600 };
 
 /** The card body while an update runs: steps, time, output on request, Hide. */
@@ -97,10 +98,10 @@ export function UpdateRunning() {
   return (
     <>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
-        <span style={{ fontWeight: 600, fontSize: 15, color: 'var(--color-text-primary)' }}>{restarting ? 'Restarting Dispatch…' : 'Updating Dispatch…'}</span>
+        <span style={{ fontWeight: 600, fontSize: fontVar(15), color: 'var(--color-text-primary)' }}>{restarting ? 'Restarting Dispatch…' : 'Updating Dispatch…'}</span>
         <Elapsed since={p?.startedAt ?? null} />
       </div>
-      <div style={{ marginTop: 6, fontSize: 12.5, color: 'var(--color-text-secondary)' }}>
+      <div style={{ marginTop: 6, fontSize: fontVar(12.5), color: 'var(--color-text-secondary)' }}>
         {restarting ? 'The server is restarting. ' : ''}The page reloads by itself when the update is done.
       </div>
       {p && p.state !== 'idle' && <StepList p={p} failed={false} />}
@@ -121,10 +122,10 @@ export function UpdateFailed({ onRetry, retrying }: { onRetry: () => void; retry
   return (
     <>
       <XCircle size={30} weight="fill" color="var(--color-status-red)" />
-      <div style={{ marginTop: 6, fontWeight: 600, fontSize: 15, color: 'var(--color-text-primary)' }}>Update failed</div>
+      <div style={{ marginTop: 6, fontWeight: 600, fontSize: fontVar(15), color: 'var(--color-text-primary)' }}>Update failed</div>
       {p && <StepList p={p} failed />}
-      <div style={{ marginTop: 12, fontSize: 12.5, lineHeight: 1.5, color: 'var(--color-status-red)', textAlign: 'left', wordBreak: 'break-word' }}>{p?.error ?? failure}</div>
-      {!restartStep && <div style={{ marginTop: 6, fontSize: 12, color: 'var(--color-text-secondary)', textAlign: 'left' }}>Dispatch still runs the old version, so nothing is broken.</div>}
+      <div style={{ marginTop: 12, fontSize: fontVar(12.5), lineHeight: 1.5, color: 'var(--color-status-red)', textAlign: 'left', wordBreak: 'break-word' }}>{p?.error ?? failure}</div>
+      {!restartStep && <div style={{ marginTop: 6, fontSize: fontVar(12), color: 'var(--color-text-secondary)', textAlign: 'left' }}>Dispatch still runs the old version, so nothing is broken.</div>}
       <LogBox lines={p?.log ?? []} />
       <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'center' }}>
         <button type="button" onClick={() => useUpdate.setState({ runFailed: false, failure: null, progress: null })} style={ghost}>Close</button>
@@ -141,7 +142,7 @@ export function UpdateBadge() {
   const label = unreachable || p?.state === 'restarting' ? STEP_LABEL.restart : p?.step ? STEP_LABEL[p.step] : 'Starting';
   return (
     <button type="button" aria-label={`Updating · ${label}`} onClick={() => useUpdate.setState({ progressHidden: false })}
-      style={{ position: 'fixed', right: 16, bottom: 'max(16px, env(safe-area-inset-bottom))', zIndex: 280, display: 'flex', alignItems: 'center', gap: 8, height: 34, padding: '0 14px', borderRadius: 'var(--radius-pill)', border: '1px solid color-mix(in srgb, var(--color-status-blue) 45%, var(--color-border))', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: 12.5, cursor: 'pointer', boxShadow: '0 10px 30px -10px var(--color-shadow-strong)' }}>
+      style={{ position: 'fixed', right: 16, bottom: 'max(16px, env(safe-area-inset-bottom))', zIndex: 280, display: 'flex', alignItems: 'center', gap: 8, height: 34, padding: '0 14px', borderRadius: 'var(--radius-pill)', border: '1px solid color-mix(in srgb, var(--color-status-blue) 45%, var(--color-border))', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: fontVar(12.5), cursor: 'pointer', boxShadow: '0 10px 30px -10px var(--color-shadow-strong)' }}>
       <Spinner size={13} /> Updating · {label}
     </button>
   );
@@ -153,8 +154,8 @@ export function UpdateDone() {
   return (
     <>
       <CheckCircle size={30} weight="fill" color="var(--color-accent)" />
-      <div style={{ marginTop: 6, fontWeight: 600, fontSize: 15, color: 'var(--color-text-primary)' }}>Update done</div>
-      <div style={{ marginTop: 6, fontSize: 12.5, color: 'var(--color-text-secondary)' }}>
+      <div style={{ marginTop: 6, fontWeight: 600, fontSize: fontVar(15), color: 'var(--color-text-primary)' }}>Update done</div>
+      <div style={{ marginTop: 6, fontSize: fontVar(12.5), color: 'var(--color-text-secondary)' }}>
         {version ? `Dispatch v${version.replace(/^v/, '')} is installed.` : 'The new version is installed.'} Reload to start using it.
       </div>
       <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'center' }}>
@@ -169,7 +170,7 @@ export function UpdateDone() {
 export function UpdateDoneBadge() {
   return (
     <button type="button" aria-label="Update done · Reload" onClick={() => pageReload.run()}
-      style={{ position: 'fixed', right: 16, bottom: 'max(16px, env(safe-area-inset-bottom))', zIndex: 285, display: 'flex', alignItems: 'center', gap: 8, height: 34, padding: '0 14px', borderRadius: 'var(--radius-pill)', border: 'none', background: 'var(--color-accent)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: 12.5, cursor: 'pointer' }}>
+      style={{ position: 'fixed', right: 16, bottom: 'max(16px, env(safe-area-inset-bottom))', zIndex: 285, display: 'flex', alignItems: 'center', gap: 8, height: 34, padding: '0 14px', borderRadius: 'var(--radius-pill)', border: 'none', background: 'var(--color-accent)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: fontVar(12.5), cursor: 'pointer' }}>
       <CheckCircle size={14} weight="fill" /> Update done · Reload
     </button>
   );

@@ -11,6 +11,7 @@ import { Spinner } from '../../common/Spinner';
 import { useOverseer, useRenderVals } from '../store';
 import { AGENT_TYPE } from '../types';
 import type { AgentCardAction, AgentCardInfo, AgentThread, RenderVals } from '../types';
+import { fontVar } from '../../../lib/fontSize';
 
 const ACTION_LABEL: Record<AgentCardAction, string> = {
   spawned: 'Spawned',
@@ -76,7 +77,7 @@ export function AgentCard({ card }: { card: AgentCardInfo }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
             <span
               style={{
-                fontSize: 12.5,
+                fontSize: fontVar(12.5),
                 fontWeight: 600,
                 color: 'var(--tp)',
                 whiteSpace: 'nowrap',
@@ -102,7 +103,7 @@ export function AgentCard({ card }: { card: AgentCardInfo }) {
             {card.mission && (
               <span
                 style={{
-                  fontSize: 10.5,
+                  fontSize: fontVar(10.5),
                   color: 'var(--ts)',
                   whiteSpace: 'nowrap',
                   overflow: 'hidden',

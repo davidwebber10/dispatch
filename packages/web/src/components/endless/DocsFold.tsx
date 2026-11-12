@@ -7,6 +7,7 @@ import { useUI } from '../../stores/ui';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { openThreadInPlace } from './openThread';
 import { MoreButton, formatStart } from './paneParts';
+import { fontVar } from '../../lib/fontSize';
 
 /** The short location of a Docs row; the full form (with the branch) is its title. */
 const shortLocation = (r: EndlessDocRow) => (r.source === 'worktree' ? `worktree ${r.worktree}` : `branch ${r.branch}`);
@@ -14,7 +15,7 @@ const fullLocation = (r: EndlessDocRow) =>
   r.source === 'worktree' ? `worktree ${r.worktree}${r.branch ? ` on ${r.branch}` : ''}` : `branch ${r.branch}, as of the last fetch`;
 const VS: Record<EndlessDocRow['vsMain'], string> = { changed: 'changed here', not_on_main: 'not on main' };
 
-const mono = (size: number, color = 'var(--color-text-tertiary)'): React.CSSProperties => ({ fontFamily: 'var(--font-mono)', fontSize: size, color });
+const mono = (size: number, color = 'var(--color-text-tertiary)'): React.CSSProperties => ({ fontFamily: 'var(--font-mono)', fontSize: fontVar(size), color });
 
 function Chip({ children, title, mobile }: { children: React.ReactNode; title?: string; mobile: boolean }) {
   return (
@@ -70,7 +71,7 @@ export function DocsFold({ projectId, count, onNavigate, first = true }: { proje
         {open ? <CaretDown size={12} aria-hidden /> : <CaretRight size={12} aria-hidden />}
       </MoreButton>
       {open && !list && (
-        <p role={failed ? 'alert' : undefined} aria-busy={!failed} style={{ margin: 0, padding: '8px 0 4px', fontSize: 12.5, color: 'var(--color-text-secondary)' }}>
+        <p role={failed ? 'alert' : undefined} aria-busy={!failed} style={{ margin: 0, padding: '8px 0 4px', fontSize: fontVar(12.5), color: 'var(--color-text-secondary)' }}>
           {failed ? 'Docs could not be loaded.' : 'Loading docs…'}
         </p>
       )}
@@ -83,7 +84,7 @@ export function DocsFold({ projectId, count, onNavigate, first = true }: { proje
               <button type="button" title={r.path} onClick={(e) => { e.stopPropagation(); openDoc(r); }}
                 style={{ display: 'block', width: '100%', minHeight: mobile ? 44 : undefined, textAlign: 'left', background: 'transparent', border: 0, padding: 0, cursor: 'pointer', color: 'var(--color-text-primary)', font: 'inherit' }}>
                 <span style={{ display: 'block', ...mono(mobile ? 12.5 : 12, 'var(--color-text-primary)'), lineHeight: 1.45, overflowWrap: 'anywhere' }}>{r.name}</span>
-                {r.status && <span style={{ display: 'block', fontSize: mobile ? 12.5 : 12, lineHeight: 1.5, color: 'var(--color-text-secondary)', marginTop: 2 }}>{r.status}</span>}
+                {r.status && <span style={{ display: 'block', fontSize: fontVar(mobile ? 12.5 : 12), lineHeight: 1.5, color: 'var(--color-text-secondary)', marginTop: 2 }}>{r.status}</span>}
                 <span style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
                   <Chip mobile={mobile} title={fullLocation(r)}>{shortLocation(r)}</Chip>
                   <Chip mobile={mobile}>{VS[r.vsMain]}</Chip>

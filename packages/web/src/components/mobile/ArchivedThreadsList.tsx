@@ -5,6 +5,7 @@ import { api } from '../../api/client';
 import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
 import { Spinner } from '../common/Spinner';
+import { fontVar } from '../../lib/fontSize';
 
 const when = (iso: string | null | undefined): string => {
   if (!iso) return '';
@@ -57,7 +58,7 @@ export function ArchivedThreadsList({ project, query, onOpenThread }: { project:
   if (rows === null) return <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><Spinner size={24} /></div>;
   if (!shown.length) {
     return (
-      <div style={{ padding: '48px 28px', textAlign: 'center', color: 'var(--color-text-tertiary)', fontSize: 13.5 }}>
+      <div style={{ padding: '48px 28px', textAlign: 'center', color: 'var(--color-text-tertiary)', fontSize: fontVar(13.5) }}>
         <Archive size={30} style={{ opacity: 0.5 }} />
         <div style={{ marginTop: 10 }}>{q || project ? 'No archived threads match.' : 'No archived threads.'}</div>
       </div>
@@ -68,14 +69,14 @@ export function ArchivedThreadsList({ project, query, onOpenThread }: { project:
       {shown.map((t) => (
         <div key={t.id} data-archived-id={t.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 12px', borderBottom: '1px solid var(--color-border)' }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 16, color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.label}</div>
-            <div style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <div style={{ fontSize: fontVar(16), color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.label}</div>
+            <div style={{ font: `400 ${fontVar(11.5)} var(--font-mono)`, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {[project ? null : nameOf.get(t.sessionId), t.archivedAt ? `archived ${when(t.archivedAt)}` : null].filter(Boolean).join(' · ')}
             </div>
-            {failed === t.id && <div role="alert" style={{ fontSize: 12, color: 'var(--color-status-red)', marginTop: 2 }}>Could not restore. Try again.</div>}
+            {failed === t.id && <div role="alert" style={{ fontSize: fontVar(12), color: 'var(--color-status-red)', marginTop: 2 }}>Could not restore. Try again.</div>}
           </div>
           <button type="button" aria-label={`Restore ${t.label}`} disabled={restoring === t.id} onClick={() => void restore(t)}
-            style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 6, height: 32, padding: '0 11px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13, cursor: 'pointer', opacity: restoring === t.id ? 0.6 : 1 }}>
+            style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 6, height: 32, padding: '0 11px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: fontVar(13), cursor: 'pointer', opacity: restoring === t.id ? 0.6 : 1 }}>
             {restoring === t.id ? <Spinner size={13} /> : <ArrowCounterClockwise size={14} weight="bold" />}
             Restore
           </button>

@@ -24,6 +24,7 @@ import { findTerminal, useTabs } from '../../stores/tabs';
 import { DocViewer } from '../endless/DocViewer';
 import { useThreadDocChips } from '../threadDocs';
 import { useActiveTheme } from '../../themes/apply';
+import { fontVar, fontVarInput } from '../../lib/fontSize';
 
 type SoftKey = { label: string; seq: string; title?: string; Icon?: Icon };
 // Slash commands live in a searchable sheet behind the "/" key. Run-commands end
@@ -218,7 +219,7 @@ function KeysPager({ pages, onKey, onClose }: { pages: { title: string; keys: So
     <div ref={box} role="dialog" aria-label="Keys" data-variant="pager"
       style={{ position: 'absolute', left: 8, right: 8, bottom: '100%', marginBottom: 6, zIndex: 10, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', boxShadow: '0 -10px 28px -14px var(--color-shadow)', padding: '6px 0 8px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 6px 4px 12px', height: 26 }}>
-        <span style={{ font: '600 10.5px var(--font-mono)', letterSpacing: '.08em', color: 'var(--color-text-tertiary)', textTransform: 'uppercase', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pages[page]?.title}</span>
+        <span style={{ font: `600 ${fontVar(10.5)} var(--font-mono)`, letterSpacing: '.08em', color: 'var(--color-text-tertiary)', textTransform: 'uppercase', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pages[page]?.title}</span>
         <span style={{ display: 'flex', gap: 5, marginLeft: 'auto' }}>
           {pages.length > 1 && pages.map((p, i) => (
             <button key={p.title} type="button" aria-label={`Page ${i + 1}: ${p.title}`} aria-current={i === page ? 'true' : undefined} onMouseDown={(e) => e.preventDefault()} onClick={() => go(i)}
@@ -240,7 +241,7 @@ function KeysPager({ pages, onKey, onClose }: { pages: { title: string; keys: So
               <button key={k.label} type="button" title={k.title} aria-label={k.title}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => onKey(k.seq)}
-                style={{ ...SOFT_KEY, minWidth: 0, height: 42, color: 'var(--color-text-primary)', font: k.label.length > 3 && !k.Icon ? '500 12.5px var(--font-sans)' : '500 15px var(--font-mono)' }}>
+                style={{ ...SOFT_KEY, minWidth: 0, height: 42, color: 'var(--color-text-primary)', font: k.label.length > 3 && !k.Icon ? `500 ${fontVar(12.5)} var(--font-sans)` : `500 ${fontVar(15)} var(--font-mono)` }}>
                 {k.Icon ? <k.Icon size={19} weight="bold" /> : k.label}
               </button>
             ))}
@@ -315,6 +316,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
   const isMobile = useIsMobile();
   const grokFlush = isMobile && termType === 'grok';
   const termFontSize = useSettings((s) => s.fontSize);
+  const termTextScale = useSettings((s) => s.textScale);
   const termScrollback = useSettings((s) => s.scrollback);
   const ptyAutocorrect = useSettings((s) => s.ptyAutocorrect);
   const setPtyAutocorrect = useSettings((s) => s.setPtyAutocorrect);
@@ -325,7 +327,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
   useEffect(() => {
     let disposed = false;
     const s0 = useSettings.getState();
-    const term = new XTerm({ fontFamily: 'JetBrains Mono, monospace', fontSize: s0.fontSize, theme: { ...useActiveTheme.getState().theme.terminal }, scrollback: s0.scrollback, convertEol: true, cursorBlink: true,
+    const term = new XTerm({ fontFamily: 'JetBrains Mono, monospace', fontSize: Math.round(s0.fontSize * s0.textScale * 2) / 2, theme: { ...useActiveTheme.getState().theme.terminal }, scrollback: s0.scrollback, convertEol: true, cursorBlink: true,
       // xterm's own handler asks confirm() and ignores every non-http link; a doc opens in the doc viewer, a web link in a new tab, the rest nothing.
       linkHandler: { allowNonHttpProtocols: true, activate: (_e, uri) => {
         const chips = docChipsRef.current;
@@ -1008,16 +1010,16 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
     try { term.options.theme = { ...termPalette }; } catch { /* terminal not fully initialised (e.g. jsdom) */ }
   }, [termPalette]);
 
-  // Apply font-size / scrollback changes live to the running terminal.
+  // Apply font-size / text scale / scrollback changes live to the running terminal.
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
     try {
-      term.options.fontSize = termFontSize;
+      term.options.fontSize = Math.round(termFontSize * termTextScale * 2) / 2;
       term.options.scrollback = termScrollback;
       forceFitRef.current();
     } catch { /* terminal not fully initialised (e.g. jsdom) */ }
-  }, [termFontSize, termScrollback]);
+  }, [termFontSize, termTextScale, termScrollback]);
 
   // Picked, dropped and pasted images upload to the project inbox with a progress tile each
   // (UploadTray); once one lands, its path goes to the agent as context.
@@ -1087,13 +1089,13 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
           </button>
         )}
         {loadingOlder && (
-          <div style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 6, background: 'color-mix(in srgb, var(--color-base) 85%, transparent)', color: 'var(--color-accent)', fontSize: 12, fontWeight: 500, padding: '5px 11px', borderRadius: 'var(--radius-md)', pointerEvents: 'none' }}>Loading earlier output…</div>
+          <div style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 6, background: 'color-mix(in srgb, var(--color-base) 85%, transparent)', color: 'var(--color-accent)', fontSize: fontVar(12), fontWeight: 500, padding: '5px 11px', borderRadius: 'var(--radius-md)', pointerEvents: 'none' }}>Loading earlier output…</div>
         )}
         {drop && (
-          <div style={{ position: 'absolute', inset: 8, border: '2px dashed var(--color-accent)', borderRadius: 'var(--radius-md)', background: 'color-mix(in srgb, var(--color-accent) 8%, transparent)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', color: 'var(--color-accent)', fontSize: 14, fontWeight: 600 }}>Drop image to send to the agent</div>
+          <div style={{ position: 'absolute', inset: 8, border: '2px dashed var(--color-accent)', borderRadius: 'var(--radius-md)', background: 'color-mix(in srgb, var(--color-accent) 8%, transparent)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', color: 'var(--color-accent)', fontSize: fontVar(14), fontWeight: 600 }}>Drop image to send to the agent</div>
         )}
         {note && (
-          <div style={{ position: 'absolute', left: 14, bottom: 14, zIndex: 6, background: 'color-mix(in srgb, var(--color-base) 85%, transparent)', color: 'var(--color-accent)', fontSize: 12, fontWeight: 500, padding: '5px 11px', borderRadius: 'var(--radius-md)', pointerEvents: 'none' }}>{note}</div>
+          <div style={{ position: 'absolute', left: 14, bottom: 14, zIndex: 6, background: 'color-mix(in srgb, var(--color-base) 85%, transparent)', color: 'var(--color-accent)', fontSize: fontVar(12), fontWeight: 500, padding: '5px 11px', borderRadius: 'var(--radius-md)', pointerEvents: 'none' }}>{note}</div>
         )}
       </div>
       {/* Safety net: a needs_you question a CLI thread declared via report_status lands only on
@@ -1167,13 +1169,13 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
               <div style={{ borderBottom: '1px solid var(--color-border)', marginBottom: 4, paddingBottom: 4 }}>
                 {slashCmds.length > 0 && (
                   <button type="button" style={inputMenuRow()} onClick={() => { close(); setSlashQuery(''); setSlashOpen(true); }}>
-                    <span style={{ width: 18, textAlign: 'center', font: '600 16px var(--font-mono)', color: 'var(--color-accent)' }}>/</span> Slash commands
+                    <span style={{ width: 18, textAlign: 'center', font: `600 ${fontVar(16)} var(--font-mono)`, color: 'var(--color-accent)' }}>/</span> Slash commands
                   </button>
                 )}
                 {/* Spelling help for the box: on for prose, off for a run of shell commands. */}
                 <button type="button" aria-label="Autocorrect" aria-pressed={ptyAutocorrect} style={inputMenuRow()}
                   onClick={() => setPtyAutocorrect(!ptyAutocorrect)}>
-                  <span style={{ width: 18, textAlign: 'center', font: '600 13px var(--font-mono)', color: ptyAutocorrect ? 'var(--color-accent)' : 'var(--color-text-tertiary)', textDecoration: ptyAutocorrect ? 'none' : 'line-through' }}>Aa</span>
+                  <span style={{ width: 18, textAlign: 'center', font: `600 ${fontVar(13)} var(--font-mono)`, color: ptyAutocorrect ? 'var(--color-accent)' : 'var(--color-text-tertiary)', textDecoration: ptyAutocorrect ? 'none' : 'line-through' }}>Aa</span>
                   Autocorrect {ptyAutocorrect ? 'on' : 'off'}
                 </button>
               </div>
@@ -1201,7 +1203,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
             value={slashQuery} onChange={(e) => setSlashQuery(e.target.value)}
             placeholder="Search slash commands…"
             autoCapitalize="off" autoCorrect="off" autoComplete="off" spellCheck={false}
-            style={{ flex: 1, minWidth: 0, height: '100%', background: 'none', border: 'none', outline: 'none', color: 'var(--color-text-primary)', fontSize: 16 }}
+            style={{ flex: 1, minWidth: 0, height: '100%', background: 'none', border: 'none', outline: 'none', color: 'var(--color-text-primary)', fontSize: fontVarInput(16) }}
           />
         </div>
         {slashResults.map((c) => (
@@ -1209,12 +1211,12 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => { sockRef.current?.send(c.seq); closeSlash(); }}
             style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2, width: '100%', textAlign: 'left', padding: '11px 4px', background: 'none', border: 'none', cursor: 'pointer' }}>
-            <span style={{ font: '600 15px var(--font-mono)', color: 'var(--color-accent)' }}>{c.cmd}</span>
-            <span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>{c.desc}</span>
+            <span style={{ font: `600 ${fontVar(15)} var(--font-mono)`, color: 'var(--color-accent)' }}>{c.cmd}</span>
+            <span style={{ fontSize: fontVar(12.5), color: 'var(--color-text-secondary)' }}>{c.desc}</span>
           </button>
         ))}
         {slashResults.length === 0 && (
-          <div style={{ padding: '20px 4px', color: 'var(--color-text-tertiary)', fontSize: 13 }}>No matching commands</div>
+          <div style={{ padding: '20px 4px', color: 'var(--color-text-tertiary)', fontSize: fontVar(13) }}>No matching commands</div>
         )}
       </Modal>
       <DocViewer owner={terminalId} />

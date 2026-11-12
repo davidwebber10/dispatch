@@ -1,5 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { fontVar, fontVarInput } from '../../lib/fontSize';
 
 export interface SearchSelectOption {
   value: string;
@@ -178,7 +179,7 @@ export function SearchSelect({ value, options, onChange, ariaLabel, id, searchab
         onKeyDown={(e) => { if (!open && (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); show(); } }}
         style={{
           ...field, height: lg ? 40 : 32, width: '100%', padding: lg ? '0 30px 0 12px' : '0 26px 0 10px',
-          fontSize: lg ? 14 : 12.5, fontWeight: 500, cursor: disabled ? 'default' : 'pointer', textAlign: 'left',
+          fontSize: fontVar(lg ? 14 : 12.5), fontWeight: 500, cursor: disabled ? 'default' : 'pointer', textAlign: 'left',
           position: 'relative', display: 'flex', alignItems: 'center', opacity: disabled ? 0.5 : 1, ...style,
         }}>
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, color: current ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)' }}>
@@ -196,11 +197,11 @@ export function SearchSelect({ value, options, onChange, ariaLabel, id, searchab
           {searchable && <input ref={inputRef} value={query} onChange={(e) => { setQuery(e.target.value); setActive(0); }} placeholder={searchPlaceholder}
             aria-label={`Search ${name.toLowerCase()}`.trim()} aria-controls={listId} aria-activedescendant={filtered[active] ? `${listId}-${active}` : undefined}
             autoComplete="off" spellCheck={false}
-            style={{ ...field, border: 'none', borderBottom: '1px solid var(--color-hover)', borderRadius: 'var(--radius-xs)', height: lg ? 44 : 36, flexShrink: 0, padding: '0 12px', fontSize: lg ? 16 : 13, background: 'transparent', outline: 'none' }} />}
+            style={{ ...field, border: 'none', borderBottom: '1px solid var(--color-hover)', borderRadius: 'var(--radius-xs)', height: lg ? 44 : 36, flexShrink: 0, padding: '0 12px', fontSize: lg ? fontVarInput(16) : fontVar(13), background: 'transparent', outline: 'none' }} />}
           <ul ref={listRef} id={listId} role="listbox" aria-label={ariaLabel} tabIndex={searchable ? undefined : -1}
             aria-labelledby={!ariaLabel && id ? id : undefined} aria-activedescendant={!searchable && filtered[active] ? `${listId}-${active}` : undefined} style={{ outline: 'none', listStyle: 'none', margin: 0, padding: 4, maxHeight: lg ? 264 : 240, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
             {filtered.length === 0 && (
-              <li aria-disabled="true" style={{ padding: '10px 12px', fontSize: lg ? 14 : 12.5, color: 'var(--color-text-tertiary)' }}>{emptyText}</li>
+              <li aria-disabled="true" style={{ padding: '10px 12px', fontSize: fontVar(lg ? 14 : 12.5), color: 'var(--color-text-tertiary)' }}>{emptyText}</li>
             )}
             {filtered.map((o, i) => {
               const selected = o.value === value;
@@ -214,8 +215,8 @@ export function SearchSelect({ value, options, onChange, ariaLabel, id, searchab
                     background: hot && !o.disabled ? 'color-mix(in srgb, var(--color-accent) 12%, var(--color-elevated))' : 'transparent',
                     color: selected ? 'var(--color-accent)' : 'var(--color-text-primary)',
                   }}>
-                  <span style={{ fontSize: lg ? 14 : 12.5, fontWeight: selected ? 600 : 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{o.label}</span>
-                  {o.hint && <span style={{ font: `400 ${lg ? 11 : 10.5}px var(--font-mono)`, color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{o.hint}</span>}
+                  <span style={{ fontSize: fontVar(lg ? 14 : 12.5), fontWeight: selected ? 600 : 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{o.label}</span>
+                  {o.hint && <span style={{ font: `400 ${fontVar(lg ? 11 : 10.5)} var(--font-mono)`, color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{o.hint}</span>}
                 </li>
               );
             })}

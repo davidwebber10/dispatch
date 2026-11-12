@@ -1,4 +1,5 @@
 import { Tooltip } from 'recharts';
+import { fontVar } from '../../lib/fontSize';
 
 /*
  * The parts both Analytics views share: styles, number and day formatters, the KPI tile, the
@@ -13,9 +14,9 @@ export const panel: React.CSSProperties = {
   borderRadius: 'var(--radius-lg)', padding: 14, minWidth: 0,
 };
 export const labelStyle: React.CSSProperties = {
-  font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)',
+  font: `500 ${fontVar(10)} var(--font-mono)`, letterSpacing: '1.2px', color: 'var(--color-text-tertiary)',
 };
-export const muted: React.CSSProperties = { color: 'var(--color-text-tertiary)', fontSize: 12.5 };
+export const muted: React.CSSProperties = { color: 'var(--color-text-tertiary)', fontSize: fontVar(12.5) };
 
 /* ------------------------------------------------------------- formatting */
 
@@ -87,18 +88,18 @@ export function Kpi({ label, value, title, badge, badgeTitle, caption, info }: {
         {info && <span aria-label={info} title={info} tabIndex={0} style={{ float: 'right', cursor: 'help', letterSpacing: 0 }}>ⓘ</span>}
       </div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 6 }}>
-        <span style={{ fontSize: 21, fontWeight: 600, color: 'var(--color-text-primary)' }}>{value}</span>
+        <span style={{ fontSize: fontVar(21), fontWeight: 600, color: 'var(--color-text-primary)' }}>{value}</span>
         {badge && (
           <span
             title={badgeTitle}
             style={{
-              font: '500 9.5px var(--font-mono)', letterSpacing: '.6px', color: 'var(--color-text-tertiary)',
+              font: `500 ${fontVar(9.5)} var(--font-mono)`, letterSpacing: '.6px', color: 'var(--color-text-tertiary)',
               border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', padding: '1px 5px', cursor: 'help',
             }}
           >{badge}</span>
         )}
       </div>
-      {caption && <div style={{ ...muted, fontSize: 11.5, marginTop: 4 }}>{caption}</div>}
+      {caption && <div style={{ ...muted, fontSize: fontVar(11.5), marginTop: 4 }}>{caption}</div>}
     </div>
   );
 }
@@ -110,7 +111,7 @@ export function Block({ title, note, children, style }: {
     <div style={{ ...panel, ...style }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
         <div style={labelStyle}>{title}</div>
-        {note && <div style={{ font: '400 10px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{note}</div>}
+        {note && <div style={{ font: `400 ${fontVar(10)} var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>{note}</div>}
       </div>
       <div style={{ marginTop: 12 }}>{children}</div>
     </div>
@@ -132,7 +133,7 @@ export function chartTooltip(
   return (
     <Tooltip
       cursor={{ fill: theme.text, fillOpacity: 0.04 }}
-      contentStyle={{ background: theme.surface, border: `1px solid ${theme.grid}`, borderRadius: 'var(--radius-md)', fontSize: 12 }}
+      contentStyle={{ background: theme.surface, border: `1px solid ${theme.grid}`, borderRadius: 'var(--radius-md)', fontSize: fontVar(12) }}
       labelStyle={{ color: theme.muted }}
       itemStyle={{ color: theme.text }}
       formatter={formatter as never}

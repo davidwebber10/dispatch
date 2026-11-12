@@ -5,7 +5,7 @@ import { ConnectionStatus } from '../layout/ConnectionStatus';
 import { BrandSwitcher } from '../layout/BrandSwitcher';
 import { AlertBell } from '../layout/AlertBell';
 import { UsageChip } from '../layout/UsageChip';
-import { HEADER_BOX, HEADER_H } from '../layout/headerButton';
+import { HEADER_BOX, HEADER_H, PHONE_HEADER_H } from '../layout/headerButton';
 import { UsageBanner } from '../layout/UsageBanner';
 import { UpdateDot } from '../update/UpdateDot';
 import { PuzzlePiece } from '@phosphor-icons/react';
@@ -52,6 +52,7 @@ import { timeAgo } from '../../lib/time';
 import { OverseerView } from '../overseer/LazyOverseerView';
 import { useStableOrder } from '../../hooks/useStableOrder';
 import { ChatMode } from '../endless/LazyChatMode';
+import { fontVar, fontVarInput } from '../../lib/fontSize';
 
 const AnalyticsView = lazy(() => import('../analytics/AnalyticsView').then((m) => ({ default: m.AnalyticsView })));
 
@@ -185,7 +186,7 @@ export function MobileApp() {
                 : <ChatCircleDots size={20} style={{ flexShrink: 0, marginTop: note ? 1 : 0 }} />}
               <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                 <span>{transport.current === 'pretty' ? 'Switch to CLI' : 'Switch to Pretty'}</span>
-                {note && <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{note}</span>}
+                {note && <span style={{ fontSize: fontVar(12), color: 'var(--color-text-tertiary)' }}>{note}</span>}
               </span>
             </button>
           );
@@ -195,7 +196,7 @@ export function MobileApp() {
           onPick: (tab) => setPluginSheet({ key: p.key, terminalId: tab.id, sessionId: tab.sessionId }),
         }))} />
       <PluginTabSheet tabKey={pluginSheet?.key ?? null} terminalId={pluginSheet?.terminalId ?? null} sessionId={pluginSheet?.sessionId ?? null} onClose={() => setPluginSheet(null)} />
-      <header style={{ position: 'relative', height: 'calc(50px + env(safe-area-inset-top))', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px', paddingTop: 'env(safe-area-inset-top)', background: 'var(--color-pane)' }}>
+      <header style={{ position: 'relative', height: `calc(${PHONE_HEADER_H} + env(safe-area-inset-top))`, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px', paddingTop: 'env(safe-area-inset-top)', background: 'var(--color-pane)' }}>
         {level === 0 ? (
           <>
             <BrandSwitcher />
@@ -205,7 +206,7 @@ export function MobileApp() {
             {bottomTab === 'projects' && (
               <>
                 <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={projectsView === 'threads' ? 'Search threads' : 'Search projects'}
-                  style={{ flex: 1, minWidth: 0, height: 36, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 16 }} />
+                  style={{ flex: 1, minWidth: 0, height: 36, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: fontVarInput(16) }} />
                 {projectsView === 'projects' && <SortMenu
                   value={projectSort}
                   options={PROJECT_SORTS}
@@ -224,7 +225,7 @@ export function MobileApp() {
           leafTab ? (
             <LeafHeaderTitle title={leafTab.label} onBack={back} backLabel={`Back to ${project?.name ?? 'project'}`} testId="thread-title"
               subtitle={(
-                <span style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span style={{ font: `400 ${fontVar(11.5)} var(--font-mono)`, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   <span aria-hidden style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: statusColor, marginRight: 5, verticalAlign: 1 }} />
                   {leafAccount ? shortAccountLabel(leafAccount.label) : ''}
                 </span>
@@ -236,7 +237,7 @@ export function MobileApp() {
           ) : (
           <button onClick={back} style={{ background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, padding: '4px 2px', minWidth: 0 }}>
             <CaretLeft size={20} weight="bold" />
-            <span style={{ fontWeight: 600, fontSize: 16, color: 'var(--color-text-primary)', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{headerTitle}</span>
+            <span style={{ fontWeight: 600, fontSize: fontVar(16), color: 'var(--color-text-primary)', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{headerTitle}</span>
           </button>
           )
         )}
@@ -268,7 +269,7 @@ export function MobileApp() {
         {/* Centred section title, iOS-style, while drilled into a settings section
             (the back button on the left already reads "‹ Settings"). */}
         {level === 1 && inSettings && activeSettings && !settingsSubPage && (
-          <span style={{ position: 'absolute', top: 'env(safe-area-inset-top)', left: 0, right: 0, height: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', fontSize: 16, fontWeight: 600, color: 'var(--color-text-primary)' }}>{activeSettings.label}</span>
+          <span style={{ position: 'absolute', top: 'env(safe-area-inset-top)', left: 0, right: 0, height: PHONE_HEADER_H, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', fontSize: fontVar(16), fontWeight: 600, color: 'var(--color-text-primary)' }}>{activeSettings.label}</span>
         )}
       </header>
       {/* Agents paused on a usage limit (#127): one line under the header, wraps to two. */}
@@ -298,7 +299,7 @@ export function MobileApp() {
                 const on = projectsView === key;
                 return (
                   <button key={key} type="button" role="tab" aria-selected={on} onClick={() => setProjectsView(key)}
-                    style={{ flex: 1, height: 32, border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontSize: 13.5, fontWeight: on ? 600 : 500, background: on ? 'var(--color-pane)' : 'transparent', color: on ? 'var(--color-text-primary)' : 'var(--color-text-secondary)', boxShadow: on ? '0 1px 2px var(--color-shadow)' : 'none' }}>
+                    style={{ flex: 1, height: 32, border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontSize: fontVar(13.5), fontWeight: on ? 600 : 500, background: on ? 'var(--color-pane)' : 'transparent', color: on ? 'var(--color-text-primary)' : 'var(--color-text-secondary)', boxShadow: on ? '0 1px 2px var(--color-shadow)' : 'none' }}>
                     {label}
                   </button>
                 );
@@ -321,18 +322,18 @@ export function MobileApp() {
                     <button onClick={() => openProject(p.id)}
                       style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', textAlign: 'left', padding: '15px 12px', background: 'transparent', border: 'none', borderBottom: '1px solid var(--color-border)', cursor: 'pointer' }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <span style={{ fontSize: 16, fontWeight: 600, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{p.name}</span>
-                        <div style={{ font: '400 12px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>{homePath(p.workingDir)}</div>
+                        <span style={{ fontSize: fontVar(16), fontWeight: 600, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{p.name}</span>
+                        <div style={{ font: `400 ${fontVar(12)} var(--font-mono)`, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>{homePath(p.workingDir)}</div>
                       </div>
                       {working
                         ? <Spinner size={13} />
-                        : <span style={{ flexShrink: 0, font: '400 12px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{timeAgo(p.lastActivityAt)}</span>}
+                        : <span style={{ flexShrink: 0, font: `400 ${fontVar(12)} var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>{timeAgo(p.lastActivityAt)}</span>}
                       <CaretRight size={18} color="var(--color-text-tertiary)" />
                     </button>
                   );
                 }}
               />
-              {!sortedProjects.length && <div style={{ padding: 16, color: 'var(--color-text-tertiary)', fontSize: 13 }}>No projects</div>}
+              {!sortedProjects.length && <div style={{ padding: 16, color: 'var(--color-text-tertiary)', fontSize: fontVar(13) }}>No projects</div>}
             </div>
             )}
             </>
@@ -388,13 +389,13 @@ export function MobileApp() {
                   {key === 'settings' && <UpdateDot style={{ top: -2, right: -4 }} />}
                   {/* A promoted plugin screen carries its unseen count; the Plugins tab a plain dot when a screen inside it has one. */}
                   {(badges[key] ?? 0) > 0 && (
-                    <span aria-label={`${badges[key]} new`} style={{ position: 'absolute', top: -5, left: '100%', marginLeft: -6, minWidth: 16, height: 16, padding: '0 4px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: 'var(--color-on-accent)', font: '700 10px var(--font-sans)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 0 2px var(--color-pane)' }}>
+                    <span aria-label={`${badges[key]} new`} style={{ position: 'absolute', top: -5, left: '100%', marginLeft: -6, minWidth: 16, height: 16, padding: '0 4px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: 'var(--color-on-accent)', font: `700 ${fontVar(10)} var(--font-sans)`, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 0 2px var(--color-pane)' }}>
                       {badges[key] > 99 ? '99+' : badges[key]}
                     </span>
                   )}
                   {key === 'plugins' && pluginsDot && <span aria-label="Plugin news" role="status" style={{ position: 'absolute', top: -2, right: -4, width: 8, height: 8, borderRadius: '50%', background: 'var(--color-accent)', boxShadow: '0 0 0 2px var(--color-pane)' }} />}
                 </span>
-                <span style={{ fontSize: 11, fontWeight: on ? 600 : 500 }}>{label}</span>
+                <span style={{ fontSize: fontVar(11), fontWeight: on ? 600 : 500 }}>{label}</span>
               </button>
             );
           })}
@@ -410,7 +411,7 @@ export function MobileApp() {
           <header style={{ height: 50, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 10px', borderBottom: '1px solid var(--color-border)', background: 'var(--color-pane)' }}>
             <button onClick={() => setBrowseFiles(false)} style={{ background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, padding: '4px 2px' }}>
               <CaretLeft size={20} weight="bold" />
-              <span style={{ fontWeight: 600, fontSize: 16, color: 'var(--color-text-primary)' }}>Files</span>
+              <span style={{ fontWeight: 600, fontSize: fontVar(16), color: 'var(--color-text-primary)' }}>Files</span>
             </button>
           </header>
           <div style={{ flex: 1, minHeight: 0 }}>

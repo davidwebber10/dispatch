@@ -12,6 +12,7 @@ import { ToolCall, editDiffStat } from '../../ToolCall';
 import { useToolGroupExpanded, useThoughtExpanded, uiKeyOf } from '../../../../hooks/useToolUIState';
 import { useRecentlyChanged } from '../../../../hooks/useThrottledValue';
 import { stableId } from './stableId';
+import { fontVar } from '../../../../lib/fontSize';
 
 // The leaf rows are memoized (W1-F): renderTimeline builds new elements on every walk, and a walk
 // happens for each streamed delta. A row whose props are equal (the same text, the same item) is
@@ -28,7 +29,7 @@ export const TaskNotice = memo(function TaskNotice({ text }: { text: string }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '4px 6px', minWidth: 0 }}>
       <CheckCircle size={13} weight="bold" color="var(--color-text-tertiary)" style={{ flexShrink: 0 }} />
-      <span style={{ minWidth: 0, fontSize: 11.5, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={text}>
+      <span style={{ minWidth: 0, fontSize: fontVar(11.5), color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={text}>
         {text}
       </span>
     </div>
@@ -133,13 +134,13 @@ function GroupHeader({ toolName, count, lines, diff, running, open, onClick }: {
       <span style={{ width: 14, flexShrink: 0, display: 'flex', justifyContent: 'flex-start' }}>
         <CaretRight size={10} weight="bold" style={{ color: 'var(--color-text-tertiary)', transition: 'transform .12s ease', transform: open ? 'rotate(90deg)' : 'none' }} />
       </span>
-      <span style={{ flexShrink: 0, font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)' }}>{toolName}</span>
-      <span style={{ flexShrink: 0, font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>×{count}</span>
+      <span style={{ flexShrink: 0, font: `400 ${fontVar(11.5)} var(--font-mono)`, color: 'var(--color-text-secondary)' }}>{toolName}</span>
+      <span style={{ flexShrink: 0, font: `400 ${fontVar(11.5)} var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>×{count}</span>
       <span style={{ flex: 1, minWidth: 0 }} />
-      {diff && <span style={{ flexShrink: 0, font: '400 11px var(--font-mono)', color: 'color-mix(in srgb, var(--color-status-green) 60%, var(--color-text-primary))' }}>+{diff.add} −{diff.del}</span>}
+      {diff && <span style={{ flexShrink: 0, font: `400 ${fontVar(11)} var(--font-mono)`, color: 'color-mix(in srgb, var(--color-status-green) 60%, var(--color-text-primary))' }}>+{diff.add} −{diff.del}</span>}
       {running
-        ? <span className="chat-shimmer" style={{ flexShrink: 0, fontSize: 11 }}>running…</span>
-        : !diff && <span style={{ flexShrink: 0, font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{lines} line{lines !== 1 ? 's' : ''}</span>}
+        ? <span className="chat-shimmer" style={{ flexShrink: 0, fontSize: fontVar(11) }}>running…</span>
+        : !diff && <span style={{ flexShrink: 0, font: `400 ${fontVar(11)} var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>{lines} line{lines !== 1 ? 's' : ''}</span>}
     </button>
   );
 }
@@ -148,7 +149,7 @@ function GroupHeader({ toolName, count, lines, diff, running, open, onClick }: {
 // replacing the EmptyState while the socket is down — see the render-site comment.
 export function ReconnectingState() {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, height: '55vh', color: 'var(--color-text-secondary)', fontSize: 13.5 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, height: '55vh', color: 'var(--color-text-secondary)', fontSize: fontVar(13.5) }}>
       <Spinner size={22} />
       <span>Reconnecting…</span>
     </div>
@@ -157,10 +158,10 @@ export function ReconnectingState() {
 
 export function EmptyState({ model }: { model?: string }) {
   return (
-    <div style={{ color: 'var(--color-text-tertiary)', fontSize: 13.5, textAlign: 'center', padding: '48px 0' }}>
+    <div style={{ color: 'var(--color-text-tertiary)', fontSize: fontVar(13.5), textAlign: 'center', padding: '48px 0' }}>
       <Sparkle size={28} weight="duotone" color="var(--color-accent)" style={{ marginBottom: 10 }} />
       <div style={{ color: 'var(--color-text-secondary)' }}>Send a message to start the conversation.</div>
-      {model && <div style={{ marginTop: 6, fontSize: 11.5, fontFamily: 'var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{friendlyModelName(model) ?? model}</div>}
+      {model && <div style={{ marginTop: 6, fontSize: fontVar(11.5), fontFamily: 'var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{friendlyModelName(model) ?? model}</div>}
     </div>
   );
 }
@@ -185,12 +186,12 @@ export const UserBubble = memo(function UserBubble({ text, source, grouped = fal
           label: one YOU covers the whole run. No timestamp yet: ConvItems carry no
           wall-clock time, and a fabricated one would lie on every replayed/paged item. */}
       {grouped ? null : viaCoordinator ? (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5, font: '500 9.5px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-accent)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, font: `500 ${fontVar(9.5)} var(--font-mono)`, letterSpacing: '1.3px', color: 'var(--color-accent)' }}>
           <ArrowBendDownRight size={11} weight="bold" />
           VIA {(relayName ?? dispatchName).toUpperCase()}
         </div>
       ) : (
-        <span style={{ font: '500 9.5px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-accent)' }}>YOU</span>
+        <span style={{ font: `500 ${fontVar(9.5)} var(--font-mono)`, letterSpacing: '1.3px', color: 'var(--color-accent)' }}>YOU</span>
       )}
       <div
         data-testid="user-bubble"
@@ -203,7 +204,7 @@ export const UserBubble = memo(function UserBubble({ text, source, grouped = fal
           color: viaCoordinator ? 'var(--color-text-primary)' : 'var(--color-on-accent)',
           borderRadius: 'var(--radius-md)',
           padding: '12px 15px',
-          font: '500 15.5px var(--font-sans)',
+          font: `500 ${fontVar(15.5)} var(--font-sans)`,
           lineHeight: 1.55,
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
@@ -212,14 +213,14 @@ export const UserBubble = memo(function UserBubble({ text, source, grouped = fal
         {renderText ? renderText(text) : text}
       </div>
       {sendState === 'failed' && (
-        <div role="status" style={{ display: 'flex', alignItems: 'center', gap: 8, font: '500 12px var(--font-sans)', color: 'var(--color-status-red)' }}>
+        <div role="status" style={{ display: 'flex', alignItems: 'center', gap: 8, font: `500 ${fontVar(12)} var(--font-sans)`, color: 'var(--color-status-red)' }}>
           <WarningCircle size={14} weight="fill" />
           <span>Not sent</span>
           {onRetry && (
             <button
               type="button"
               onClick={onRetry}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minHeight: 28, padding: '0 10px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', font: '500 12px var(--font-sans)', cursor: 'pointer' }}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minHeight: 28, padding: '0 10px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', font: `500 ${fontVar(12)} var(--font-sans)`, cursor: 'pointer' }}
             >
               <ArrowClockwise size={13} weight="bold" />
               Retry
@@ -246,7 +247,7 @@ export const AssistantText = memo(function AssistantText({ text, ledger }: { tex
   const streaming = useRecentlyChanged(text, STREAM_QUIET_MS);
   if (!text) return null;
   return (
-    <div style={{ fontSize: 14.5, lineHeight: 1.75, minWidth: 0 }}>
+    <div style={{ fontSize: fontVar(14.5), lineHeight: 1.75, minWidth: 0 }}>
       <InsightText source={text} scheme="global" variant="rail" docs={docs} ledger={ledger} streaming={streaming} />
     </div>
   );
@@ -270,7 +271,7 @@ export const Thinking = memo(function Thinking({ id, text }: { id?: string; text
     <div>
       <button
         onClick={() => setOpen((o) => !o)}
-        style={{ display: 'flex', alignItems: 'center', gap: 6, maxWidth: '100%', minWidth: 0, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', font: 'italic 400 12.5px var(--font-sans)', padding: 0 }}
+        style={{ display: 'flex', alignItems: 'center', gap: 6, maxWidth: '100%', minWidth: 0, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', font: `italic 400 ${fontVar(12.5)} var(--font-sans)`, padding: 0 }}
       >
         <CaretRight size={11} weight="bold" style={{ flexShrink: 0, transition: 'transform .12s', transform: open ? 'rotate(90deg)' : 'none' }} />
         <Brain size={13} weight="duotone" style={{ flexShrink: 0 }} />
@@ -283,7 +284,7 @@ export const Thinking = memo(function Thinking({ id, text }: { id?: string; text
         )}
       </button>
       {open && (
-        <div style={{ marginTop: 5, paddingLeft: 12, color: 'var(--color-text-secondary)', font: 'italic 400 13px var(--font-sans)', lineHeight: 1.55, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+        <div style={{ marginTop: 5, paddingLeft: 12, color: 'var(--color-text-secondary)', font: `italic 400 ${fontVar(13)} var(--font-sans)`, lineHeight: 1.55, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
           {text}
         </div>
       )}
@@ -294,7 +295,7 @@ export const Thinking = memo(function Thinking({ id, text }: { id?: string; text
 /** Under a turn that failed on the Claude login: log the daemon in, then the user sends again. */
 function ResultLogin() {
   const [done, setDone] = useState(false);
-  if (done) return <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>Logged in. Send your message again.</div>;
+  if (done) return <div style={{ fontSize: fontVar(12.5), color: 'var(--color-text-secondary)' }}>Logged in. Send your message again.</div>;
   return <ClaudeLogin onDone={() => setDone(true)} />;
 }
 
@@ -308,7 +309,7 @@ export const ResultFooter = memo(function ResultFooter({ item, login = false }: 
   if (item.isError) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--color-status-red)', font: '400 12px var(--font-sans)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--color-status-red)', font: `400 ${fontVar(12)} var(--font-sans)` }}>
           <WarningCircle size={14} weight="fill" /> {item.text || 'Turn ended with an error'}
           {parts.length > 0 && <span style={{ opacity: 0.7 }}> · {parts.join(' · ')}</span>}
         </div>
@@ -318,7 +319,7 @@ export const ResultFooter = memo(function ResultFooter({ item, login = false }: 
   }
   if (parts.length === 0) return null;
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--color-text-secondary)', font: '400 11.5px var(--font-mono)' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--color-text-secondary)', font: `400 ${fontVar(11.5)} var(--font-mono)` }}>
       <CheckCircle size={13} weight="fill" color="var(--color-accent)" /> {parts.join(' · ')}
     </div>
   );

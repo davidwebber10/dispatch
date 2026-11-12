@@ -3,6 +3,7 @@ import { CheckCircle, WarningCircle } from '@phosphor-icons/react';
 import { Spinner } from './common/Spinner';
 import { ContextDetailModal } from './ContextDetailModal';
 import { contextWindowFor, type CompactResult } from './tabs/chat/useStructuredChat';
+import { fontVar } from '../lib/fontSize';
 
 /** How long a compaction's success/failure flash stays visible before the indicator
  *  reverts to its normal percentage display. */
@@ -65,7 +66,7 @@ export function ContextIndicator({ contextTokens, contextWindow, compacting, com
         type="button"
         onClick={() => setOpen(true)}
         title="Context window detail"
-        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', color: 'var(--color-text-tertiary)', font: '400 11px var(--font-mono)' }}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', color: 'var(--color-text-tertiary)', font: `400 ${fontVar(11)} var(--font-mono)` }}
       >
         {compacting ? (
           <>

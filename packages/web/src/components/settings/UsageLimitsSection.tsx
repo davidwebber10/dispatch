@@ -9,11 +9,12 @@ import { TYPE_LABEL, HIDDEN_TYPES, whenLabel, windowLabel } from '../inspector/u
 import { liveValue, entryName, ringTone, bannerText, RING_COLOR, CLI_NOTE, STALE_MS, type RingTone } from '../layout/usageGauge';
 import { Segmented } from '../common/Segmented';
 import { row, item, Toggle, SettingsPage, SettingsGroup, SettingsRow, EmptyState, ToneDot, sectionLabel } from './ui';
+import { fontVar, fontVarInput } from '../../lib/fontSize';
 
 export const WARN_MIN = 50;
 export const WARN_MAX = 99;
 const STEP = 5;
-const note: React.CSSProperties = { fontSize: 11.5, color: 'var(--color-text-tertiary)' };
+const note: React.CSSProperties = { fontSize: fontVar(11.5), color: 'var(--color-text-tertiary)' };
 
 /** Round, then clamp to 50..99, the same rule the daemon applies. */
 export function clampWarn(n: number): number { return Math.min(WARN_MAX, Math.max(WARN_MIN, Math.round(n))); }
@@ -81,7 +82,7 @@ export function UsageAlertSetting() {
           <div style={note}>One push per limit window when a 5-hour or weekly window reaches {cfg.warnPercent}% (set in Usage limits), to every device with notifications on.</div>
         </>
       )}
-      {err && <div role="alert" style={{ fontSize: 11.5, color: 'var(--color-status-red)' }}>{err}</div>}
+      {err && <div role="alert" style={{ fontSize: fontVar(11.5), color: 'var(--color-status-red)' }}>{err}</div>}
     </>
   );
 }
@@ -107,7 +108,7 @@ export function UsageLimitsSection() {
           control={cfg ? (
             <PercentStepper draft={draft} setDraft={setDraft} onCommit={commitDraft}
               onDec={() => setWarn(cfg.warnPercent - STEP)} onInc={() => setWarn(cfg.warnPercent + STEP)} />
-          ) : <span style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>Loading…</span>} />
+          ) : <span style={{ fontSize: fontVar(12.5), color: 'var(--color-text-tertiary)' }}>Loading…</span>} />
       </SettingsGroup>
 
       <SettingsGroup title="This device">
@@ -131,7 +132,7 @@ export function UsageLimitsSection() {
 function PercentStepper({ draft, setDraft, onCommit, onDec, onInc }: { draft: string; setDraft: (v: string) => void; onCommit: () => void; onDec: () => void; onInc: () => void }) {
   const lg = useIsMobile();
   const h = lg ? 34 : 28;
-  const btn = (side: 'l' | 'r'): React.CSSProperties => ({ width: h, height: h, padding: 0, background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: side === 'l' ? 'var(--radius-sm) 0 0 var(--radius-sm)' : '0 var(--radius-sm) var(--radius-sm) 0', color: 'var(--color-text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', font: '500 15px var(--font-sans)' });
+  const btn = (side: 'l' | 'r'): React.CSSProperties => ({ width: h, height: h, padding: 0, background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: side === 'l' ? 'var(--radius-sm) 0 0 var(--radius-sm)' : '0 var(--radius-sm) var(--radius-sm) 0', color: 'var(--color-text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', font: `500 ${fontVar(15)} var(--font-sans)` });
   return (
     <div style={{ display: 'flex', alignItems: 'center' }}>
       <button type="button" aria-label="Lower the warning level" onClick={onDec} style={btn('l')}>−</button>
@@ -140,8 +141,8 @@ function PercentStepper({ draft, setDraft, onCommit, onDec, onInc }: { draft: st
           onChange={(e) => setDraft(e.target.value.replace(/[^\d.]/g, ''))}
           onBlur={onCommit}
           onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-          style={{ width: lg ? 64 : 58, height: h, boxSizing: 'border-box', padding: '0 16px 0 4px', textAlign: 'center', background: 'var(--color-elevated)', border: 'none', borderTop: '1px solid var(--color-border-strong)', borderBottom: '1px solid var(--color-border-strong)', borderRadius: 0, color: 'var(--color-text-primary)', font: `500 ${lg ? 16 : 13}px var(--font-sans)` }} />
-        <span aria-hidden style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', fontSize: lg ? 14 : 12, color: 'var(--color-text-tertiary)', pointerEvents: 'none' }}>%</span>
+          style={{ width: lg ? 'max(64px, 4rem)' : 'max(58px, 3.625rem)', height: h, boxSizing: 'border-box', padding: '0 max(16px, 1rem) 0 4px', textAlign: 'center', background: 'var(--color-elevated)', border: 'none', borderTop: '1px solid var(--color-border-strong)', borderBottom: '1px solid var(--color-border-strong)', borderRadius: 0, color: 'var(--color-text-primary)', font: `500 ${lg ? fontVarInput(16) : fontVar(13)} var(--font-sans)` }} />
+        <span aria-hidden style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', fontSize: fontVar(lg ? 14 : 12), color: 'var(--color-text-tertiary)', pointerEvents: 'none' }}>%</span>
       </span>
       <button type="button" aria-label="Raise the warning level" onClick={onInc} style={btn('r')}>+</button>
     </div>
@@ -183,7 +184,7 @@ function UsageFigures({ summary, now }: { summary: UsageSummary | null; now: num
         <span style={{ ...sectionLabel, textTransform: 'uppercase' }}>Current figures</span>
       </div>
       {paused.map((g) => (
-        <div key={g.provider} role="status" style={{ ...card, display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 12px', borderColor: 'var(--color-status-red)', fontSize: 13, lineHeight: 1.4, color: 'var(--color-status-red)', overflowWrap: 'anywhere' }}>
+        <div key={g.provider} role="status" style={{ ...card, display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 12px', borderColor: 'var(--color-status-red)', fontSize: fontVar(13), lineHeight: 1.4, color: 'var(--color-status-red)', overflowWrap: 'anywhere' }}>
           <span style={{ paddingTop: 5 }}><ToneDot tone="red" /></span>{bannerText(g, now)}
         </div>
       ))}
@@ -195,19 +196,19 @@ function UsageFigures({ summary, now }: { summary: UsageSummary | null; now: num
             <div key={c.key} data-testid="usage-account" style={card}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '11px 12px', minWidth: 0 }}>
                 <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--color-text-primary)' }}>{c.name}</span>
-                  {c.plan && <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--color-text-tertiary)' }}>{c.plan}</span>}
+                  <span style={{ fontSize: fontVar(13.5), fontWeight: 600, color: 'var(--color-text-primary)' }}>{c.name}</span>
+                  {c.plan && <span style={{ marginLeft: 8, fontSize: fontVar(12), color: 'var(--color-text-tertiary)' }}>{c.plan}</span>}
                 </span>
                 <span title={c.stale ? 'Only Pretty threads and Chat report usage, so this figure can be old.' : undefined}
-                  style={{ flexShrink: 0, fontSize: 12, color: c.stale ? 'var(--color-status-yellow)' : 'var(--color-text-tertiary)' }}>As of {c.asOf}</span>
+                  style={{ flexShrink: 0, fontSize: fontVar(12), color: c.stale ? 'var(--color-status-yellow)' : 'var(--color-text-tertiary)' }}>As of {c.asOf}</span>
               </div>
-              {c.rows.length === 0 && <div style={{ borderTop: '1px solid var(--color-border)', padding: '11px 12px', fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No limits reported</div>}
+              {c.rows.length === 0 && <div style={{ borderTop: '1px solid var(--color-border)', padding: '11px 12px', fontSize: fontVar(12.5), color: 'var(--color-text-tertiary)' }}>No limits reported</div>}
               {c.rows.map((r) => <MeterRow key={r.type} row={r} />)}
             </div>
           ))}
         </div>
       )}
-      {cards.length > 0 && <div style={{ padding: '0 4px', fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-text-tertiary)' }}>{CLI_NOTE}</div>}
+      {cards.length > 0 && <div style={{ padding: '0 4px', fontSize: fontVar(11.5), lineHeight: 1.5, color: 'var(--color-text-tertiary)' }}>{CLI_NOTE}</div>}
     </section>
   );
 }
@@ -218,8 +219,8 @@ function MeterRow({ row: r }: { row: FigureRow }) {
   return (
     <div style={{ borderTop: '1px solid var(--color-border)', padding: '10px 12px 11px', display: 'flex', flexDirection: 'column', gap: 6 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
-        <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>{r.label}</span>
-        <span style={{ fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: r.used === null ? 'var(--color-text-tertiary)' : r.tone === 'green' ? 'var(--color-text-primary)' : color }}>
+        <span style={{ fontSize: fontVar(13), color: 'var(--color-text-secondary)' }}>{r.label}</span>
+        <span style={{ fontSize: fontVar(13), fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: r.used === null ? 'var(--color-text-tertiary)' : r.tone === 'green' ? 'var(--color-text-primary)' : color }}>
           {r.used === null ? '–' : `${r.used}%`}
         </span>
       </div>
@@ -227,7 +228,7 @@ function MeterRow({ row: r }: { row: FigureRow }) {
         style={{ height: 6, borderRadius: 'var(--radius-pill)', background: 'var(--color-hover)', overflow: 'hidden' }}>
         {r.used !== null && r.used > 0 && <div style={{ width: `${Math.min(100, r.used)}%`, height: '100%', borderRadius: 'var(--radius-pill)', background: color }} />}
       </div>
-      <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{r.note}</span>
+      <span style={{ fontSize: fontVar(12), color: 'var(--color-text-tertiary)' }}>{r.note}</span>
     </div>
   );
 }

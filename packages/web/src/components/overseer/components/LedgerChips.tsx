@@ -18,6 +18,7 @@ import { useIsMobile } from '../../../hooks/useIsMobile';
 import { chipLabel, splitLedgerRefs, type LedgerChips, type LedgerIndexEntry } from '../../../lib/ledgerRefs';
 import { ledgerSectionOf, STATUS_WORD } from '../ledger';
 import { useOverseer } from '../store';
+import { fontVar } from '../../../lib/fontSize';
 
 /** Open a ledger item from a chip: on the card when it is there, else in the popover at `anchor`. */
 export function openLedgerRef(projectId: string, seq: number, anchor: { x: number; y: number }, opts: { mobile: boolean }): void {
@@ -122,14 +123,14 @@ export function LedgerRefPopover() {
         position: 'fixed', left, top: popover.y + 12, width: POPOVER_WIDTH, zIndex: 50,
         display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 12px', borderRadius: 'var(--radius-md)',
         background: 'var(--elev)', border: '1px solid var(--border)', boxShadow: '0 10px 28px -8px var(--color-shadow)',
-        fontSize: 12.5, lineHeight: 1.45, color: 'var(--tp)',
+        fontSize: fontVar(12.5), lineHeight: 1.45, color: 'var(--tp)',
       }}
     >
       <div style={{ fontWeight: 600 }}>{`N${entry.seq} · ${entry.title || entry.text}`}</div>
-      {entry.title && <div style={{ fontSize: 12, color: 'var(--tp)' }}>{entry.text}</div>}
-      <div style={{ fontSize: 11.5, color: 'var(--ts)' }}>{STATUS_WORD[entry.status]}</div>
+      {entry.title && <div style={{ fontSize: fontVar(12), color: 'var(--tp)' }}>{entry.text}</div>}
+      <div style={{ fontSize: fontVar(11.5), color: 'var(--ts)' }}>{STATUS_WORD[entry.status]}</div>
       {entry.answer && (
-        <div style={{ fontSize: 12, color: 'var(--ts)' }}>
+        <div style={{ fontSize: fontVar(12), color: 'var(--ts)' }}>
           <span style={{ fontWeight: 600, color: 'var(--tp)' }}>Answer:</span> <span>{`"${entry.answer}"`}</span>
         </div>
       )}

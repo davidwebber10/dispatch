@@ -3,6 +3,7 @@ import type { Terminal } from '../../api/types';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { useSettings, CLI_PRETTY_HINT_KEY } from '../../stores/settings';
 import { useTransportSwitch } from '../layout/TransportToggle';
+import { fontVar } from '../../lib/fontSize';
 
 export { CLI_PRETTY_HINT_KEY };
 
@@ -41,7 +42,7 @@ export function CliPrettyHint({ tab, reserveRight }: { tab: Terminal; reserveRig
       style={{
         display: 'flex', alignItems: 'center', gap: 10, padding: '5px 12px', paddingRight: reserveRight || 12, flexShrink: 0,
         background: 'var(--color-elevated)', borderBottom: '1px solid var(--color-border-strong)',
-        color: 'var(--color-text-secondary)', fontSize: 12, lineHeight: 1.4,
+        color: 'var(--color-text-secondary)', fontSize: fontVar(12), lineHeight: 1.4,
       }}
     >
       <span style={{ flex: 1, minWidth: 0, ...(short ? { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } : {}) }}
@@ -55,11 +56,11 @@ export function CliPrettyHint({ tab, reserveRight }: { tab: Terminal; reserveRig
         onClick={switchToPretty}
         style={short ? {
           flexShrink: 0, height: 24, padding: '0 4px', border: 'none', background: 'transparent', color: 'var(--color-accent)',
-          font: '500 13px var(--font-sans)', cursor: canSwitch ? 'pointer' : 'not-allowed', opacity: canSwitch ? 1 : 0.5,
+          font: `500 ${fontVar(13)} var(--font-sans)`, cursor: canSwitch ? 'pointer' : 'not-allowed', opacity: canSwitch ? 1 : 0.5,
         } : {
           flexShrink: 0, height: 22, padding: '0 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border-strong)',
           background: 'var(--color-hover)', color: 'var(--color-text-primary)',
-          font: '600 11px var(--font-mono, monospace)', letterSpacing: '0.3px',
+          font: `600 ${fontVar(11)} var(--font-mono, monospace)`, letterSpacing: '0.3px',
           cursor: canSwitch ? 'pointer' : 'not-allowed', opacity: canSwitch ? 1 : 0.5,
         }}
       >

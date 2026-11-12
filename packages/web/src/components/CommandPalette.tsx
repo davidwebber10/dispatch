@@ -19,6 +19,7 @@ import { StatusDot } from './common/StatusDot';
 import { ConfirmModal } from './common/ConfirmModal';
 import { THREADS_ICON } from './common/viewIcons';
 import { NewThreadModal } from './sidebar/NewThreadModal';
+import { fontVar } from '../lib/fontSize';
 
 /**
  * The command palette: ⌘K / Ctrl+K on the desktop.
@@ -201,15 +202,15 @@ export function CommandPalette() {
                 else if (e.key === 'ArrowUp') { e.preventDefault(); setCursor((c) => Math.max(c - 1, 0)); }
                 else if (e.key === 'Enter') { e.preventDefault(); const r = shown[cursor]; if (r) pick(r); }
               }}
-              style={{ width: '100%', boxSizing: 'border-box', padding: '14px 16px', background: 'transparent', border: 'none', borderBottom: '1px solid var(--color-border)', color: 'var(--color-text-primary)', fontSize: 15, outline: 'none' }} />
+              style={{ width: '100%', boxSizing: 'border-box', padding: '14px 16px', background: 'transparent', border: 'none', borderBottom: '1px solid var(--color-border)', color: 'var(--color-text-primary)', fontSize: fontVar(15), outline: 'none' }} />
             <ul ref={list} id="command-list" role="listbox" aria-label="Results" style={{ listStyle: 'none', margin: 0, padding: 6, maxHeight: '50vh', overflowY: 'auto' }}>
-              {shown.length === 0 && <li style={{ padding: '10px 12px', fontSize: 13, color: 'var(--color-text-tertiary)' }}>No thread, project or command matches.</li>}
+              {shown.length === 0 && <li style={{ padding: '10px 12px', fontSize: fontVar(13), color: 'var(--color-text-tertiary)' }}>No thread, project or command matches.</li>}
               {shown.map((r, i) => (
                 <li key={r.key} id={optionId(r.key)} role="option" aria-label={r.label} aria-selected={i === cursor} onMouseMove={() => { if (i !== cursor) setCursor(i); }} onClick={() => pick(r)}
-                  style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderRadius: 'var(--radius-md)', cursor: 'pointer', background: i === cursor ? 'var(--color-elevated)' : 'transparent', color: 'var(--color-text-primary)', fontSize: 14 }}>
+                  style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderRadius: 'var(--radius-md)', cursor: 'pointer', background: i === cursor ? 'var(--color-elevated)' : 'transparent', color: 'var(--color-text-primary)', fontSize: fontVar(14) }}>
                   <span aria-hidden={r.key.startsWith('thread:') ? undefined : true} style={{ width: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: 'var(--color-text-tertiary)' }}>{r.icon}</span>
                   <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.label}</span>
-                  <span style={{ flexShrink: 0, maxWidth: '40%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{r.hint}</span>
+                  <span style={{ flexShrink: 0, maxWidth: '40%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', font: `400 ${fontVar(11)} var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>{r.hint}</span>
                 </li>
               ))}
             </ul>

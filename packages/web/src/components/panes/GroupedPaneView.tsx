@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { useGroups } from './store';
 import { PaneTree } from './PaneTree';
 import { leafCount, leafTabIds, defaultLayout } from './types';
+import { fontVar } from '../../lib/fontSize';
 
 // ---------------------------------------------------------------------------
 // Block geometry helpers
@@ -252,7 +253,7 @@ export function GroupedPaneView({ groupId }: { groupId: string }) {
               >
                 <span
                   style={{
-                    fontSize:   11,
+                    fontSize:   fontVar(11),
                     fontWeight: 500,
                     color:      isHov
                       ? 'var(--color-accent)'

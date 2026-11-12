@@ -7,6 +7,7 @@ import { useIsMobile } from '../../hooks/useIsMobile';
 import { ConfirmModal } from '../common/ConfirmModal';
 import { SettingsGroup, SettingsRow, SettingsSubPage, EmptyState, fieldFor, sectionLabel } from './ui';
 import { Button } from '../ui';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * Settings → Devices & access: signed-in devices (network exposure spec, 8.1 and 8.2).
@@ -128,7 +129,7 @@ export function DevicesList({ now = Date.now, reload = () => { void reloadFresh(
 
   const t = now();
   const lastActive = (d: DeviceInfo) => (t - d.lastSeenAt < 5000 ? 'now' : `${timeAgo(new Date(d.lastSeenAt).toISOString(), t)} ago`);
-  const errorLine = error && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)' }}>{error}</div>;
+  const errorLine = error && <div role="alert" style={{ fontSize: fontVar(12.5), color: 'var(--color-status-red)' }}>{error}</div>;
 
   const confirmModal = (
     <>
@@ -209,7 +210,7 @@ export function DevicesList({ now = Date.now, reload = () => { void reloadFresh(
         <section role="group" aria-label="Signed-in devices" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <div style={{ minHeight: 22, display: 'flex', alignItems: 'center', padding: '0 4px' }}><span style={{ ...sectionLabel, textTransform: 'uppercase' }}>Signed-in devices</span></div>
           <EmptyState>No device has signed in yet. Make a code to sign in a phone.</EmptyState>
-          <div style={{ padding: '0 4px', fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-text-tertiary)' }}>{footer}</div>
+          <div style={{ padding: '0 4px', fontSize: fontVar(11.5), lineHeight: 1.5, color: 'var(--color-text-tertiary)' }}>{footer}</div>
         </section>
       ) : (
         <SettingsGroup title="Signed-in devices" footer={footer}>

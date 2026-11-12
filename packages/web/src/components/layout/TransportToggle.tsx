@@ -5,6 +5,7 @@ import { useThreadStatus } from '../../stores/threadStatus';
 import { api } from '../../api/client';
 import type { Terminal } from '../../api/types';
 import { ConfirmModal } from '../common/ConfirmModal';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * CLI ⇄ Pretty transport switch for a running claude-code/codex thread. This is the ONLY
@@ -124,7 +125,7 @@ export function TransportToggle({ terminalId, floating = false }: { terminalId: 
             style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               minWidth: dim.w, height: dim.h, padding: '0 8px', borderRadius: dim.radius, border: 'none',
-              font: `600 ${dim.font}px var(--font-mono, monospace)`, letterSpacing: '0.4px',
+              font: `600 ${fontVar(dim.font)} var(--font-mono, monospace)`, letterSpacing: '0.4px',
               cursor: disabled ? (on ? 'default' : 'not-allowed') : 'pointer',
               background: on ? (floating ? 'color-mix(in srgb, var(--color-text-emphasis) 14%, transparent)' : 'var(--color-hover)') : 'transparent',
               color: on ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',

@@ -1,6 +1,7 @@
 import { Component, useState, type CSSProperties, type ErrorInfo, type ReactNode } from 'react';
 import { WarningCircle } from '@phosphor-icons/react';
 import { copyText } from '../../lib/clipboard';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * A render error in one part of the app must not blank the rest of it (engineering program
@@ -56,7 +57,7 @@ export function errorDetails(scope: string, error: Error, componentStack: string
 
 const button: CSSProperties = {
   height: 34, padding: '0 14px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)',
-  borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13, cursor: 'pointer',
+  borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: fontVar(13), cursor: 'pointer',
 };
 
 function DefaultFallback({ scope, error, componentStack, reset }: { scope: string; error: Error; componentStack: string; reset(): void }) {
@@ -68,8 +69,8 @@ function DefaultFallback({ scope, error, componentStack, reset }: { scope: strin
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, width: '100%', height: '100%', minHeight: 180, padding: 16, boxSizing: 'border-box', background: 'var(--color-base)' }}>
       <div role="alert" style={{ width: 'min(440px, 100%)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, textAlign: 'center', color: 'var(--color-text-primary)' }}>
         <WarningCircle size={32} weight="regular" color="var(--color-status-red)" aria-hidden />
-        <div style={{ fontSize: 15, fontWeight: 600 }}>This part of Dispatch stopped because of an error.</div>
-        <pre style={{ margin: 0, maxWidth: '100%', maxHeight: 96, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: '12px/1.5 var(--font-mono)', color: 'var(--color-text-secondary)' }}>{error.message}</pre>
+        <div style={{ fontSize: fontVar(15), fontWeight: 600 }}>This part of Dispatch stopped because of an error.</div>
+        <pre style={{ margin: 0, maxWidth: '100%', maxHeight: 96, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: `${fontVar(12)}/1.5 var(--font-mono)`, color: 'var(--color-text-secondary)' }}>{error.message}</pre>
         <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 8, marginTop: 4 }}>
           <button type="button" onClick={() => window.location.reload()} style={{ ...button, background: 'var(--color-accent)', border: 'none', color: 'var(--color-on-accent)', fontWeight: 600 }}>Reload</button>
           <button type="button" onClick={reset} style={button}>Try again</button>

@@ -1,6 +1,7 @@
 import { CaretRight } from '@phosphor-icons/react';
 import { settingsSection, useAllSettingsSections, useSettingsGroups } from './sections';
 import { UpdateBanner } from '../update/UpdateBanner';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * Mobile settings, presented as an iOS-style drill-down rather than the desktop page:
@@ -22,7 +23,7 @@ export function MobileSettingsList({ onOpen }: { onOpen: (key: string) => void }
         const rows = sections.filter((s) => s.group === g);
         return (
           <section key={g} aria-label={g} style={{ marginTop: 10 }}>
-            <div style={{ font: '500 10.5px var(--font-mono)', letterSpacing: '0.12em', color: 'var(--color-text-tertiary)', padding: '8px 4px 6px' }}>{g}</div>
+            <div style={{ font: `500 ${fontVar(10.5)} var(--font-mono)`, letterSpacing: '0.12em', color: 'var(--color-text-tertiary)', padding: '8px 4px 6px' }}>{g}</div>
             <div style={{ background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
               {rows.map((s, i) => {
                 const Icon = s.icon;
@@ -33,8 +34,8 @@ export function MobileSettingsList({ onOpen }: { onOpen: (key: string) => void }
                       <Icon size={17} />
                     </span>
                     <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ display: 'block', fontSize: 15, fontWeight: 500, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.label}</span>
-                      {s.blurb && <span style={{ display: 'block', marginTop: 1, fontSize: 12.5, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.blurb}</span>}
+                      <span style={{ display: 'block', fontSize: fontVar(15), fontWeight: 500, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.label}</span>
+                      {s.blurb && <span style={{ display: 'block', marginTop: 1, fontSize: fontVar(12.5), color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.blurb}</span>}
                     </span>
                     <CaretRight aria-hidden size={16} color="var(--color-text-tertiary)" style={{ flexShrink: 0 }} />
                   </button>

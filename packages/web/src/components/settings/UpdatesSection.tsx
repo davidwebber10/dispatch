@@ -7,6 +7,7 @@ import { Markdown } from '../Markdown';
 import { splitNoteHeadline } from '../../lib/releaseNotes';
 import { SettingsGroup, SettingsRow, Sheet, StatusMark } from './ui';
 import { Button } from '../ui';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * Settings → About & updates → the "Dispatch" group: the always-reachable update surface (the
@@ -87,7 +88,7 @@ export function UpdatesSection() {
                 person who can rebuild the fleet image. */}
             {hosted
               ? 'Your workspace updates when it is rebuilt onto a newer image — ask an administrator if this keeps failing.'
-              : <>Run <code style={{ font: '400 11px var(--font-mono)' }}>dispatch update</code> manually instead.</>}
+              : <>Run <code style={{ font: `400 ${fontVar(11)} var(--font-mono)` }}>dispatch update</code> manually instead.</>}
           </>
         )} />
       )}
@@ -120,13 +121,13 @@ function NoteEntry({ entry, first }: { entry: ReleaseNote; first: boolean }) {
   return (
     <section style={{ marginTop: first ? 0 : 16, paddingTop: first ? 0 : 14, borderTop: first ? 'none' : '1px solid var(--color-border)' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-        <span style={{ font: '600 13px var(--font-mono)', color: 'var(--color-accent)' }}>{entry.version}</span>
-        {date && <span style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>{date}</span>}
-        {entry.author && <span style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>by {entry.author}</span>}
+        <span style={{ font: `600 ${fontVar(13)} var(--font-mono)`, color: 'var(--color-accent)' }}>{entry.version}</span>
+        {date && <span style={{ fontSize: fontVar(11.5), color: 'var(--color-text-tertiary)' }}>{date}</span>}
+        {entry.author && <span style={{ fontSize: fontVar(11.5), color: 'var(--color-text-tertiary)' }}>by {entry.author}</span>}
       </div>
-      {headline && <div style={{ marginTop: 4, fontSize: 14, fontWeight: 600, lineHeight: 1.4, color: 'var(--color-text-primary)' }}>{headline}</div>}
+      {headline && <div style={{ marginTop: 4, fontSize: fontVar(14), fontWeight: 600, lineHeight: 1.4, color: 'var(--color-text-primary)' }}>{headline}</div>}
       {body ? <div style={{ marginTop: 6 }}><Markdown source={body} /></div>
-        : !headline && <div style={{ marginTop: 4, fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No notes for this release.</div>}
+        : !headline && <div style={{ marginTop: 4, fontSize: fontVar(12.5), color: 'var(--color-text-tertiary)' }}>No notes for this release.</div>}
     </section>
   );
 }

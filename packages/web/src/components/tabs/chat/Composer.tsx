@@ -15,6 +15,7 @@ import { useTransportSwitch } from '../../layout/TransportToggle';
 import { ConfirmModal } from '../../common/ConfirmModal';
 import { textToSend } from '../../../lib/slashEscape';
 import { MODEL_IMAGE_MIME, fileToBase64 } from '../../../lib/image-attach';
+import { fontVar } from '../../../lib/fontSize';
 
 export interface ComposerProps {
   terminalId: string;
@@ -193,7 +194,7 @@ export const Composer = memo(function Composer({ terminalId, sessionId, tab, bus
         style={{ flexShrink: 0, borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', padding: '10px 14px max(10px, var(--composer-safe-bottom, env(safe-area-inset-bottom)))' }}
       >
         {dragActive && (
-          <div style={{ maxWidth: 768, margin: '0 auto 6px', fontSize: 12, color: 'var(--color-accent)' }}>Drop image to attach</div>
+          <div style={{ maxWidth: 768, margin: '0 auto 6px', fontSize: fontVar(12), color: 'var(--color-accent)' }}>Drop image to attach</div>
         )}
         <div style={{ maxWidth: 768, margin: '0 auto' }}><UploadTray uploads={uploader.uploads} onCancel={uploader.cancel} /></div>
         {/* Staged image thumbnails — each removable via its ×; they send with the next message.
@@ -242,7 +243,7 @@ export const Composer = memo(function Composer({ terminalId, sessionId, tab, bus
       </div>
       {transport.confirmUi}
       {restartError && (
-        <div role="alert" style={{ flexShrink: 0, display: 'flex', alignItems: 'flex-start', gap: 8, padding: '4px 14px', font: '400 12.5px var(--font-sans)', color: 'var(--color-status-red)' }}>
+        <div role="alert" style={{ flexShrink: 0, display: 'flex', alignItems: 'flex-start', gap: 8, padding: '4px 14px', font: `400 ${fontVar(12.5)} var(--font-sans)`, color: 'var(--color-status-red)' }}>
           <span style={{ flex: 1, minWidth: 0 }}>Could not restart: {restartError}</span>
           <button type="button" aria-label="Dismiss" title="Dismiss" onClick={() => setRestartError(null)}
             style={{ flex: 'none', padding: 2, background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', display: 'flex' }}>
@@ -261,7 +262,7 @@ export const Composer = memo(function Composer({ terminalId, sessionId, tab, bus
         onCancel={() => setAskRestart(false)}
       />
       {transport.error && (
-        <div role="alert" style={{ flexShrink: 0, display: 'flex', alignItems: 'flex-start', gap: 8, padding: '4px 14px', font: '400 12.5px var(--font-sans)', color: 'var(--color-status-red)' }}>
+        <div role="alert" style={{ flexShrink: 0, display: 'flex', alignItems: 'flex-start', gap: 8, padding: '4px 14px', font: `400 ${fontVar(12.5)} var(--font-sans)`, color: 'var(--color-status-red)' }}>
           <span style={{ flex: 1, minWidth: 0 }}>Could not switch: {transport.error}</span>
           <button type="button" aria-label="Dismiss" title="Dismiss" onClick={transport.clearError}
             style={{ flex: 'none', padding: 2, background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', display: 'flex' }}>

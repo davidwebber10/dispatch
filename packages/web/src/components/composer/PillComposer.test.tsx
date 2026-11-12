@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { PillComposer } from './PillComposer';
 import { usePluginRegistry } from '../../plugins/registry';
+import { useSettings } from '../../stores/settings';
 
 const dictation = (over: Record<string, unknown> = {}) => ({
   state: 'idle', error: null, progress: {}, recordingId: null, start: vi.fn(), retry: vi.fn(), insert: vi.fn(), stop: vi.fn(), cancel: vi.fn(), reset: vi.fn(), getAnalyser: () => null, ...over,
@@ -10,6 +11,28 @@ const dictation = (over: Record<string, unknown> = {}) => ({
 const base = { value: '', onChange: vi.fn(), onSend: vi.fn(), canSend: false, placeholder: 'Message…', onAddFile: vi.fn(), sttConfigured: true };
 
 describe('PillComposer', () => {
+  it('the line height follows the text scale, and is unchanged at 100%', () => {
+    useSettings.setState({ textScale: 1 });
+    const { unmount } = render(<PillComposer {...base} dictation={dictation()} />);
+    expect(screen.getByPlaceholderText('Message…').style.lineHeight).toBe('21px');
+    unmount();
+    useSettings.setState({ textScale: 1.5 });
+    render(<PillComposer {...base} dictation={dictation()} />);
+    expect(screen.getByPlaceholderText('Message…').style.lineHeight).toBe('32px');
+    useSettings.setState({ textScale: 1 });
+  });
+
+  it('on a phone the line height does not go under its 100% value: the text is held at 16px there', () => {
+    useSettings.setState({ textScale: 0.75 });
+    const { unmount } = render(<PillComposer {...base} dictation={dictation()} mobile />);
+    expect(screen.getByPlaceholderText('Message…').style.lineHeight).toBe('22px');
+    unmount();
+    useSettings.setState({ textScale: 1.5 });
+    render(<PillComposer {...base} dictation={dictation()} mobile />);
+    expect(screen.getByPlaceholderText('Message…').style.lineHeight).toBe('33px');
+    useSettings.setState({ textScale: 1 });
+  });
+
   it('a dictation error is a line above the box, and the text box stays usable', () => {
     const d = dictation({ state: 'error', error: 'Microphone access is blocked. Allow it in Settings → Dispatch → Microphone, then retry.' });
     render(<PillComposer {...base} dictation={d} />);

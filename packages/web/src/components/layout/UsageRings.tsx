@@ -9,6 +9,7 @@ import { usePrefersReducedMotion } from '../../hooks/usePrefersReducedMotion';
 import { HARNESS_MARK } from '../common/HarnessStrip';
 import { useAccounts, accountProviderOf, usageAccessOf, updatedAgo, USAGE_ACCESS_TEXT } from '../../stores/accounts';
 import { ringModels, RING_COLOR, yellowFrom, bannerText, COUNTED, type RingModel, type RingRow } from './usageGauge';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * The usage sheet (2026-11-06, option A of the redesign): one card per tool, laid out like Claude's
@@ -71,10 +72,10 @@ function LimitRow({ toolName, row, warn, first, dense }: { toolName: string; row
     return (
       <div data-testid="usage-limit" style={{ padding: '7px 0', borderTop: first ? 'none' : '1px solid var(--color-border)' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
-          <span style={{ fontSize: 13.5, fontWeight: 500, whiteSpace: 'nowrap' }}>{label}</span>
-          {when && <span title={row.estimateTitle ?? undefined} style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{when}</span>}
-          <span style={{ marginLeft: 'auto', fontSize: 13.5, fontWeight: 600, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', color: row.tone === 'green' ? 'var(--color-text-primary)' : color }}>
-            {Math.round(used)}%<span style={{ fontSize: 11.5, fontWeight: 400, color: 'var(--color-text-secondary)' }}> used</span>
+          <span style={{ fontSize: fontVar(13.5), fontWeight: 500, whiteSpace: 'nowrap' }}>{label}</span>
+          {when && <span title={row.estimateTitle ?? undefined} style={{ fontSize: fontVar(11.5), color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{when}</span>}
+          <span style={{ marginLeft: 'auto', fontSize: fontVar(13.5), fontWeight: 600, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', color: row.tone === 'green' ? 'var(--color-text-primary)' : color }}>
+            {Math.round(used)}%<span style={{ fontSize: fontVar(11.5), fontWeight: 400, color: 'var(--color-text-secondary)' }}> used</span>
           </span>
         </div>
         {meter(5, '6px 0 1px')}
@@ -84,9 +85,9 @@ function LimitRow({ toolName, row, warn, first, dense }: { toolName: string; row
   return (
     <div data-testid="usage-limit" style={{ padding: '11px 0', borderTop: first ? 'none' : '1px solid var(--color-border)' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-        <span style={{ fontSize: 14.5, fontWeight: 500 }}>{label}</span>
-        <span style={{ marginLeft: 'auto', fontSize: 14.5, fontWeight: 500, fontVariantNumeric: 'tabular-nums', color: row.tone === 'green' ? 'var(--color-text-primary)' : color }}>
-          {Math.round(used)}% <span style={{ fontSize: 12.5, fontWeight: 400, color: 'var(--color-text-secondary)' }}>used</span>
+        <span style={{ fontSize: fontVar(14.5), fontWeight: 500 }}>{label}</span>
+        <span style={{ marginLeft: 'auto', fontSize: fontVar(14.5), fontWeight: 500, fontVariantNumeric: 'tabular-nums', color: row.tone === 'green' ? 'var(--color-text-primary)' : color }}>
+          {Math.round(used)}% <span style={{ fontSize: fontVar(12.5), fontWeight: 400, color: 'var(--color-text-secondary)' }}>used</span>
         </span>
       </div>
       <div role="meter" aria-label={`${toolName} ${row.label}: ${target}% used`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={target}
@@ -97,9 +98,9 @@ function LimitRow({ toolName, row, warn, first, dense }: { toolName: string; row
         ))}
       </div>
       {(row.reset || row.estimate) && (
-        <div title={row.estimateTitle ?? undefined} style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>
+        <div title={row.estimateTitle ?? undefined} style={{ fontSize: fontVar(12.5), color: 'var(--color-text-secondary)' }}>
           {row.reset ? cap(row.reset) : null}{row.reset && row.estimate ? ' · ' : ''}{row.estimate}
-          {row.estimate && <span style={{ marginLeft: 5, font: '400 10px var(--font-mono)', color: 'var(--color-text-tertiary)', padding: '0 4px', borderRadius: 'var(--radius-xs)', border: '1px solid var(--color-border)' }}>EST</span>}
+          {row.estimate && <span style={{ marginLeft: 5, font: `400 ${fontVar(10)} var(--font-mono)`, color: 'var(--color-text-tertiary)', padding: '0 4px', borderRadius: 'var(--radius-xs)', border: '1px solid var(--color-border)' }}>EST</span>}
         </div>
       )}
     </div>
@@ -116,7 +117,7 @@ function UsageAccessLine({ access: a, dense, first }: { access: CardAccess; dens
   const [signing, setSigning] = useState(false);
   const size = dense ? 12.5 : 13.5;
   const line = (Icon: typeof Info, text: string) => (
-    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: size, lineHeight: 1.4, color: 'var(--color-text-secondary)' }}>
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: fontVar(size), lineHeight: 1.4, color: 'var(--color-text-secondary)' }}>
       <Icon size={dense ? 14 : 15} style={{ flexShrink: 0, marginTop: 1.5 }} /><span style={{ minWidth: 0 }}>{text}</span>
     </div>
   );
@@ -129,7 +130,7 @@ function UsageAccessLine({ access: a, dense, first }: { access: CardAccess; dens
           {line(SignIn, a.isCli ? USAGE_ACCESS_TEXT.signInCli : USAGE_ACCESS_TEXT.signIn)}
           {!a.isCli && !signing && (
             <button type="button" aria-label={`Sign in again to ${a.label}`} onClick={() => setSigning(true)}
-              style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 6, height: dense ? 26 : 30, padding: '0 12px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-on-accent)', fontSize: dense ? 12 : 13, fontWeight: 600, cursor: 'pointer' }}>
+              style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 6, height: dense ? 26 : 30, padding: '0 12px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-on-accent)', fontSize: fontVar(dense ? 12 : 13), fontWeight: 600, cursor: 'pointer' }}>
               <SignIn size={dense ? 13 : 14} weight="bold" />Sign in again
             </button>
           )}
@@ -155,42 +156,42 @@ function ToolCard({ m, warn, current, dense, email, access }: { m: RingModel; wa
     <section aria-label={m.name} data-current={current ? 'true' : undefined} style={{ background: 'var(--color-elevated)', border: `1px solid ${current ? 'var(--color-accent)' : 'color-mix(in srgb, var(--color-text-emphasis) 16%, transparent)'}`, borderRadius: 'var(--radius-lg)', position: 'relative', marginTop: current ? 14 : 0, minWidth: 0, opacity: m.stale ? 0.75 : 1, boxShadow: '0 6px 18px -12px var(--color-shadow-strong)' }}>
       {/* The open thread's account (2026-11-09): a tab on the top-right of the green border, not a pill in the header. */}
       {current && (
-        <span data-testid="usage-current-tab" style={{ position: 'absolute', right: 12, bottom: '100%', marginBottom: 0, padding: dense ? '2px 9px' : '3px 10px', borderRadius: 'var(--radius-md) var(--radius-md) 0 0', background: 'var(--color-accent)', color: 'var(--color-on-accent)', font: `700 ${dense ? 10 : 10.5}px var(--font-mono)`, letterSpacing: '.07em', textTransform: 'uppercase', whiteSpace: 'nowrap', lineHeight: 1.4 }}>This thread</span>
+        <span data-testid="usage-current-tab" style={{ position: 'absolute', right: 12, bottom: '100%', marginBottom: 0, padding: dense ? '2px 9px' : '3px 10px', borderRadius: 'var(--radius-md) var(--radius-md) 0 0', background: 'var(--color-accent)', color: 'var(--color-on-accent)', font: `700 ${fontVar(dense ? 10 : 10.5)} var(--font-mono)`, letterSpacing: '.07em', textTransform: 'uppercase', whiteSpace: 'nowrap', lineHeight: 1.4 }}>This thread</span>
       )}
       <div data-testid="usage-card-header" style={{ borderRadius: 'var(--radius-lg) var(--radius-lg) 0 0', display: 'flex', alignItems: 'center', gap: dense ? 8 : 9, padding: dense ? '6px 12px' : '10px 14px', background: current ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : 'color-mix(in srgb, var(--color-text-emphasis) 6%, transparent)', borderBottom: '1px solid var(--color-border)' }}>
         {Mark && <span aria-hidden style={{ width: dense ? 22 : 26, height: dense ? 22 : 26, flexShrink: 0, borderRadius: 'var(--radius-md)', background: 'var(--color-pane)', border: '1px solid var(--color-border)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><Mark size={dense ? 13 : 15} /></span>}
         {/* The name, and under it the account's email when the daemon knows it (2026-11-09). */}
         <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flexShrink: 0 }}>
-          <span style={{ fontSize: dense ? 14.5 : 16, fontWeight: 600, whiteSpace: 'nowrap', lineHeight: 1.25 }}>{m.name}</span>
-          {email && <span data-testid="usage-card-email" title={email} style={{ font: `400 ${dense ? 11 : 11.5}px var(--font-mono)`, color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220, lineHeight: 1.3 }}>{email}</span>}
+          <span style={{ fontSize: fontVar(dense ? 14.5 : 16), fontWeight: 600, whiteSpace: 'nowrap', lineHeight: 1.25 }}>{m.name}</span>
+          {email && <span data-testid="usage-card-email" title={email} style={{ font: `400 ${fontVar(dense ? 11 : 11.5)} var(--font-mono)`, color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220, lineHeight: 1.3 }}>{email}</span>}
         </span>
-        {m.plan && <span style={{ font: '400 10.5px var(--font-mono)', letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-pill)', padding: '1px 7px' }}>{m.plan}</span>}
+        {m.plan && <span style={{ font: `400 ${fontVar(10.5)} var(--font-mono)`, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-pill)', padding: '1px 7px' }}>{m.plan}</span>}
         <span title={m.stale ? 'These figures are old: no thread has reported in a while' : undefined}
-          style={{ marginLeft: 'auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', font: '400 11px var(--font-mono)', color: m.stale ? 'var(--color-status-yellow)' : 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{m.asOf}</span>
+          style={{ marginLeft: 'auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', font: `400 ${fontVar(11)} var(--font-mono)`, color: m.stale ? 'var(--color-status-yellow)' : 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{m.asOf}</span>
       </div>
       <div style={{ padding: dense ? '0 12px' : '0 14px' }}>
       {rows.map((r, i) => <LimitRow key={r.type} toolName={m.name} row={r} warn={warn} first={i === 0} dense={dense} />)}
       {/* Money and credits (2026-11-06): Claude's extra-usage spend this month, Codex's prepaid balance. */}
       {(m.spend || m.creditBalance) && (
         <div data-testid="usage-money" style={{ borderTop: rows.length ? '1px solid var(--color-border)' : 'none', padding: dense ? '7px 0' : '11px 0', display: 'flex', flexDirection: 'column', gap: dense ? 2 : 4 }}>
-          {m.spend && <div style={{ fontSize: dense ? 12.5 : 13.5, color: 'var(--color-text-secondary)' }}>{m.spend}</div>}
-          {m.creditBalance && <div style={{ fontSize: dense ? 12.5 : 13.5, color: 'var(--color-text-secondary)' }}>{m.creditBalance}</div>}
+          {m.spend && <div style={{ fontSize: fontVar(dense ? 12.5 : 13.5), color: 'var(--color-text-secondary)' }}>{m.spend}</div>}
+          {m.creditBalance && <div style={{ fontSize: fontVar(dense ? 12.5 : 13.5), color: 'var(--color-text-secondary)' }}>{m.creditBalance}</div>}
         </div>
       )}
       {m.credits > 0 && dense && (
         <div style={{ borderTop: '1px solid var(--color-border)', padding: '7px 0' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ fontSize: 13.5, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{m.credits}</span>
-            <span style={{ fontSize: 13, whiteSpace: 'nowrap' }}>reset{m.credits === 1 ? '' : 's'} banked</span>
+            <span style={{ fontSize: fontVar(13.5), fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{m.credits}</span>
+            <span style={{ fontSize: fontVar(13), whiteSpace: 'nowrap' }}>reset{m.credits === 1 ? '' : 's'} banked</span>
             {m.useUrl && (
               <a href={m.useUrl} target="_blank" rel="noopener noreferrer" aria-label={`Use a reset on the ${m.name} usage page`}
-                style={{ marginLeft: 'auto', flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 5, height: 24, padding: '0 9px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 12, fontWeight: 500, textDecoration: 'none' }}>
+                style={{ marginLeft: 'auto', flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 5, height: 24, padding: '0 9px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: fontVar(12), fontWeight: 500, textDecoration: 'none' }}>
                 Use<ArrowSquareOut size={12} weight="bold" />
               </a>
             )}
           </div>
           {m.creditList.length > 0 && (
-            <div data-testid="reset-expiries" style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', marginTop: 3 }}>
+            <div data-testid="reset-expiries" style={{ fontSize: fontVar(11.5), color: 'var(--color-text-tertiary)', marginTop: 3 }}>
               Expire{' '}
               {m.creditList.map((c, i) => (
                 <span key={c.id} style={{ color: c.soon ? 'var(--color-status-yellow)' : undefined }}>{i > 0 ? ' · ' : ''}{c.expires ?? 'never'}{c.count > 1 ? ` ×${c.count}` : ''}</span>
@@ -202,19 +203,19 @@ function ToolCard({ m, warn, current, dense, email, access }: { m: RingModel; wa
       {m.credits > 0 && !dense && (
         <div style={{ borderTop: '1px solid var(--color-border)', padding: '11px 0' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 15, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{m.credits}</span>
-            <span style={{ fontSize: 14 }}>reset{m.credits === 1 ? '' : 's'} banked</span>
+            <span style={{ fontSize: fontVar(15), fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{m.credits}</span>
+            <span style={{ fontSize: fontVar(14) }}>reset{m.credits === 1 ? '' : 's'} banked</span>
             {/* A reset is used on the tool's own usage page: ChatGPT (2026-11-06), claude.ai (2026-11-09). Codex's own app-server refuses the
                 in-app spend until a limit is hit ("nothingToReset"), so the link is the way that works. */}
             {m.useUrl && (
               <a href={m.useUrl} target="_blank" rel="noopener noreferrer" aria-label={`Use a reset on the ${m.name} usage page`}
-                style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, height: 30, padding: '0 12px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13, fontWeight: 500, textDecoration: 'none' }}>
+                style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, height: 30, padding: '0 12px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: fontVar(13), fontWeight: 500, textDecoration: 'none' }}>
                 Use<ArrowSquareOut size={13} weight="bold" />
               </a>
             )}
           </div>
           {m.creditList.length > 0 && (
-            <div data-testid="reset-expiries" style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 6 }}>
+            <div data-testid="reset-expiries" style={{ fontSize: fontVar(12), color: 'var(--color-text-tertiary)', marginTop: 6 }}>
               Expire{' '}
               {m.creditList.map((c, i) => (
                 <span key={c.id} style={{ color: c.soon ? 'var(--color-status-yellow)' : undefined }}>{i > 0 ? ' · ' : ''}{c.expires ?? 'never'}{c.count > 1 ? ` ×${c.count}` : ''}</span>
@@ -261,9 +262,9 @@ function RefreshRow({ summary, now }: { summary: UsageSummary; now: number }) {
     : newest ? `Updated ${whenLabel(newest, Math.max(now, Date.now()))}${state === 'partial' ? ' · some figures still loading' : ''}` : 'No figures yet';
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <span data-testid="usage-updated" aria-live="polite" style={{ flex: 1, minWidth: 0, font: '400 11.5px var(--font-mono)', color: state === 'error' ? 'var(--color-status-red)' : 'var(--color-text-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{text}</span>
+      <span data-testid="usage-updated" aria-live="polite" style={{ flex: 1, minWidth: 0, font: `400 ${fontVar(11.5)} var(--font-mono)`, color: state === 'error' ? 'var(--color-status-red)' : 'var(--color-text-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{text}</span>
       <button type="button" onClick={() => void run()} disabled={state === 'loading'} aria-busy={state === 'loading'} aria-label="Refresh usage" title="Read the usage figures now"
-        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 26, padding: '0 10px', flexShrink: 0, background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 12.5, fontWeight: 500, cursor: state === 'loading' ? 'default' : 'pointer', opacity: state === 'loading' ? 0.7 : 1 }}>
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 26, padding: '0 10px', flexShrink: 0, background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: fontVar(12.5), fontWeight: 500, cursor: state === 'loading' ? 'default' : 'pointer', opacity: state === 'loading' ? 0.7 : 1 }}>
         <ArrowClockwise size={13} weight="bold" aria-hidden style={{ animation: state === 'loading' ? 'dispatchSpin 0.9s linear infinite' : undefined }} />
         {state === 'loading' ? 'Refreshing' : 'Refresh'}
       </button>
@@ -300,17 +301,17 @@ export function UsageRings({ summary, now, current, dense }: { summary: UsageSum
       rows: [], asOf: '', stale: false, paused: false, credits: 0, creditList: [], useUrl: null, spend: null, creditBalance: null,
     } as RingModel));
   const rings = [...models, ...missing].sort((a, b) => Number(isCurrent(b)) - Number(isCurrent(a)));
-  if (!summary || (rings.length === 0 && summary.paused.length === 0)) return <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)', padding: '8px 0' }}>No figures reported yet</div>;
+  if (!summary || (rings.length === 0 && summary.paused.length === 0)) return <div style={{ fontSize: fontVar(13), color: 'var(--color-text-tertiary)', padding: '8px 0' }}>No figures reported yet</div>;
   return (
     <div data-testid="usage-rings" style={{ display: 'flex', flexDirection: 'column', gap: dense ? 10 : 16 }}>
       {/* A pause can come before any figure (a paused Codex with no snapshot): its line still shows. */}
       <RefreshRow summary={summary} now={now} />
-      {rings.length === 0 && <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>No figures reported yet</div>}
+      {rings.length === 0 && <div style={{ fontSize: fontVar(13), color: 'var(--color-text-tertiary)' }}>No figures reported yet</div>}
       {rings.map((m) => (
         <ToolCard key={`${m.provider}|${m.accountId}`} m={m} warn={summary.warnPercent} current={isCurrent(m)} dense={dense} email={emailOf(m)} access={accessOf(m)} />
       ))}
       {summary.paused.map((g) => (
-        <div key={g.provider} style={{ fontSize: 12, color: 'var(--color-status-red)', overflowWrap: 'anywhere' }}>{bannerText(g, now)}</div>
+        <div key={g.provider} style={{ fontSize: fontVar(12), color: 'var(--color-status-red)', overflowWrap: 'anywhere' }}>{bannerText(g, now)}</div>
       ))}
     </div>
   );

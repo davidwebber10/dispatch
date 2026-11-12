@@ -10,6 +10,7 @@ import { openThreadInPlace } from './openThread';
 import { stateFromStatus, useThreadView } from './threadView';
 import { DocsFold } from './DocsFold';
 import { MoreButton, formatStart } from './paneParts';
+import { fontVar } from '../../lib/fontSize';
 
 export { formatStart };
 
@@ -35,8 +36,8 @@ function originText(t: EndlessPaneThread): string {
   return ORIGIN[t.startedBy] ?? '';
 }
 
-const label: React.CSSProperties = { font: '600 12px var(--font-sans)', letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--color-text-secondary)' };
-const mono = (size: number, color = 'var(--color-text-tertiary)'): React.CSSProperties => ({ fontFamily: 'var(--font-mono)', fontSize: size, color });
+const label: React.CSSProperties = { font: `600 ${fontVar(12)} var(--font-sans)`, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--color-text-secondary)' };
+const mono = (size: number, color = 'var(--color-text-tertiary)'): React.CSSProperties => ({ fontFamily: 'var(--font-mono)', fontSize: fontVar(size), color });
 const ellipsis: React.CSSProperties = { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
 const card: React.CSSProperties = { background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' };
 
@@ -63,7 +64,7 @@ function ThreadRow({ t, onOpen, mobile, needCard = false, project }: { t: Endles
           ? { ...card, padding: '10px 12px', minHeight: mobile ? 44 : undefined }
           : { background: 'transparent', border: 0, padding: '6px 0', minHeight: mobile ? 48 : undefined, opacity: finished ? 0.6 : 1 }),
       }}>
-      <span style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', fontSize: mobile ? 13.5 : 13 }}>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', fontSize: fontVar(mobile ? 13.5 : 13) }}>
         <StateMark state={state} />
         <span style={{ flex: 1, minWidth: 0, fontWeight: needCard ? 600 : undefined, ...ellipsis }}>{t.label}</span>
         <span style={{ ...mono(11.5), whiteSpace: 'nowrap' }}>{formatStart(t.startedAt)}</span>
@@ -73,7 +74,7 @@ function ThreadRow({ t, onOpen, mobile, needCard = false, project }: { t: Endles
         {step && <>{parts.length > 0 && ' · '}<span style={step.color ? { color: step.color } : undefined}>{step.text}</span></>}
       </span>
       {needCard && t.question && (
-        <span style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: mobile ? 13 : 12.5, lineHeight: 1.5, marginTop: 6, paddingLeft: 16 }}>{t.question}</span>
+        <span style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: fontVar(mobile ? 13 : 12.5), lineHeight: 1.5, marginTop: 6, paddingLeft: 16 }}>{t.question}</span>
       )}
     </button>
   );
@@ -126,7 +127,7 @@ export function ProjectsPanel({ onNavigate }: { onNavigate?: () => void } = {}) 
       </div>
 
       {shown.length === 0 && (
-        <p role={unavailable ? 'alert' : undefined} style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--color-text-secondary)', padding: '16px 4px' }}>
+        <p role={unavailable ? 'alert' : undefined} style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8, fontSize: fontVar(13), color: 'var(--color-text-secondary)', padding: '16px 4px' }}>
           {unavailable && <Warning size={15} style={{ color: 'var(--color-status-red)', flexShrink: 0 }} />}
           {unavailable ? 'Projects are unavailable.' : 'No project activity yet.'}
         </p>
@@ -148,12 +149,12 @@ export function ProjectsPanel({ onNavigate }: { onNavigate?: () => void } = {}) 
         const isDoneOpen = !!doneOpen[p.id];
         return (
           <div key={p.id} data-testid={`project-${p.id}`} style={{ ...card, padding: mobile ? '10px 12px 6px' : '10px 12px 8px', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--color-text-primary)' }}>{p.name}</div>
+            <div style={{ fontWeight: 600, fontSize: fontVar(14), color: 'var(--color-text-primary)' }}>{p.name}</div>
             <div style={{ ...mono(12), lineHeight: 1.5 }}>
               {p.live} live · <span style={p.needsYou > 0 ? { color: 'var(--color-status-yellow)' } : undefined}>{p.needsYou} need you</span> · {p.openItems} open
             </div>
             {p.lastReport && (
-              <div style={{ fontSize: 12.5, marginTop: 4, color: 'var(--color-text-secondary)', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{p.lastReport}</div>
+              <div style={{ fontSize: fontVar(12.5), marginTop: 4, color: 'var(--color-text-secondary)', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{p.lastReport}</div>
             )}
             {visible.length > 0 && (
               <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column' }}>

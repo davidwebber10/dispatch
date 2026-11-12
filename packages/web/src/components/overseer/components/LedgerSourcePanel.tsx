@@ -23,6 +23,7 @@ import { useProjects } from '../../../stores/projects';
 import { useLedgerCard } from '../../../stores/ledgerCard';
 import { openFileTab } from '../../../lib/openFileTab';
 import type { LedgerSource } from '../../../api/types';
+import { fontVar } from '../../../lib/fontSize';
 
 const close = () => useLedgerCard.getState().setSourcePanel(null);
 
@@ -56,9 +57,9 @@ export function sourceMarkTarget(root: HTMLElement, id: string): HTMLElement | n
 const errorDetail = (e: unknown) => (e instanceof Error ? e.message.split(' — ').slice(1).join(' — ') : '');
 
 const textButton: CSSProperties = {
-  background: 'none', border: 'none', padding: 0, fontFamily: 'inherit', fontSize: 12, color: 'var(--acc)', cursor: 'pointer',
+  background: 'none', border: 'none', padding: 0, fontFamily: 'inherit', fontSize: fontVar(12), color: 'var(--acc)', cursor: 'pointer',
 };
-const note: CSSProperties = { fontSize: 12, lineHeight: 1.5, color: 'var(--ts)' };
+const note: CSSProperties = { fontSize: fontVar(12), lineHeight: 1.5, color: 'var(--ts)' };
 
 export function LedgerSourcePanel({ mobile = false }: { mobile?: boolean } = {}) {
   const activeId = useProjects((s) => s.activeId);
@@ -160,20 +161,20 @@ function PanelBody({ projectId, seq, mobile }: { projectId: string; seq: number;
             <Icon name="ph-arrow-left" size={20} color="var(--acc)" />
           </button>
         )}
-        <span title={data?.path} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--tp)' }}>
+        <span title={data?.path} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'var(--mono)', fontSize: fontVar(12), color: 'var(--tp)' }}>
           {data?.file ?? ''}
         </span>
         <span style={{ flex: 1 }} />
         {data && <button type="button" onClick={openFull} style={textButton}>Open the full file</button>}
         {!mobile && (
-          <button type="button" aria-label="Close" title="Close (Esc)" onClick={close} style={{ ...textButton, fontSize: 14, color: 'var(--ts)' }}>✕</button>
+          <button type="button" aria-label="Close" title="Close (Esc)" onClick={close} style={{ ...textButton, fontSize: fontVar(14), color: 'var(--ts)' }}>✕</button>
         )}
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
         {load.status === 'loading' && <div style={{ ...note, color: 'var(--tt)' }}>Loading the section…</div>}
         {load.status === 'error' && (
-          <div role="alert" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--red)' }}>
+          <div role="alert" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: fontVar(12), color: 'var(--red)' }}>
             <span>Could not load the section</span>
             {load.detail && <span style={{ color: 'var(--ts)' }}>{load.detail}</span>}
             <button type="button" onClick={() => setAttempt((n) => n + 1)} style={textButton}>Retry</button>
@@ -183,7 +184,7 @@ function PanelBody({ projectId, seq, mobile }: { projectId: string; seq: number;
         {data?.note && <div style={{ ...note, color: 'var(--yellow)' }}>{data.note}</div>}
         {data?.kind === 'section' && (
           <>
-            <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.4, color: 'var(--tp)' }}>{data.heading}</div>
+            <div style={{ fontSize: fontVar(14), fontWeight: 600, lineHeight: 1.4, color: 'var(--tp)' }}>{data.heading}</div>
             <div ref={bodyRef} className="ledger-source-body">
               <SectionMarkdown projectId={projectId} from={data.path} source={data.markdown} />
             </div>
@@ -196,7 +197,7 @@ function PanelBody({ projectId, seq, mobile }: { projectId: string; seq: number;
             <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
               {data.headings.map((h, i) => (
                 <li key={i} style={{ paddingLeft: (h.level - 1) * 14 }}>
-                  <button type="button" onClick={() => setHeading(h.text)} style={{ ...textButton, fontSize: 12.5, textAlign: 'left' }}>{h.text}</button>
+                  <button type="button" onClick={() => setHeading(h.text)} style={{ ...textButton, fontSize: fontVar(12.5), textAlign: 'left' }}>{h.text}</button>
                 </li>
               ))}
             </ul>

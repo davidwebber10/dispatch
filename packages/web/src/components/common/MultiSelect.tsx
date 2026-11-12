@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { CaretUpDown, Check, MagnifyingGlass } from '@phosphor-icons/react';
 import { Modal } from './Modal';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { fontVar, fontVarInput } from '../../lib/fontSize';
 
 export interface MultiSelectOption {
   value: string;
@@ -119,7 +120,7 @@ export function MultiSelect({ value, options, onChange, ariaLabel, title, summar
     return () => { document.removeEventListener('keydown', onKey); document.removeEventListener('pointerdown', onDown); };
   }, [open, sheet]);
 
-  const linkBtn: React.CSSProperties = { background: 'none', border: 'none', padding: '4px 2px', fontSize: lg ? 13.5 : 12.5, color: 'var(--color-accent)', cursor: 'pointer' };
+  const linkBtn: React.CSSProperties = { background: 'none', border: 'none', padding: '4px 2px', fontSize: fontVar(lg ? 13.5 : 12.5), color: 'var(--color-accent)', cursor: 'pointer' };
   const body = (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1, margin: sheet ? '0 -4px' : 0 }}>
       {canSearch && (
@@ -127,29 +128,29 @@ export function MultiSelect({ value, options, onChange, ariaLabel, title, summar
           <MagnifyingGlass aria-hidden size={lg ? 16 : 14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-tertiary)', pointerEvents: 'none' }} />
           <input type="search" role="searchbox" aria-label={`Search ${heading.toLowerCase()}`} placeholder={`Search ${heading.toLowerCase()}`} value={q} onChange={(e) => setQ(e.target.value)}
             autoComplete="off" spellCheck={false}
-            style={{ flex: 1, minWidth: 0, height: lg ? 38 : 30, padding: `0 10px 0 ${lg ? 32 : 30}px`, background: 'var(--color-base)', border: '1px solid var(--color-border)', borderRadius: lg ? 'var(--radius-md)' : 'var(--radius-sm)', color: 'var(--color-text-primary)', fontSize: lg ? 16 : 13, boxSizing: 'border-box' }} />
+            style={{ flex: 1, minWidth: 0, height: lg ? 38 : 30, padding: `0 10px 0 ${lg ? 32 : 30}px`, background: 'var(--color-base)', border: '1px solid var(--color-border)', borderRadius: lg ? 'var(--radius-md)' : 'var(--radius-sm)', color: 'var(--color-text-primary)', fontSize: lg ? fontVarInput(16) : fontVar(13), boxSizing: 'border-box' }} />
         </span>
       )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: sheet ? '0 2px 6px' : '2px 12px 6px', borderBottom: '1px solid var(--color-border)' }}>
         <button type="button" onClick={() => pickShown(true)} style={linkBtn}>Select all</button>
         <button type="button" onClick={() => pickShown(false)} style={linkBtn}>None</button>
-        <span style={{ marginLeft: 'auto', font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)', fontVariantNumeric: 'tabular-nums' }}>{nPicked} of {options.length}</span>
+        <span style={{ marginLeft: 'auto', font: `400 ${fontVar(11.5)} var(--font-mono)`, color: 'var(--color-text-tertiary)', fontVariantNumeric: 'tabular-nums' }}>{nPicked} of {options.length}</span>
       </div>
       <div role="group" aria-label={heading} style={{ overflowY: 'auto', overscrollBehavior: 'contain', minHeight: 0, flex: 1, maxHeight: sheet ? '55vh' : undefined, padding: '4px 0' }}>
         {shown.map((o) => {
           const on = picked.has(o.value);
           return (
             <button key={o.value} type="button" role="checkbox" aria-checked={on} aria-label={o.label} onClick={() => toggle(o.value)}
-              style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', minHeight: lg ? 44 : 34, padding: sheet ? '0 6px' : '0 12px', border: 'none', background: 'transparent', cursor: 'pointer', textAlign: 'left', fontSize: lg ? 14.5 : 13, color: on ? 'var(--color-text-primary)' : 'var(--color-text-secondary)' }}>
+              style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', minHeight: lg ? 44 : 34, padding: sheet ? '0 6px' : '0 12px', border: 'none', background: 'transparent', cursor: 'pointer', textAlign: 'left', fontSize: fontVar(lg ? 14.5 : 13), color: on ? 'var(--color-text-primary)' : 'var(--color-text-secondary)' }}>
               <span aria-hidden style={{ width: 18, height: 18, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 'var(--radius-xs)', border: `1.5px solid ${on ? 'var(--color-accent)' : 'var(--color-border-hover)'}`, background: on ? 'var(--color-accent)' : 'transparent', color: 'var(--color-on-accent)' }}>
                 {on && <Check size={12} weight="bold" />}
               </span>
               <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.label}</span>
-              {o.note && <span aria-hidden style={{ fontSize: 12, color: 'var(--color-text-tertiary)', flexShrink: 0 }}>{o.note}</span>}
+              {o.note && <span aria-hidden style={{ fontSize: fontVar(12), color: 'var(--color-text-tertiary)', flexShrink: 0 }}>{o.note}</span>}
             </button>
           );
         })}
-        {needle && !shown.length && <div style={{ padding: '10px 12px', fontSize: 13, color: 'var(--color-text-tertiary)' }}>No matches</div>}
+        {needle && !shown.length && <div style={{ padding: '10px 12px', fontSize: fontVar(13), color: 'var(--color-text-tertiary)' }}>No matches</div>}
       </div>
       {!sheet && (
         <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '8px 12px', borderTop: '1px solid var(--color-border)' }}>
@@ -157,7 +158,7 @@ export function MultiSelect({ value, options, onChange, ariaLabel, title, summar
         </div>
       )}
       {sheet && (
-        <button type="button" onClick={close} style={{ marginTop: 10, height: 44, border: 'none', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: 'var(--color-on-accent)', fontSize: 15, fontWeight: 600, cursor: 'pointer' }}>Done</button>
+        <button type="button" onClick={close} style={{ marginTop: 10, height: 44, border: 'none', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: 'var(--color-on-accent)', fontSize: fontVar(15), fontWeight: 600, cursor: 'pointer' }}>Done</button>
       )}
     </div>
   );
@@ -169,7 +170,7 @@ export function MultiSelect({ value, options, onChange, ariaLabel, title, summar
         style={{
           display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: '100%', height: lg ? 36 : 30, padding: '0 8px 0 10px', cursor: disabled ? 'default' : 'pointer',
           background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: lg ? 'var(--radius-md)' : 'var(--radius-sm)',
-          color: 'var(--color-text-primary)', fontSize: lg ? 14 : 12.5, fontWeight: 500, opacity: disabled ? 0.5 : 1, ...style,
+          color: 'var(--color-text-primary)', fontSize: fontVar(lg ? 14 : 12.5), fontWeight: 500, opacity: disabled ? 0.5 : 1, ...style,
         }}>
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{words}</span>
         <CaretUpDown aria-hidden size={14} style={{ flexShrink: 0, color: 'var(--color-text-tertiary)' }} />

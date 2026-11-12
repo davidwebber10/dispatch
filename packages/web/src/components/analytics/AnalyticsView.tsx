@@ -10,6 +10,7 @@ import type { AnalyticsPoint } from '../../api/types';
 import { FilterBar } from '../common/FilterBar';
 import { Select } from '../common/Select';
 import { useDispatchName } from '../../stores/settings';
+import { fontVar } from '../../lib/fontSize';
 
 type RangeId = '7' | '30' | '90' | 'all';
 const RANGES: { id: RangeId; label: string; days: number | null }[] = [
@@ -75,9 +76,9 @@ export function AnalyticsView() {
   return (
     <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', padding: isMobile ? 14 : 24 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 20, fontWeight: 600 }}>Analytics</span>
+        <span style={{ fontSize: fontVar(20), fontWeight: 600 }}>Analytics</span>
         {!isMobile && <ViewSwitch value={tab} onChange={choose} />}
-        <span style={{ ...muted, font: '400 11px var(--font-mono)' }}>days are local time</span>
+        <span style={{ ...muted, font: `400 ${fontVar(11)} var(--font-mono)` }}>days are local time</span>
       </div>
       {isMobile && (
         <div style={{ marginTop: 12 }}>
@@ -133,7 +134,7 @@ function ViewSwitch({ value, onChange, fullWidth }: {
             onClick={() => onChange(o.id)}
             style={{
               flex: fullWidth ? 1 : undefined, height: 26, padding: '0 12px', border: 'none', borderRadius: 'var(--radius-sm)',
-              cursor: 'pointer', fontSize: 12, fontWeight: active ? 600 : 400,
+              cursor: 'pointer', fontSize: fontVar(12), fontWeight: active ? 600 : 400,
               background: active ? 'var(--color-hover)' : 'transparent',
               color: active ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
             }}

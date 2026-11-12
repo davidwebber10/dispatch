@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Trophy } from '@phosphor-icons/react';
 import { Fireworks } from './Fireworks';
 import { readAndClearCelebration } from './popScore';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * The post-restart payoff for the update game (the blaster): when the just-finished
@@ -45,12 +46,12 @@ export function HighScoreCelebration() {
         }}
       >
         <Trophy size={34} weight="fill" color="var(--color-status-yellow)" />
-        <div style={{ marginTop: 8, fontWeight: 600, fontSize: 16, color: 'var(--color-text-primary)' }}>New high score!</div>
-        <div style={{ marginTop: 10, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 40, fontWeight: 700, lineHeight: 1, color: 'color-mix(in srgb, var(--color-accent) 60%, var(--color-text-emphasis))', textShadow: '0 0 16px color-mix(in srgb, var(--color-accent) 55%, transparent)' }}>
+        <div style={{ marginTop: 8, fontWeight: 600, fontSize: fontVar(16), color: 'var(--color-text-primary)' }}>New high score!</div>
+        <div style={{ marginTop: 10, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: fontVar(40), fontWeight: 700, lineHeight: 1, color: 'color-mix(in srgb, var(--color-accent) 60%, var(--color-text-emphasis))', textShadow: '0 0 16px color-mix(in srgb, var(--color-accent) 55%, transparent)' }}>
           {celebration.score}
         </div>
-        <div style={{ marginTop: 4, fontSize: 11, letterSpacing: 2, color: 'color-mix(in srgb, var(--color-accent) 75%, transparent)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>POINTS</div>
-        <div style={{ marginTop: 10, fontSize: 12.5, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
+        <div style={{ marginTop: 4, fontSize: fontVar(11), letterSpacing: 2, color: 'color-mix(in srgb, var(--color-accent) 75%, transparent)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>POINTS</div>
+        <div style={{ marginTop: 10, fontSize: fontVar(12.5), lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
           {celebration.prev > 0
             ? <>You beat your old best of {celebration.prev} during the update.</>
             : <>Your first blaster high score. It's on the board now.</>}
@@ -58,7 +59,7 @@ export function HighScoreCelebration() {
         <div style={{ marginTop: 18 }}>
           <button
             onClick={close}
-            style={{ height: 38, padding: '0 22px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: 13.5, cursor: 'pointer' }}
+            style={{ height: 38, padding: '0 22px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: fontVar(13.5), cursor: 'pointer' }}
           >
             Nice
           </button>

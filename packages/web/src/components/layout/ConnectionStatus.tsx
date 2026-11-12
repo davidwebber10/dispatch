@@ -1,4 +1,5 @@
 import { useShownStatus, type ShownStatus } from '../../stores/connection';
+import { fontVar } from '../../lib/fontSize';
 
 const STYLES = {
   open:       { color: 'var(--color-accent)', label: 'Connected' },
@@ -15,7 +16,7 @@ export function ConnectionStatus({ shown }: { shown?: ShownStatus } = {}) {
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: 6,
-      font: '500 11px var(--font-mono)', color: st.color,
+      font: `500 ${fontVar(11)} var(--font-mono)`, color: st.color,
     }}>
       <span style={{
         width: 7, height: 7, borderRadius: '50%', background: st.color,

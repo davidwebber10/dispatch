@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Modal } from '../common/Modal';
 import { useTabs } from '../../stores/tabs';
+import { fontVar } from '../../lib/fontSize';
 
 export function RenameThreadModal({ terminalId, sessionId, current, onClose }: { terminalId: string; sessionId: string; current: string; onClose: () => void }) {
   const [name, setName] = useState(current);
@@ -16,7 +17,7 @@ export function RenameThreadModal({ terminalId, sessionId, current, onClose }: {
     onClose();
   }
 
-  const input: React.CSSProperties = { height: 34, width: '100%', padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13 };
+  const input: React.CSSProperties = { height: 34, width: '100%', padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: fontVar(13) };
   return (
     <Modal open onClose={onClose} title="Rename Thread">
       <input autoFocus style={input} placeholder="Thread name" value={name}

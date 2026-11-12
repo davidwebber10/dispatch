@@ -3,6 +3,7 @@ import { MagnifyingGlass } from '@phosphor-icons/react';
 import { api } from '../../api/client';
 import { useEndless } from '../../stores/endless';
 import type { EndlessSearchHit } from '../../api/types';
+import { fontVar, fontVarInput } from '../../lib/fontSize';
 
 /** The daemon marks snippet matches with \u0002 … \u0003 (store.ts SNIPPET_OPEN/CLOSE). */
 function Snippet({ text }: { text: string }) {
@@ -43,19 +44,19 @@ export function MemorySearch() {
     <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
       <MagnifyingGlass size={15} style={{ position: 'absolute', left: 10, top: 9, color: 'var(--color-text-tertiary)' }} />
       <input aria-label="Search memory" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search memory"
-        style={{ width: '100%', height: 32, padding: '0 10px 0 30px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: 16 }} />
+        style={{ width: '100%', height: 32, padding: '0 10px 0 30px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: fontVarInput(16) }} />
       {results && (
         <div role="listbox" aria-label="Memory search results"
           style={{ position: 'absolute', top: 36, left: 0, right: 0, zIndex: 20, maxHeight: '60vh', overflowY: 'auto', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-pane)', boxShadow: '0 12px 28px -8px var(--color-shadow)' }}>
           {results.length === 0 ? (
-            <div style={{ padding: 12, color: 'var(--color-text-tertiary)', fontSize: 13 }}>{failed ? 'Search is unavailable' : 'No matches'}</div>
+            <div style={{ padding: 12, color: 'var(--color-text-tertiary)', fontSize: fontVar(13) }}>{failed ? 'Search is unavailable' : 'No matches'}</div>
           ) : results.map((h) => (
             <button key={h.i} type="button" role="option" aria-selected={false} onClick={() => open(h.i)}
               style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 12px', border: 'none', borderBottom: '1px solid var(--color-border)', background: 'transparent', cursor: 'pointer', color: 'var(--color-text-primary)' }}>
-              <div style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>
+              <div style={{ font: `400 ${fontVar(11)} var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>
                 {when(h.createdAt)}{h.projectName ? ` · ${h.projectName}` : ''} · {h.kind}
               </div>
-              <div style={{ fontSize: 13, lineHeight: 1.45, marginTop: 2, wordBreak: 'break-word' }}><Snippet text={h.snippet} /></div>
+              <div style={{ fontSize: fontVar(13), lineHeight: 1.45, marginTop: 2, wordBreak: 'break-word' }}><Snippet text={h.snippet} /></div>
             </button>
           ))}
         </div>

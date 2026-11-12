@@ -3,15 +3,16 @@ import { Check, Palette } from '@phosphor-icons/react';
 import { useSettings, ACCENTS, formatSidebarLimit, stepSidebarLimit, type DocEditor, type Density } from '../../stores/settings';
 import { THEMES, SYSTEM_DARK, SYSTEM_LIGHT, getTheme, resolveTokens, onAccent, type Theme } from '../../themes';
 import { useActiveTheme } from '../../themes/apply';
-import { SettingsPage, SettingsGroup, SettingsRow, Toggle, Stepper, Sheet } from './ui';
+import { SettingsPage, SettingsGroup, SettingsRow, Toggle, Stepper, Sheet, Slider } from './ui';
 import { Select } from '../common/Select';
 import { Segmented } from '../common/Segmented';
+import { fontVar } from '../../lib/fontSize';
 
 const DOC_EDITORS = [{ value: '', label: 'None' }, { value: 'vscode', label: 'VS Code' }, { value: 'cursor', label: 'Cursor' }, { value: 'zed', label: 'Zed' }];
 const DENSITIES: { value: Density; label: string }[] = [{ value: 'compact', label: 'Compact' }, { value: 'cozy', label: 'Cozy' }, { value: 'roomy', label: 'Roomy' }];
 
 const tileGrid: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(112px, 1fr))', gap: 8 };
-const subLabel: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', margin: '4px 0 -2px' };
+const subLabel: React.CSSProperties = { font: `500 ${fontVar(10)} var(--font-mono)`, letterSpacing: '1.2px', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', margin: '4px 0 -2px' };
 
 /** A theme in miniature: its canvas, a pane, two lines of text and the accent. Colors are the theme's own values. */
 function Swatch({ theme, height = 44 }: { theme: Theme; height?: number }) {
@@ -43,7 +44,7 @@ function ThemeTile({ label, on, onPick, children }: { label: string; on: boolean
     <button type="button" role="radio" aria-checked={on} aria-label={label} onClick={onPick}
       style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: 6, minWidth: 0, background: on ? 'var(--color-hover)' : 'transparent', border: `1px solid ${on ? 'var(--color-accent)' : 'var(--color-border-strong)'}`, borderRadius: 'var(--radius-md)', cursor: 'pointer', textAlign: 'left' }}>
       {children}
-      <span style={{ fontSize: 12, fontWeight: on ? 600 : 400, color: on ? 'var(--color-text-primary)' : 'var(--color-text-body)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+      <span style={{ fontSize: fontVar(12), fontWeight: on ? 600 : 400, color: on ? 'var(--color-text-primary)' : 'var(--color-text-body)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
     </button>
   );
 }
@@ -95,7 +96,7 @@ function AccentPicker() {
         <span aria-hidden style={{ width: 20, height: 20, borderRadius: '50%', background: themeAccent, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           {accent === '' ? <Check size={12} weight="bold" color={onAccent(themeAccent)} /> : <Palette size={12} weight="bold" color={onAccent(themeAccent)} />}
         </span>
-        <span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>Theme</span>
+        <span style={{ fontSize: fontVar(12.5), color: 'var(--color-text-secondary)' }}>Theme</span>
       </button>
       {ACCENTS.map((c) => {
         const on = accent.toLowerCase() === c.toLowerCase();
@@ -138,6 +139,7 @@ export function AppearanceSection() {
   const theme = useSettings((s) => s.theme);
   const accent = useSettings((s) => s.accent);
   const fontSize = useSettings((s) => s.fontSize);
+  const textScale = useSettings((s) => s.textScale);
   const scrollback = useSettings((s) => s.scrollback);
   const sidebarFontSize = useSettings((s) => s.sidebarFontSize);
   const projectFontSize = useSettings((s) => s.projectFontSize);
@@ -152,7 +154,7 @@ export function AppearanceSection() {
   const set = useSettings.getState;
   const [themesOpen, setThemesOpen] = useState(false);
   // The swatches show the pick; only a custom color, which has no swatch of its own, says it in words.
-  const accentName = accent !== '' && !ACCENTS.some((a) => a.toLowerCase() === accent.toLowerCase()) ? <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{accent.toUpperCase()}</span> : null;
+  const accentName = accent !== '' && !ACCENTS.some((a) => a.toLowerCase() === accent.toLowerCase()) ? <span style={{ fontFamily: 'var(--font-mono)', fontSize: fontVar(12) }}>{accent.toUpperCase()}</span> : null;
 
   return (
     <SettingsPage intro="These settings apply to this device only, so a phone and a computer can differ.">
@@ -164,6 +166,8 @@ export function AppearanceSection() {
       </SettingsGroup>
 
       <SettingsGroup title="Text size">
+        <SettingsRow label="Text scale"
+          control={<Slider label="Text scale" value={Math.round(textScale * 100)} min={75} max={150} step={5} defaultValue={100} display={`${Math.round(textScale * 100)}%`} onChange={(v) => set().setTextScale(v / 100)} onReset={() => set().resetTextScale()} />} />
         <SettingsRow label="Terminal" control={<Stepper value={String(fontSize)} onDec={() => set().setFontSize(fontSize - 1)} onInc={() => set().setFontSize(fontSize + 1)} />} />
         <SettingsRow label="Project names" control={<Stepper value={String(projectFontSize)} onDec={() => set().setProjectFontSize(projectFontSize - 1)} onInc={() => set().setProjectFontSize(projectFontSize + 1)} />} />
         <SettingsRow label="Thread and file names" control={<Stepper value={String(sidebarFontSize)} onDec={() => set().setSidebarFontSize(sidebarFontSize - 1)} onInc={() => set().setSidebarFontSize(sidebarFontSize + 1)} />} />

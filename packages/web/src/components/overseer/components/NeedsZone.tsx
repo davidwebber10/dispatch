@@ -13,6 +13,7 @@ import { Icon, MonoLabel, PillButton } from '../atoms';
 import { useOverseer, useRenderVals } from '../store';
 import type { Need, NeedAction } from '../types';
 import { useDispatchName } from '../../../stores/settings';
+import { fontVar } from '../../../lib/fontSize';
 
 // ---------------------------------------------------------------------------
 // Conflict panels — two side-by-side (desktop) or stacked (mobile) context boxes
@@ -44,7 +45,7 @@ function ConflictPanels({ need, isMobile }: { need: Need; isMobile: boolean }) {
             {need.aLabel}
           </MonoLabel>
         </div>
-        <div style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--tp)' }}>{need.aText}</div>
+        <div style={{ fontSize: fontVar(12), lineHeight: 1.5, color: 'var(--tp)' }}>{need.aText}</div>
       </div>
 
       {/* Center divider — desktop only */}
@@ -70,7 +71,7 @@ function ConflictPanels({ need, isMobile }: { need: Need; isMobile: boolean }) {
             {need.bLabel}
           </MonoLabel>
         </div>
-        <div style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--tp)', fontStyle: 'italic' }}>
+        <div style={{ fontSize: fontVar(12), lineHeight: 1.5, color: 'var(--tp)', fontStyle: 'italic' }}>
           {need.bText}
         </div>
       </div>
@@ -100,7 +101,7 @@ function ApprovalCommands({ cmds }: { cmds: string[] }) {
             alignItems: 'center',
             gap: 8,
             fontFamily: 'var(--mono)',
-            fontSize: 11.5,
+            fontSize: fontVar(11.5),
             color: 'var(--tp)',
             background: 'var(--pane)',
             border: '1px solid var(--border)',
@@ -181,7 +182,7 @@ function NeedCard({
         }}
       >
         <Icon name={need.icon} weight="fill" size={16} color="var(--yellow)" />
-        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--tp)' }}>{need.title}</span>
+        <span style={{ fontSize: fontVar(13), fontWeight: 600, color: 'var(--tp)' }}>{need.title}</span>
         <span style={{ flex: 1 }} />
         {/* "raised by <coordinator name>" — desktop only */}
         {!isMobile && (
@@ -191,7 +192,7 @@ function NeedCard({
               alignItems: 'center',
               gap: 5,
               fontFamily: 'var(--mono)',
-              fontSize: 9.5,
+              fontSize: fontVar(9.5),
               color: 'var(--tt)',
             }}
           >
@@ -206,7 +207,7 @@ function NeedCard({
         <p
           style={{
             margin: 0,
-            fontSize: 12.5,
+            fontSize: fontVar(12.5),
             lineHeight: 1.55,
             color: 'var(--ts)',
             marginBottom: 12,

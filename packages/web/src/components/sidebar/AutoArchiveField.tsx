@@ -2,6 +2,7 @@ import { Timer } from '@phosphor-icons/react';
 import { Toggle } from '../settings/ui';
 import { DEFAULT_AUTO_ARCHIVE_MS, toDuration, fromDuration, type DurationUnit } from '../../lib/autoArchive';
 import { Select } from '../common/Select';
+import { fontVar } from '../../lib/fontSize';
 
 interface AutoArchiveFieldProps {
   enabled: boolean;
@@ -23,21 +24,21 @@ export function AutoArchiveField({ enabled, ms, onChange, flush }: AutoArchiveFi
 
   const input: React.CSSProperties = {
     height: 32, width: 64, padding: '0 8px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)',
-    borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13, fontFamily: 'var(--font-mono)',
+    borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: fontVar(13), fontFamily: 'var(--font-mono)',
   };
 
   return (
     <div style={flush ? undefined : { marginTop: 14, padding: 12, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <Timer size={16} weight="fill" color="var(--color-text-tertiary)" />
-        <span style={{ flex: 1, fontSize: 13, color: 'var(--color-text-primary)' }}>Auto-archive thread</span>
+        <span style={{ flex: 1, fontSize: fontVar(13), color: 'var(--color-text-primary)' }}>Auto-archive thread</span>
         {/* The app's one switch style (settings/ui Toggle), not a checkbox. */}
         <Toggle on={enabled} label="Auto-archive thread" onClick={() => onChange(!enabled, ms || DEFAULT_AUTO_ARCHIVE_MS)} />
       </div>
 
       {enabled && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
-          <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>Archive after</span>
+          <span style={{ fontSize: fontVar(12), color: 'var(--color-text-tertiary)' }}>Archive after</span>
           <input
             type="number"
             min={1}
@@ -57,12 +58,12 @@ export function AutoArchiveField({ enabled, ms, onChange, flush }: AutoArchiveFi
             onChange={(v) => onChange(true, fromDuration(value, v as DurationUnit))}
             style={{ ...input, width: 104 }}
           />
-          <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>of inactivity</span>
+          <span style={{ fontSize: fontVar(12), color: 'var(--color-text-tertiary)' }}>of inactivity</span>
         </div>
       )}
 
       {enabled && (
-        <div style={{ marginTop: 8, fontSize: 11, color: 'var(--color-text-tertiary)' }}>
+        <div style={{ marginTop: 8, fontSize: fontVar(11), color: 'var(--color-text-tertiary)' }}>
           Archived automatically once idle this long. It won&apos;t be archived while it&apos;s working, queued, or waiting on you.
         </div>
       )}

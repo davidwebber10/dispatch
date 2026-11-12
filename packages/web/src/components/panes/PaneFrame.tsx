@@ -1,6 +1,7 @@
 import { DotsSixVertical, X } from '@phosphor-icons/react';
 import { useTerminalLabel } from '../../stores/tabsSelectors';
 import { TabHost } from '../tabs/LazyTabHost';
+import { fontVar } from '../../lib/fontSize';
 
 /** One pane inside a grouped view: a 30px title bar (label + grip + close) over
  *  the tab's content (<TabHost/>). The grip's pointerdown fires onMoveStart so a
@@ -37,7 +38,7 @@ export function PaneFrame({ tabId, onClose, onMoveStart }: {
           <DotsSixVertical size={15} weight="bold" />
         </button>
         <span
-          style={{ flex: 1, minWidth: 0, fontSize: 12, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          style={{ flex: 1, minWidth: 0, fontSize: fontVar(12), color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
         >
           {label}
         </span>

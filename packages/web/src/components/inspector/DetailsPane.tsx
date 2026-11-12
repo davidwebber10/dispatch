@@ -9,12 +9,13 @@ import { useAccounts, threadAccount } from '../../stores/accounts';
 import { AccountSwitchModal } from '../common/AccountSwitchModal';
 import { useActiveModel, activeModelOf } from '../../stores/activeModel';
 import { friendlyModelName } from '../../lib/modelName';
+import { fontVar } from '../../lib/fontSize';
 
 function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '3px 0' }}>
       <span style={{ color: 'var(--color-text-secondary)' }}>{label}</span>
-      <span style={{ fontFamily: mono ? 'var(--font-mono)' : undefined, color: 'var(--color-text-primary)', fontSize: mono ? 11 : 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>{value}</span>
+      <span style={{ fontFamily: mono ? 'var(--font-mono)' : undefined, color: 'var(--color-text-primary)', fontSize: fontVar(mono ? 11 : 13), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>{value}</span>
     </div>
   );
 }
@@ -23,8 +24,8 @@ function homePath(p: string): string {
   return (p || '').replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~');
 }
 
-const label: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
-const btn: React.CSSProperties = { height: 30, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontSize: 12, cursor: 'pointer' };
+const label: React.CSSProperties = { font: `500 ${fontVar(10)} var(--font-mono)`, letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
+const btn: React.CSSProperties = { height: 30, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontSize: fontVar(12), cursor: 'pointer' };
 
 export function DetailsPane({ projectId, terminalId }: { projectId: string | null; terminalId: string | null }) {
   const project = useProjects((s) => s.sessions.find((x) => x.id === projectId)) ?? null;
@@ -63,7 +64,7 @@ export function DetailsPane({ projectId, terminalId }: { projectId: string | nul
   const showDetails = hasActivity || !!lim;
   const status = tab?.status ?? term?.status;
   return (
-    <div style={{ padding: 12, fontSize: 13 }}>
+    <div style={{ padding: 12, fontSize: fontVar(13) }}>
       {showDetails && (
         <>
           <div style={{ ...label, marginBottom: 8 }}>THREAD DETAILS</div>

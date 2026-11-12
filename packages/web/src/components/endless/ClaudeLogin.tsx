@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../api/client';
+import { fontVar, fontVarInput } from '../../lib/fontSize';
 
 /** A turn error that a new Claude login fixes (expired OAuth, no login, a bad key). */
 export function isClaudeAuthError(text: string): boolean {
@@ -11,7 +12,7 @@ const STATUS_POLL_MS = 2000;
 
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
-const btn: React.CSSProperties = { flexShrink: 0, padding: '5px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', cursor: 'pointer', font: 'inherit', fontSize: 13 };
+const btn: React.CSSProperties = { flexShrink: 0, padding: '5px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', cursor: 'pointer', font: 'inherit', fontSize: fontVar(13) };
 
 /**
  * Log this daemon in to Claude from Chat. It drives the daemon's headless login
@@ -98,26 +99,26 @@ export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to
         <button type="button" onClick={() => void start()} disabled={phase === 'starting'} style={btn}>
           {phase === 'starting' ? 'Starting login…' : buttonLabel}
         </button>
-        {error && <span style={{ fontSize: 12.5, color: 'var(--color-status-red)', wordBreak: 'break-word' }}>{error}</span>}
+        {error && <span style={{ fontSize: fontVar(12.5), color: 'var(--color-status-red)', wordBreak: 'break-word' }}>{error}</span>}
       </span>
     );
   }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
-      <a href={url ?? undefined} target="_blank" rel="noreferrer" style={{ color: 'var(--color-accent)', fontWeight: 600, fontSize: 13.5 }}>
+      <a href={url ?? undefined} target="_blank" rel="noreferrer" style={{ color: 'var(--color-accent)', fontWeight: 600, fontSize: fontVar(13.5) }}>
         Open the Claude login page ↗
       </a>
-      <span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>Sign in, approve, then paste the code that Claude shows.</span>
+      <span style={{ fontSize: fontVar(12.5), color: 'var(--color-text-secondary)' }}>Sign in, approve, then paste the code that Claude shows.</span>
       <div style={{ display: 'flex', gap: 8 }}>
         <input aria-label="Login code" value={code} onChange={(e) => setCode(e.target.value)} placeholder="Paste the code"
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void submit(); } }}
-          style={{ flex: 1, minWidth: 0, padding: '6px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', font: 'inherit', fontSize: 16 }} />
+          style={{ flex: 1, minWidth: 0, padding: '6px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', font: 'inherit', fontSize: fontVarInput(16) }} />
         <button type="button" onClick={() => void submit()} disabled={phase === 'sending' || !code.trim()} style={btn}>
           {phase === 'sending' ? 'Checking…' : 'Submit code'}
         </button>
       </div>
-      {error && <span style={{ fontSize: 12.5, color: 'var(--color-status-red)', wordBreak: 'break-word' }}>{error}</span>}
+      {error && <span style={{ fontSize: fontVar(12.5), color: 'var(--color-status-red)', wordBreak: 'break-word' }}>{error}</span>}
     </div>
   );
 }

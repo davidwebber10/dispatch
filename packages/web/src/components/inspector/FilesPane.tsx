@@ -13,13 +13,14 @@ import { saveFilesAs, type RemoteFile } from '../../lib/saveFiles';
 import { clipboardImageSupported, copyImageToClipboard, copyText } from '../../lib/clipboard';
 import { isImage } from '../../lib/fileType';
 import { DiffReview } from './DiffReview';
+import { fontVar } from '../../lib/fontSize';
 
 const INDENT = 14;
 const HIDDEN_KEY = 'dispatch:files-hidden';
 
 const MENU_ITEM: React.CSSProperties = {
   display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 10px',
-  background: 'none', border: 'none', font: '400 13px var(--font-sans)', cursor: 'pointer',
+  background: 'none', border: 'none', font: `400 ${fontVar(13)} var(--font-sans)`, cursor: 'pointer',
   borderRadius: 'var(--radius-sm)', textAlign: 'left',
 };
 
@@ -387,8 +388,8 @@ export function FilesPane({ projectId, terminalId = null, onOpenFile }: { projec
           style={{ display: 'flex', alignItems: 'center', gap: 7, padding: `6px 8px 6px ${pl}px`, borderRadius: 'var(--radius-sm)', color: isSel || isOpen ? 'var(--color-text-primary)' : 'var(--color-text-muted)', background: isSel ? 'var(--color-selected)' : isOpen ? 'var(--color-hover)' : undefined, cursor: 'pointer' }}>
           <FIcon size={15} weight="fill" color={isSel || isOpen ? 'var(--color-text-primary)' : fcolor} style={{ flexShrink: 0 }} />
           <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.name}</span>
-          <span style={{ flexShrink: 0, font: '400 9.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{fmtSize(e.size)}</span>
-          {st && <span style={{ flexShrink: 0, width: 12, textAlign: 'center', font: '700 10px var(--font-mono)', color: STATUS_COLOR[st] ?? 'var(--color-text-tertiary)' }}>{st}</span>}
+          <span style={{ flexShrink: 0, font: `400 ${fontVar(9.5)} var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>{fmtSize(e.size)}</span>
+          {st && <span style={{ flexShrink: 0, width: 12, textAlign: 'center', font: `700 ${fontVar(10)} var(--font-mono)`, color: STATUS_COLOR[st] ?? 'var(--color-text-tertiary)' }}>{st}</span>}
         </Row>
       );
     });
@@ -411,7 +412,7 @@ export function FilesPane({ projectId, terminalId = null, onOpenFile }: { projec
             ? <HighlightedPath path={path} indices={indices} />
             : <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{path}</span>}
         </span>
-        {st && <span style={{ flexShrink: 0, width: 12, textAlign: 'center', font: '700 10px var(--font-mono)', color: STATUS_COLOR[st] ?? 'var(--color-text-tertiary)' }}>{st}</span>}
+        {st && <span style={{ flexShrink: 0, width: 12, textAlign: 'center', font: `700 ${fontVar(10)} var(--font-mono)`, color: STATUS_COLOR[st] ?? 'var(--color-text-tertiary)' }}>{st}</span>}
       </Row>
     );
   }
@@ -436,7 +437,7 @@ export function FilesPane({ projectId, terminalId = null, onOpenFile }: { projec
     : 'PROJECT TREE';
 
   const segStyle = (on: boolean): React.CSSProperties => ({
-    flex: 1, textAlign: 'center', font: `400 11px var(--font-sans)`, padding: '4px 0', borderRadius: 'var(--radius-sm)',
+    flex: 1, textAlign: 'center', font: `400 ${fontVar(11)} var(--font-sans)`, padding: '4px 0', borderRadius: 'var(--radius-sm)',
     cursor: 'pointer', border: 'none',
     background: on && !searching ? 'var(--color-hover)' : 'var(--color-elevated)',
     color: on && !searching ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
@@ -463,13 +464,13 @@ export function FilesPane({ projectId, terminalId = null, onOpenFile }: { projec
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* root + branch */}
       <div style={{ padding: '9px 10px', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-        <span style={{ flex: 1, minWidth: 0, font: '400 11px var(--font-mono)', color: 'var(--color-text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span style={{ flex: 1, minWidth: 0, font: `400 ${fontVar(11)} var(--font-mono)`, color: 'var(--color-text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {project ? homeAbbrev(project.workingDir) : ''}
         </span>
         {git.branch && (
           <span title="Current branch" style={{
             display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0,
-            font: '500 10.5px var(--font-mono)', color: 'var(--color-accent)',
+            font: `500 ${fontVar(10.5)} var(--font-mono)`, color: 'var(--color-accent)',
             background: 'color-mix(in srgb, var(--color-accent) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--color-accent) 25%, transparent)',
             borderRadius: 'var(--radius-sm)', padding: '1px 6px', maxWidth: 140,
           }}>
@@ -477,7 +478,7 @@ export function FilesPane({ projectId, terminalId = null, onOpenFile }: { projec
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{git.branch}</span>
           </span>
         )}
-        <button title="Refresh" onClick={refresh} style={{ background: 'none', border: 'none', color: 'var(--color-text-faint)', cursor: 'pointer', fontSize: 14, flexShrink: 0, padding: 0 }}>⟳</button>
+        <button title="Refresh" onClick={refresh} style={{ background: 'none', border: 'none', color: 'var(--color-text-faint)', cursor: 'pointer', fontSize: fontVar(14), flexShrink: 0, padding: 0 }}>⟳</button>
       </div>
 
       {/* search + view toggles */}
@@ -485,14 +486,14 @@ export function FilesPane({ projectId, terminalId = null, onOpenFile }: { projec
         <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', padding: '5px 8px' }}>
           <MagnifyingGlass size={12} color="var(--color-text-tertiary)" style={{ flexShrink: 0 }} />
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter files… (fuzzy)"
-            style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', outline: 'none', color: 'var(--color-text-primary)', font: '400 12px var(--font-sans)' }} />
+            style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', outline: 'none', color: 'var(--color-text-primary)', font: `400 ${fontVar(12)} var(--font-sans)` }} />
           {query && (
             <button onClick={() => setQuery('')} title="Clear"
-              style={{ background: 'none', border: 'none', color: 'var(--color-text-tertiary)', cursor: 'pointer', fontSize: 11, padding: 0, flexShrink: 0 }}>×</button>
+              style={{ background: 'none', border: 'none', color: 'var(--color-text-tertiary)', cursor: 'pointer', fontSize: fontVar(11), padding: 0, flexShrink: 0 }}>×</button>
           )}
         </div>
         <button onClick={toggleHidden} title={showHidden ? 'Hide dotfiles' : 'Show dotfiles'}
-          style={{ ...TOOL_BTN, font: '600 11px var(--font-mono)', background: showHidden ? 'var(--color-accent)' : 'transparent', color: showHidden ? 'var(--color-on-accent)' : 'var(--color-text-secondary)' }}>·*</button>
+          style={{ ...TOOL_BTN, font: `600 ${fontVar(11)} var(--font-mono)`, background: showHidden ? 'var(--color-accent)' : 'transparent', color: showHidden ? 'var(--color-on-accent)' : 'var(--color-text-secondary)' }}>·*</button>
         <button onClick={() => setExpanded(new Set())} title="Collapse all"
           style={{ ...TOOL_BTN, background: 'transparent', color: 'var(--color-text-secondary)' }}>
           <ArrowLineLeft size={13} />
@@ -512,8 +513,8 @@ export function FilesPane({ projectId, terminalId = null, onOpenFile }: { projec
         )}
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '0 6px 8px', font: `400 ${fs}px/1.4 var(--font-mono)` }}>
-        <div style={{ padding: '2px 4px 5px', font: '500 9.5px var(--font-mono)', letterSpacing: '0.1em', color: 'var(--color-text-tertiary)' }}>{heading}</div>
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '0 6px 8px', font: `400 ${fontVar(fs)}/1.4 var(--font-mono)` }}>
+        <div style={{ padding: '2px 4px 5px', font: `500 ${fontVar(9.5)} var(--font-mono)`, letterSpacing: '0.1em', color: 'var(--color-text-tertiary)' }}>{heading}</div>
         {searching
           ? searchRows.map((r) => renderFlatRow(r.path, r.indices, statusFor(r.path)))
           : mode === 'changed'

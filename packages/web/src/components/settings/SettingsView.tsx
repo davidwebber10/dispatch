@@ -3,6 +3,7 @@ import { SETTINGS_SECTIONS, settingsSection, useAllSettingsSections, useSettings
 import { useUI } from '../../stores/ui';
 import { useNavigation } from '../../stores/navigation';
 import { UpdateBanner } from '../update/UpdateBanner';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * Desktop settings as a full page (design: "Dispatch Settings") — a view beside
@@ -37,12 +38,12 @@ export function SettingsView() {
       {/* section nav */}
       <div role="navigation" aria-label="Settings sections" style={{ width: 214, flexShrink: 0, background: 'var(--color-pane)', borderRight: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <div style={{ height: 44, flexShrink: 0, display: 'flex', alignItems: 'center', padding: '0 14px', borderBottom: '1px solid var(--color-border)' }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>Settings</span>
+          <span style={{ fontSize: fontVar(13), fontWeight: 600, color: 'var(--color-text-primary)' }}>Settings</span>
         </div>
         <div style={{ flex: 1, overflowY: 'auto', padding: '10px 8px' }}>
           {groups.map((g, gi) => (
             <div key={g} role="group" aria-label={g}>
-              <div style={{ font: '500 9.5px var(--font-mono)', letterSpacing: '0.1em', color: 'var(--color-text-tertiary)', padding: gi === 0 ? '2px 8px 6px' : '14px 8px 6px' }}>{g}</div>
+              <div style={{ font: `500 ${fontVar(9.5)} var(--font-mono)`, letterSpacing: '0.1em', color: 'var(--color-text-tertiary)', padding: gi === 0 ? '2px 8px 6px' : '14px 8px 6px' }}>{g}</div>
               {sections.filter((s) => s.group === g).map((s) => {
                 const on = s.key === tab;
                 const Icon = s.icon;
@@ -53,14 +54,14 @@ export function SettingsView() {
                     background: on ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : 'transparent',
                   }}>
                     <Icon aria-hidden size={15} weight={on ? 'fill' : 'regular'} color={on ? 'var(--color-accent)' : 'var(--color-text-tertiary)'} style={{ flexShrink: 0 }} />
-                    <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: on ? 500 : 400, color: on ? 'var(--color-text-primary)' : 'var(--color-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.label}</span>
+                    <span style={{ flex: 1, minWidth: 0, fontSize: fontVar(12.5), fontWeight: on ? 500 : 400, color: on ? 'var(--color-text-primary)' : 'var(--color-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.label}</span>
                   </button>
                 );
               })}
             </div>
           ))}
         </div>
-        <div style={{ borderTop: '1px solid var(--color-border)', padding: '8px 14px', font: '400 9.5px var(--font-mono)', color: 'var(--color-text-tertiary)', flexShrink: 0 }}>
+        <div style={{ borderTop: '1px solid var(--color-border)', padding: '8px 14px', font: `400 ${fontVar(9.5)} var(--font-mono)`, color: 'var(--color-text-tertiary)', flexShrink: 0 }}>
           Changes save as you edit
         </div>
       </div>
@@ -68,7 +69,7 @@ export function SettingsView() {
       {/* content */}
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <div style={{ height: 44, flexShrink: 0, display: 'flex', alignItems: 'center', padding: '0 22px', borderBottom: '1px solid var(--color-border)', background: 'var(--color-pane)' }}>
-          <h1 data-testid="settings-content-title" style={{ margin: 0, fontSize: 14, fontWeight: 600, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{active.label}</h1>
+          <h1 data-testid="settings-content-title" style={{ margin: 0, fontSize: fontVar(14), fontWeight: 600, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{active.label}</h1>
         </div>
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '22px 22px 48px' }}>
           <div style={{ maxWidth: 860, display: 'flex', flexDirection: 'column', gap: 16 }}>

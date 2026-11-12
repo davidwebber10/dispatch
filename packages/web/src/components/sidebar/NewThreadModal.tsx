@@ -16,6 +16,7 @@ import { HARNESSES, INSTALL_COMMAND, LOGIN_COMMAND, defaultModeFor, type Harness
 import type { AccountsView, AccountProvider } from '../../api/types';
 import { Select } from '../common/Select';
 import { startCliSignIn } from '../../lib/cliSignIn';
+import { fontVar } from '../../lib/fontSize';
 
 /** The harness (agent/shell) a new thread runs. Maps to the wire `type`. */
 type Harness = Harnesses['id'];
@@ -388,8 +389,8 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
   //    and differ only in scale. Phone controls are 40px tall (finger-sized); desktop
   //    controls are 30–32px.
   const m = isMobile;
-  const rowLabel: React.CSSProperties = { fontSize: m ? 15 : 13, color: 'var(--color-text-secondary)' };
-  const rowHint: React.CSSProperties = { fontSize: m ? 12 : 11, color: 'var(--color-text-tertiary)' };
+  const rowLabel: React.CSSProperties = { fontSize: fontVar(m ? 15 : 13), color: 'var(--color-text-secondary)' };
+  const rowHint: React.CSSProperties = { fontSize: fontVar(m ? 12 : 11), color: 'var(--color-text-tertiary)' };
   const control: React.CSSProperties = {
     background: 'var(--color-elevated)', border: `1px solid ${BORDER}`, borderRadius: m ? 'var(--radius-md)' : 'var(--radius-sm)',
     color: 'var(--color-text-primary)', boxSizing: 'border-box',
@@ -399,20 +400,20 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
   const gateCard: React.CSSProperties = { padding: '14px 14px 13px', background: 'var(--color-elevated)', border: `1px solid ${BORDER}`, borderRadius: 'var(--radius-md)' };
   const gateButton = (disabled: boolean): React.CSSProperties => ({
     marginTop: 12, height: 38, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-    background: ACCENT, border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: 13.5,
+    background: ACCENT, border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: fontVar(13.5),
     cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.7 : 1, boxShadow: GLOW,
   });
-  const gateCommand: React.CSSProperties = { marginTop: 9, font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)', background: 'color-mix(in srgb, var(--color-canvas) 50%, transparent)', border: `1px solid ${BORDER}`, borderRadius: 'var(--radius-sm)', padding: '7px 9px', overflowX: 'auto', whiteSpace: 'nowrap' };
+  const gateCommand: React.CSSProperties = { marginTop: 9, font: `400 ${fontVar(10.5)} var(--font-mono)`, color: 'var(--color-text-tertiary)', background: 'color-mix(in srgb, var(--color-canvas) 50%, transparent)', border: `1px solid ${BORDER}`, borderRadius: 'var(--radius-sm)', padding: '7px 9px', overflowX: 'auto', whiteSpace: 'nowrap' };
 
   /** The duration control: a number + unit pair, shown only while auto-archive is on. */
   const durationControl = (
     <>
       <input type="number" min={1} step={1} inputMode="numeric" aria-label="Duration" value={duration.value}
         onChange={(e) => { const n = Number(e.target.value); if (Number.isFinite(n) && n > 0) setAutoArchiveMs(fromDuration(n, duration.unit)); }}
-        style={{ ...control, height: m ? 40 : 30, width: m ? 64 : 52, padding: '0 8px', font: `500 ${m ? 14 : 12}px var(--font-mono)`, textAlign: 'center' }} />
+        style={{ ...control, height: m ? 40 : 30, width: m ? 64 : 52, padding: '0 8px', font: `500 ${fontVar(m ? 14 : 12)} var(--font-mono)`, textAlign: 'center' }} />
       <Select ariaLabel="Unit" value={duration.unit} options={UNITS}
         onChange={(v) => setAutoArchiveMs(fromDuration(duration.value, v as DurationUnit))}
-        style={{ ...control, height: m ? 40 : 30, width: m ? 84 : 72, color: 'var(--color-text-secondary)', font: `500 ${m ? 14 : 12}px var(--font-mono)` }} />
+        style={{ ...control, height: m ? 40 : 30, width: m ? 84 : 72, color: 'var(--color-text-secondary)', font: `500 ${fontVar(m ? 14 : 12)} var(--font-mono)` }} />
     </>
   );
 
@@ -458,11 +459,11 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
           <div style={gateCard}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <SignIn size={16} weight="bold" color="var(--color-status-yellow)" style={{ flex: 'none' }} />
-              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>
+              <span style={{ fontSize: fontVar(13), fontWeight: 600, color: 'var(--color-text-primary)' }}>
                 {spec.label} isn't signed in
               </span>
             </div>
-            <div style={{ marginTop: 6, fontSize: 12, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
+            <div style={{ marginTop: 6, fontSize: fontVar(12), lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
               Dispatch can run the sign-in for you and hand you the link. A thread that starts
               without this just stops at a login screen you can't finish from a phone.
             </div>
@@ -475,13 +476,13 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
           <div style={gateCard}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <SignIn size={16} weight="bold" color="var(--color-status-yellow)" style={{ flex: 'none' }} />
-              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>
+              <span style={{ fontSize: fontVar(13), fontWeight: 600, color: 'var(--color-text-primary)' }}>
                 OpenCode needs an OpenRouter API key
               </span>
             </div>
-            <div style={{ marginTop: 6, fontSize: 12, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
+            <div style={{ marginTop: 6, fontSize: fontVar(12), lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
               OpenCode runs open models through OpenRouter. Paste a key from openrouter.ai — it's
-              saved to Doppler as <code style={{ font: '400 11px var(--font-mono)' }}>{harnessSettings!.opencodeKey.secret}</code> and
+              saved to Doppler as <code style={{ font: `400 ${fontVar(11)} var(--font-mono)` }}>{harnessSettings!.opencodeKey.secret}</code> and
               injected at spawn, never stored in a file. Change the secret later in Settings → Agents.
             </div>
             <input
@@ -489,10 +490,10 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
               placeholder="sk-or-v1-…"
               value={keyDraft}
               onChange={(e) => setKeyDraft(e.target.value)}
-              style={{ marginTop: 10, height: 36, width: '100%', padding: '0 12px', background: 'color-mix(in srgb, var(--color-canvas) 50%, transparent)', border: `1px solid ${BORDER}`, borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', boxSizing: 'border-box', font: '400 12px var(--font-mono)' }}
+              style={{ marginTop: 10, height: 36, width: '100%', padding: '0 12px', background: 'color-mix(in srgb, var(--color-canvas) 50%, transparent)', border: `1px solid ${BORDER}`, borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', boxSizing: 'border-box', font: `400 ${fontVar(12)} var(--font-mono)` }}
             />
             {keyError && (
-              <div style={{ marginTop: 9, fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-status-red)' }}>{keyError}</div>
+              <div style={{ marginTop: 9, fontSize: fontVar(11.5), lineHeight: 1.5, color: 'var(--color-status-red)' }}>{keyError}</div>
             )}
             <button type="button" disabled={keySaving || !keyDraft.trim()} onClick={() => void saveKey()} style={gateButton(keySaving || !keyDraft.trim())}>
               {keySaving ? (<><Spinner size={13} /> Saving…</>) : 'Save key'}
@@ -502,17 +503,17 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
           <div style={gateCard}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <WarningCircle size={16} weight="fill" color="var(--color-status-yellow)" style={{ flex: 'none' }} />
-              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>
+              <span style={{ fontSize: fontVar(13), fontWeight: 600, color: 'var(--color-text-primary)' }}>
                 {spec.label} isn't installed
               </span>
             </div>
-            <div style={{ marginTop: 6, fontSize: 12, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
+            <div style={{ marginTop: 6, fontSize: fontVar(12), lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
               Dispatch can install it here, on the machine running the daemon. It takes a few
               minutes, and you can leave this open.
             </div>
             <div style={gateCommand}>{INSTALL_COMMAND[spec.provider!]}</div>
             {installError && (
-              <div style={{ marginTop: 9, fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-status-red)' }}>{installError}</div>
+              <div style={{ marginTop: 9, fontSize: fontVar(11.5), lineHeight: 1.5, color: 'var(--color-status-red)' }}>{installError}</div>
             )}
             <button type="button" disabled={installing !== null} onClick={() => void install(spec.provider!)} style={gateButton(installing !== null)}>
               {installing === spec.provider
@@ -538,7 +539,7 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
                       title={disabled ? (id === 'pretty' ? `${spec.label} has no structured transport yet` : `${spec.label} runs structured-only`) : undefined}
                       onClick={() => { if (!disabled) setMode(id); }}
                       style={{
-                        flex: 1, font: `600 ${m ? 13 : 12}px var(--font-sans)`, borderRadius: m ? 'var(--radius-sm)' : 'var(--radius-sm)', border: 'none',
+                        flex: 1, font: `600 ${fontVar(m ? 13 : 12)} var(--font-sans)`, borderRadius: m ? 'var(--radius-sm)' : 'var(--radius-sm)', border: 'none',
                         ...(m ? { height: 34 } : { padding: '5px 4px' }),
                         background: on ? 'color-mix(in srgb, var(--color-accent) 14%, var(--color-elevated))' : 'transparent',
                         boxShadow: on ? 'inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 55%, transparent)' : 'none',
@@ -585,7 +586,7 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
                   <>
                     <span style={rowHint}>"{picked.label}" is not signed in.</span>
                     <button type="button" aria-label={`Sign in again to ${picked.label}`} onClick={() => setCodexSignIn(picked.id)}
-                      style={{ ...control, alignSelf: 'flex-start', height: m ? 36 : 30, padding: '0 12px', display: 'inline-flex', alignItems: 'center', gap: 6, font: `500 ${m ? 14 : 12.5}px var(--font-sans)`, cursor: 'pointer' }}>
+                      style={{ ...control, alignSelf: 'flex-start', height: m ? 36 : 30, padding: '0 12px', display: 'inline-flex', alignItems: 'center', gap: 6, font: `500 ${fontVar(m ? 14 : 12.5)} var(--font-sans)`, cursor: 'pointer' }}>
                       <SignIn size={14} />Sign in again
                     </button>
                   </>
@@ -597,7 +598,7 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
             <div data-testid="add-account" style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: m ? '8px 0 12px' : '10px 2px', borderBottom: `1px solid ${DIVIDER}` }}>
               <input aria-label="Account name" value={accountLabel} onChange={(e) => setAccountLabel(e.target.value)}
                 placeholder={accountProvider === 'claude' ? 'Name, like Work or Personal (optional)' : 'Name, like Work or Personal'}
-                style={{ ...control, height: m ? 40 : 32, padding: '0 10px', font: `400 ${m ? 15 : 13}px var(--font-sans)`, width: '100%' }} />
+                style={{ ...control, height: m ? 40 : 32, padding: '0 10px', font: `400 ${fontVar(m ? 15 : 13)} var(--font-sans)`, width: '100%' }} />
               {accountProvider === 'claude' ? (
                 <ClaudeLogin buttonLabel="Log in to the new Claude account" start={() => api.accountsClaudeLogin(accountLabel.trim())} onDone={() => void accountAdded()} />
               ) : codexSignIn ? (
@@ -606,14 +607,14 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
                 <>
                   <span style={rowHint}>Dispatch shows a link and a code. Open the link on any device, sign in to ChatGPT, and enter the code.</span>
                   <button type="button" disabled={accountBusy} onClick={() => void addCodexAccount()}
-                    style={{ ...control, alignSelf: 'flex-start', height: m ? 36 : 30, padding: '0 12px', font: `500 ${m ? 14 : 12.5}px var(--font-sans)`, cursor: accountBusy ? 'default' : 'pointer', opacity: accountBusy ? 0.7 : 1 }}>
+                    style={{ ...control, alignSelf: 'flex-start', height: m ? 36 : 30, padding: '0 12px', font: `500 ${fontVar(m ? 14 : 12.5)} var(--font-sans)`, cursor: accountBusy ? 'default' : 'pointer', opacity: accountBusy ? 0.7 : 1 }}>
                     {accountBusy ? 'Adding…' : 'Add and sign in'}
                   </button>
                 </>
               )}
-              {accountError && <span style={{ fontSize: 12, color: 'var(--color-status-red)' }}>{accountError}</span>}
+              {accountError && <span style={{ fontSize: fontVar(12), color: 'var(--color-status-red)' }}>{accountError}</span>}
               <button type="button" onClick={() => { if (codexSignIn) void api.accountsCodexLoginCancel(codexSignIn).catch(() => {}); setCodexSignIn(null); setAddingAccount(false); setAccountError(null); }}
-                style={{ alignSelf: 'flex-start', background: 'none', border: 'none', padding: 0, font: `500 ${m ? 14 : 12.5}px var(--font-sans)`, color: 'var(--color-text-tertiary)', cursor: 'pointer' }}>Cancel</button>
+                style={{ alignSelf: 'flex-start', background: 'none', border: 'none', padding: 0, font: `500 ${fontVar(m ? 14 : 12.5)} var(--font-sans)`, color: 'var(--color-text-tertiary)', cursor: 'pointer' }}>Cancel</button>
             </div>
           )}
           {(models.length > 0 || harness === 'opencode') && (
@@ -635,7 +636,7 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
           )}
           {harness === 'terminal' && (
             <Row mobile={m}>
-              <span style={{ fontSize: m ? 14 : 12.5, color: 'var(--color-text-tertiary)' }}>Plain shell. No mode or model to choose.</span>
+              <span style={{ fontSize: fontVar(m ? 14 : 12.5), color: 'var(--color-text-tertiary)' }}>Plain shell. No mode or model to choose.</span>
             </Row>
           )}
           {/* WORKTREE (W3-G) — one option row, only in a git repository. */}
@@ -666,7 +667,7 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
             </div>
             {m && autoArchive && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
-                <span style={{ fontSize: 13, color: 'var(--color-text-tertiary)', flex: 1 }}>Archive after</span>
+                <span style={{ fontSize: fontVar(13), color: 'var(--color-text-tertiary)', flex: 1 }}>Archive after</span>
                 {durationControl}
               </div>
             )}
@@ -681,14 +682,14 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
             <span style={rowLabel}>Starts {batch.length} thread{batch.length === 1 ? '' : 's'}, one for each prompt</span>
             <ol aria-label="Threads to start" style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: m ? 6 : 5, maxHeight: 220, overflowY: 'auto' }}>
               {batch.map((text, i) => (
-                <li key={i} style={{ background: 'var(--color-elevated)', border: `1px solid ${BORDER}`, borderRadius: 'var(--radius-md)', padding: m ? '10px 12px' : '8px 10px', fontSize: m ? 14 : 12.5, color: 'var(--color-text-primary)', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{text}</li>
+                <li key={i} style={{ background: 'var(--color-elevated)', border: `1px solid ${BORDER}`, borderRadius: 'var(--radius-md)', padding: m ? '10px 12px' : '8px 10px', fontSize: fontVar(m ? 14 : 12.5), color: 'var(--color-text-primary)', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{text}</li>
               ))}
             </ol>
           </div>
         )}
 
         <button type="button" disabled={busy || capabilitiesLoading} onClick={() => void create()}
-          style={{ height: m ? 48 : 40, width: '100%', flex: 'none', background: ACCENT, border: 'none', borderRadius: m ? 'var(--radius-lg)' : 'var(--radius-md)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: m ? 15 : 14, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1, boxShadow: GLOW }}>
+          style={{ height: m ? 48 : 40, width: '100%', flex: 'none', background: ACCENT, border: 'none', borderRadius: m ? 'var(--radius-lg)' : 'var(--radius-md)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: fontVar(m ? 15 : 14), cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1, boxShadow: GLOW }}>
           {batch ? `Start ${batch.length} thread${batch.length === 1 ? '' : 's'}` : 'Start new thread'}
         </button>
 
@@ -698,16 +699,16 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
             the sheet); the opened list renders below it, outside, so opening it never pads
             the region above. */}
         {canResume && !batch && (recent === null ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--color-text-tertiary)', fontSize: m ? 13 : 12.5, borderTop: `1px solid ${DIVIDER}`, paddingTop: m ? 10 : 12, minHeight: m ? 44 : undefined, boxSizing: 'border-box' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--color-text-tertiary)', fontSize: fontVar(m ? 13 : 12.5), borderTop: `1px solid ${DIVIDER}`, paddingTop: m ? 10 : 12, minHeight: m ? 44 : undefined, boxSizing: 'border-box' }}>
             <Spinner size={12} /> Loading recent sessions…
           </div>
         ) : recent.length > 0 ? (
           <div style={{ borderTop: `1px solid ${DIVIDER}`, paddingTop: m ? 6 : 12 }}>
             <button type="button" onClick={() => setResumeOpen((v) => !v)} aria-expanded={resumeOpen}
-              style={{ display: 'flex', alignItems: 'center', gap: m ? 10 : 8, background: 'none', border: 'none', padding: m ? 0 : 2, minHeight: m ? 44 : undefined, cursor: 'pointer', font: `500 ${m ? 14 : 12.5}px var(--font-sans)`, color: 'var(--color-text-secondary)', textAlign: 'left', width: '100%' }}>
+              style={{ display: 'flex', alignItems: 'center', gap: m ? 10 : 8, background: 'none', border: 'none', padding: m ? 0 : 2, minHeight: m ? 44 : undefined, cursor: 'pointer', font: `500 ${fontVar(m ? 14 : 12.5)} var(--font-sans)`, color: 'var(--color-text-secondary)', textAlign: 'left', width: '100%' }}>
               <Chevron size={m ? 7 : 6} rotate={resumeOpen ? 'rotate(45deg)' : 'rotate(-45deg)'} style={{ marginLeft: m ? 3 : 2 }} />
               <span style={{ flex: 1 }}>Or resume a recent {spec.label} session</span>
-              <span style={{ font: `500 ${m ? 12 : 11}px var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>{recent.length}</span>
+              <span style={{ font: `500 ${fontVar(m ? 12 : 11)} var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>{recent.length}</span>
             </button>
           </div>
         ) : null)}
@@ -720,8 +721,8 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
             {recent.map((s) => (
               <button key={s.id} type="button" disabled={busy || capabilitiesLoading} onClick={() => void create(s.id)}
                 style={{ display: 'flex', flexDirection: 'column', gap: m ? 4 : 3, width: '100%', textAlign: 'left', background: 'var(--color-elevated)', border: `1px solid ${BORDER}`, borderRadius: m ? 'var(--radius-md)' : 'var(--radius-md)', padding: m ? '11px 12px' : '9px 11px', minHeight: m ? 52 : undefined, cursor: busy ? 'default' : 'pointer', flex: 'none' }}>
-                <span style={{ fontSize: m ? 14 : 12.5, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: '100%' }}>{s.preview}</span>
-                <span style={{ font: `400 ${m ? 11 : 10.5}px var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>
+                <span style={{ fontSize: fontVar(m ? 14 : 12.5), color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: '100%' }}>{s.preview}</span>
+                <span style={{ font: `400 ${fontVar(m ? 11 : 10.5)} var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>
                   {timeAgo(new Date(s.mtime).toISOString())} · {s.messageCount}{s.truncated ? '+' : ''} msg{s.messageCount === 1 ? '' : 's'}
                 </span>
               </button>
