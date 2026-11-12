@@ -11,7 +11,9 @@ import os from 'os';
 import path from 'path';
 import { createHash, randomUUID } from 'crypto';
 import type { UsageAccess } from '../limits/gauge.js';
-import { agentDirFor, giveToAgent } from '../privsep/paths.js';
+import { privsep } from '../privsep/config.js';
+import { agentDirFor } from '../privsep/paths.js';
+import { agentMkdir } from '../privsep/agent-fs.js';
 
 export const CLI_ACCOUNT_ID = 'cli';
 export const ACCOUNT_PROVIDERS = ['claude', 'codex'] as const;
@@ -190,8 +192,7 @@ export class AccountsStore {
   addCodex(label: string): CodexAccount {
     const id = randomUUID().slice(0, 8);
     const dir = path.join(agentDirFor(this.dataDir, 'codex-accounts'), id);
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    giveToAgent(dir);
+    if (privsep()) agentMkdir(dir); else fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     const a: CodexAccount = { id, label: label.trim() || 'Codex account', dir, addedAt: new Date().toISOString() };
     this.data.codex.push(a);
     this.save();

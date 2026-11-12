@@ -56,10 +56,14 @@ export interface MigrationResult {
   skipped?: 'already-migrated' | 'not-allowed' | 'no-legacy-state' | 'state-not-empty';
 }
 
-/** Copy a file, folder or link without following links (a link is copied as a link). */
+/**
+ * Copy a file or a folder. A symbolic link is NOT copied, at any depth: the old directory was
+ * writable by the agent, and a link imported into the state root would later be followed by the
+ * daemon with its own rights. Never follows a link either.
+ */
 function copyEntry(from: string, to: string): void {
   const st = fs.lstatSync(from);
-  if (st.isSymbolicLink()) { fs.symlinkSync(fs.readlinkSync(from), to); return; }
+  if (st.isSymbolicLink()) return;
   if (st.isDirectory()) {
     fs.mkdirSync(to, { mode: 0o700 });
     for (const n of fs.readdirSync(from)) copyEntry(path.join(from, n), path.join(to, n));
@@ -107,6 +111,7 @@ export function migrateLegacyHome(o: MigrationOptions): MigrationResult {
     for (const n of mine) copyEntry(path.join(o.legacyDir, n), path.join(incoming, n));
     fsyncDir(incoming);
     for (const n of mine) {
+      if (!fs.existsSync(path.join(incoming, n))) continue; // a link, a socket: not copied
       const dest = path.join(o.stateDir, n);
       // The state root may hold an EMPTY database file (created before the first open), never data.
       fs.rmSync(dest, { recursive: true, force: true });

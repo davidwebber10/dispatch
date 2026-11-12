@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { mkdirForAgent } from '../privsep/paths.js';
+import { agentMkdir } from '../privsep/agent-fs.js';
 
 /** `~` or `~/x` → the home folder. Any other path is returned as it is. */
 export function expandHome(p: string, home: string = os.homedir()): string {
@@ -25,6 +25,6 @@ export function hostedProjectDir(name: string, home: string = os.homedir()): str
   const base = safeFolderName(name);
   let dir = path.join(root, base);
   for (let n = 2; fs.existsSync(dir); n++) dir = path.join(root, `${base}-${n}`);
-  mkdirForAgent(dir, { confine: false });
+  agentMkdir(dir);
   return dir;
 }

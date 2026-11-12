@@ -126,6 +126,17 @@ inbox cat /home/dispatch/proof/attack-dev.out > "$WORK/attack-dev.out" 2>/dev/nu
 grep -E '^(==|FAIL|NOTE)' "$WORK/attack-dev.out" | sed "s/$IN/<inbound>/g"
 A1="$(grep -c '^FAIL' "$WORK/attack-dev.out")"; P1="$(grep -c '^PASS' "$WORK/attack-dev.out")"
 
+# The owner's own actions must not be redirected by a link a workload planted (the daemon is root:
+# it makes every change below the home AS the agent, so a link leads only where the agent could go).
+type_in "$SHID" 'ln -s /run/dispatch/agent/planted-dir ~/projects/evil; mkdir -p ~/projects/proj1 && ln -sfn /run/dispatch/agent ~/projects/proj1/redirect; echo ok > ~/proof-links.done'
+wait_file /home/dispatch/proof-links.done 15
+api POST /api/sessions '{"name":"evil"}' >/dev/null
+api POST "/api/sessions/$SID/files/mkdir?path=redirect/planted-by-owner" >/dev/null
+api PUT "/api/sessions/$SID/files/write?path=redirect/planted.json" '{"content":"{}"}' >/dev/null
+PLANTED="$(inbox sh -c 'ls -d /run/dispatch/agent/planted-dir /run/dispatch/agent/planted-by-owner /run/dispatch/agent/planted.json 2>/dev/null' | tr '\n' ' ')"
+[ -z "$PLANTED" ] && fok "a planted link cannot redirect the owner's project, folder or file creation" || fbad "a planted link cannot redirect the owner's actions" "$PLANTED"
+type_in "$SHID" 'rm -f ~/projects/evil ~/projects/proj1/redirect'
+
 echo
 echo "################ C. the same attacks under the business profile, run by the harness process itself"
 set_profile business

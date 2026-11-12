@@ -581,7 +581,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     },
   };
   app.locals[GATE_LOCAL] = gateState;
-  const toolsBase = opts.toolsDir ?? agentDirFor(dataDir, 'tools');
+  const toolsBase = opts.toolsDir ?? runDirFor(dataDir, 'tools');
   // Whether each bundled CLI can really sign in from a thread: runs its authCheck with the
   // thread spawn env (kept current by the refresh below), not this daemon's bare env.
   const toolsAuth = new ToolAuthProber({ base: toolsBase });

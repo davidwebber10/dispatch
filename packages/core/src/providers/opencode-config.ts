@@ -3,6 +3,7 @@ import path from 'path';
 import type { McpServerEntry } from './grok-home.js';
 import { OPENCODE_DEFAULT_MODEL } from './opencode.js';
 import { opencodeSmartPermission } from '../os/approvals.js';
+import { publishToAgent, publishTreeToAgent } from '../privsep/paths.js';
 
 /**
  * Writes the per-thread OpenCode config an `opencode acp` child runs under, pointed at via
@@ -48,6 +49,14 @@ export interface OpencodeConfigSpec {
   toolsDisabled?: boolean;
 }
 
+/** The folder of the per-thread OpenCode configs (published to the agent's group when it is made). */
+export function opencodeHomesDir(hooksDir: string): string {
+  const dir = path.join(hooksDir, 'opencode-homes');
+  fs.mkdirSync(dir, { recursive: true });
+  publishToAgent(dir);
+  return dir;
+}
+
 export function writeOpencodeConfig(spec: OpencodeConfigSpec): string {
   fs.mkdirSync(spec.dir, { recursive: true });
 
@@ -91,5 +100,8 @@ export function writeOpencodeConfig(spec: OpencodeConfigSpec): string {
   const cfgPath = path.join(spec.dir, 'opencode.json');
   fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
   try { fs.chmodSync(cfgPath, 0o600); } catch { /* best effort on FS that lacks chmod */ }
+  // Privilege separation: the harness reads this as another user (and cannot change it: the
+  // permission block above is what its approvals rest on).
+  publishTreeToAgent(spec.dir);
   return cfgPath;
 }

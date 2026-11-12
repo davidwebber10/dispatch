@@ -11,6 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { privsep, type PrivsepConfig } from './config.js';
+import { agentMkdir } from './agent-fs.js';
 
 const SUB = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
@@ -101,8 +102,11 @@ export function assertInHome(target: string, cfg: PrivsepConfig | null = privsep
 }
 
 /**
- * Give one file, folder or link below the home to the agent user (never follows a link). The mount
- * of a hosted home enforces one user, so there this changes nothing and a refusal is ignored.
+ * Give ONE FIXED PATH to the agent user at start: the home (a mount point below root-owned folders)
+ * and the agent data dir in it. Never follows a link, and is called before any workload runs, so
+ * nothing can be swapped under it. Everything else below the home is created AS the agent
+ * (privsep/agent-fs.ts): the daemon never changes an owner there. The mount of a hosted home
+ * enforces one user, so there this changes nothing and a refusal is ignored.
  */
 export function giveToAgent(target: string, cfg: PrivsepConfig | null = privsep()): void {
   if (!cfg) return;
@@ -116,20 +120,21 @@ export function giveToAgent(target: string, cfg: PrivsepConfig | null = privsep(
   }
 }
 
-/** `giveToAgent` for a folder and everything in it. Links are given, not followed. */
-export function giveTreeToAgent(root: string, cfg: PrivsepConfig | null = privsep()): void {
+/**
+ * Let workloads read a folder the daemon wrote in the agent run dir, with everything in it. A link
+ * anywhere inside is refused.
+ */
+export function publishTreeToAgent(root: string, cfg: PrivsepConfig | null = privsep()): void {
   if (!cfg) return;
   const walk = (p: string, depth: number) => {
-    giveToAgent(p, cfg);
-    let st: fs.Stats;
-    try { st = fs.lstatSync(p); } catch { return; }
-    if (!st.isDirectory() || depth > 64) return;
-    let names: string[] = [];
-    try { names = fs.readdirSync(p); } catch { return; }
-    for (const n of names) walk(path.join(p, n), depth + 1);
+    publishToAgent(p, cfg);
+    if (depth > 32 || !fs.lstatSync(p).isDirectory()) return;
+    for (const n of fs.readdirSync(p)) walk(path.join(p, n), depth + 1);
   };
   walk(root, 0);
 }
+
+const madeAgentDirs = new Set<string>();
 
 /**
  * A folder below the agent data dir (`$HOME/.dispatch/<sub>`), owned by the agent: harness state a
@@ -139,26 +144,8 @@ export function agentDirFor(dataDir: string, sub: string, cfg: PrivsepConfig | n
   checkSub(sub);
   if (!cfg) return path.join(dataDir, sub);
   const dir = path.join(cfg.agentDataDir, sub);
-  assertInHome(dir, cfg);
-  fs.mkdirSync(cfg.agentDataDir, { recursive: true, mode: 0o700 });
-  giveToAgent(cfg.agentDataDir, cfg);
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  giveToAgent(dir, cfg);
+  // Made as the agent: a link planted at the data dir leads only where the agent could already go.
+  // Once per start is enough (a workload that removes it later breaks only its own harness).
+  if (!madeAgentDirs.has(dir)) { agentMkdir(dir, cfg); madeAgentDirs.add(dir); }
   return dir;
-}
-
-/**
- * Make a folder for workloads (and its missing parents) and give each new one to the agent.
- * Local: a plain recursive mkdir.
- */
-export function mkdirForAgent(dir: string, opts: { mode?: number; confine?: boolean } = {}, cfg: PrivsepConfig | null = privsep()): void {
-  const mode = opts.mode ?? 0o777; // the process umask applies, as with a plain mkdir
-  if (!cfg) { fs.mkdirSync(dir, { recursive: true, mode }); return; }
-  // `confine: false`: the caller already confined the path (the file routes), or the folder is a
-  // project the person placed outside the home.
-  if (opts.confine !== false) assertInHome(dir, cfg);
-  const missing: string[] = [];
-  let p = path.resolve(dir);
-  while (!fs.existsSync(p)) { missing.unshift(p); const up = path.dirname(p); if (up === p) break; p = up; }
-  for (const m of missing) { fs.mkdirSync(m, { mode }); giveToAgent(m, cfg); }
 }

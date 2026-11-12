@@ -17,7 +17,7 @@ import { GIT_NO_FSMONITOR } from '../docs/git.js';
 import { defaultSecretRoots, holdsSecret, isSecretPath, SECRET_PATH_ERROR, type SecretRoots } from '../files/secret-paths.js';
 import { PATH_REFUSALS, realAsFarAsItExists, type FileUse, type PathPolicy } from '../files/path-policy.js';
 import { pathPolicyFor } from '../files/path-policy-default.js';
-import { giveToAgent, mkdirForAgent } from '../privsep/paths.js';
+import { agentCopyFrom, agentMkdir, agentRemove, agentRename, agentWriteFile } from '../privsep/agent-fs.js';
 
 /** Upper bound on a single reveal: no native file manager can usefully select more, and this is
  *  the only route that shells out — an unbounded argv is not worth the risk. */
@@ -578,8 +578,7 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
       let existing: fs.Stats | null = null;
       try { existing = fs.statSync(resolved); } catch { /* a new file */ }
       if (existing && refusedOpen(res, existing, realAsFarAsItExists(resolved))) return;
-      fs.writeFileSync(resolved, req.body.content);
-      giveToAgent(resolved);
+      agentWriteFile(resolved, req.body.content);
       res.json({ ok: true, path: requestedPath });
     } catch (err: any) {
       res.status(400).json({ error: clientMessage(err) });
@@ -612,8 +611,7 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
         let existing: fs.Stats | null = null;
         try { existing = fs.statSync(dest); } catch { /* a new file */ }
         if (existing && refusedOpen(res, existing, realAsFarAsItExists(dest))) { unlinkQuiet(tmpFile); return; }
-        fs.copyFileSync(req.file.path, dest);
-        giveToAgent(dest);
+        agentCopyFrom(req.file.path, dest);
         fs.unlinkSync(req.file.path);
         res.json({ ok: true, path: path.relative(session.workingDir, dest) });
       } catch (err: any) {
@@ -641,7 +639,7 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
         const inboxDir = path.join(session.workingDir, '.dispatch', 'inbox');
         if (!insideRealRoot(session.workingDir, inboxDir)) { unlinkQuiet(req.file.path); return res.status(403).json({ error: 'Path traversal not allowed' }); }
         if (refused(res, session, inboxDir, 'write')) { unlinkQuiet(req.file.path); return; }
-        mkdirForAgent(inboxDir, { confine: false });
+        agentMkdir(inboxDir);
 
         const safeFilename = sanitizeFilename(req.file.originalname);
         const suffix = Math.random().toString(36).slice(2, 10) || 'upload';
@@ -649,8 +647,7 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
         const absolutePath = path.join(inboxDir, filename);
         const relativePath = path.relative(session.workingDir, absolutePath);
 
-        fs.copyFileSync(req.file.path, absolutePath);
-        giveToAgent(absolutePath);
+        agentCopyFrom(req.file.path, absolutePath);
         fs.unlinkSync(req.file.path);
         res.json({ ok: true, path: relativePath, absolutePath });
       } catch (copyErr: any) {
@@ -675,7 +672,7 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
     if (refused(res, session, resolved, 'write')) return;
 
     try {
-      mkdirForAgent(resolved, { confine: false });
+      agentMkdir(resolved);
       res.json({ ok: true, path: requestedPath });
     } catch (err: any) {
       res.status(400).json({ error: clientMessage(err) });
@@ -702,7 +699,7 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
     if (refused(res, session, from, 'write', true) || refused(res, session, to, 'write', true)) return;
 
     try {
-      fs.renameSync(from, to);
+      agentRename(from, to);
       res.json({ ok: true, path: path.relative(session.workingDir, to) });
     } catch (err: any) {
       res.status(400).json({ error: clientMessage(err) });
@@ -722,7 +719,7 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
     if (refused(res, session, resolved, 'write', true)) return;
 
     try {
-      fs.rmSync(resolved, { recursive: true });
+      agentRemove(resolved, { recursive: true });
       res.json({ ok: true });
     } catch (err: any) {
       res.status(400).json({ error: clientMessage(err) });

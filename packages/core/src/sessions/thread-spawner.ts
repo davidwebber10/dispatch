@@ -41,6 +41,7 @@ import { ThreadConfigStore, type ConfigPatch } from './thread-config.js';
 import type { SessionWiring } from './session-wiring.js';
 import { AGENCY_MCP_SERVER, type SpawnInjection } from './spawn-injection.js';
 import { grokHomeDir } from '../providers/grok-home.js';
+import { opencodeHomesDir } from '../providers/opencode-config.js';
 
 type IStructuredManager = import('../structured/manager.js').IStructuredManager;
 
@@ -569,7 +570,7 @@ export class ThreadSpawner {
           }
         }
         const cfgPath = writeOpencodeConfig({
-          dir: path.join(this.wiring.statusContext.hooksDir, 'opencode-homes', terminal.id),
+          dir: path.join(opencodeHomesDir(this.wiring.statusContext.hooksDir), terminal.id),
           model: resolvedModel,
           escalate,
           smart,

@@ -15,7 +15,9 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { agentDirFor, giveToAgent, giveTreeToAgent } from '../privsep/paths.js';
+import { privsep } from '../privsep/config.js';
+import { agentDirFor } from '../privsep/paths.js';
+import { agentNode } from '../privsep/agent-fs.js';
 
 export const SHARED_DIRS = ['projects', 'skills', 'commands', 'agents', 'plugins'] as const;
 export const SHARED_FILES = ['settings.json', 'CLAUDE.md'] as const;
@@ -38,6 +40,12 @@ export function accountConfigDir(dataDir: string, id: string): string {
  */
 export function prepareAccountConfigDir(dataDir: string, id: string, primary: string = primaryClaudeConfigDir()): string {
   const dir = accountConfigDir(dataDir, id);
+  if (privsep()) {
+    // Privilege separation: both folders are the agent's, so every step runs as the agent (the same
+    // steps as below, in one small script). The daemon itself creates nothing and links nothing here.
+    agentNode(PREPARE_AS_AGENT, [dir, primary, JSON.stringify(SHARED_DIRS), JSON.stringify(SHARED_FILES)]);
+    return dir;
+  }
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   fs.mkdirSync(primary, { recursive: true, mode: 0o700 });
   const link = (name: string, isDir: boolean) => {
@@ -55,9 +63,28 @@ export function prepareAccountConfigDir(dataDir: string, id: string, primary: st
   };
   for (const d of SHARED_DIRS) link(d, true);
   for (const f of SHARED_FILES) link(f, false);
-  // Privilege separation: the harness runs as another user and must own what it writes.
-  giveToAgent(primary);
-  for (const d of SHARED_DIRS) giveToAgent(path.join(primary, d));
-  giveTreeToAgent(dir);
   return dir;
 }
+
+/** `prepareAccountConfigDir`, for `node -e` as the agent: argv = dir, primary, shared dirs (JSON), shared files (JSON). */
+const PREPARE_AS_AGENT = `
+const fs = require('fs'), path = require('path');
+const [dir, primary, dirs, files] = process.argv.slice(1);
+fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+fs.mkdirSync(primary, { recursive: true, mode: 0o700 });
+const link = (name, isDir) => {
+  const target = path.join(primary, name);
+  if (isDir) fs.mkdirSync(target, { recursive: true });
+  else if (!fs.existsSync(target)) return;
+  const at = path.join(dir, name);
+  try {
+    const st = fs.lstatSync(at);
+    if (!st.isSymbolicLink()) return;
+    if (fs.readlinkSync(at) === target) return;
+    fs.unlinkSync(at);
+  } catch {}
+  fs.symlinkSync(target, at, isDir ? 'dir' : 'file');
+};
+for (const d of JSON.parse(dirs)) link(d, true);
+for (const f of JSON.parse(files)) link(f, false);
+`;

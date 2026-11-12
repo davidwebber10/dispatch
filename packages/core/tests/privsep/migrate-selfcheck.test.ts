@@ -111,12 +111,16 @@ describe('moving an older box', () => {
     expect(fs.readdirSync(state)).toEqual([MIGRATION_MARKER]);
   });
 
-  test('links in the old directory are copied as links, never followed', () => {
+  test('links in the old directory are not imported, at any depth, and never followed', () => {
     oldBox();
     const secret = path.join(root, 'outside-secret'); fs.writeFileSync(secret, 'SECRET');
     fs.symlinkSync(secret, path.join(legacy, 'icons'));
+    fs.symlinkSync(state, path.join(legacy, 'plugins', 'p1', 'loop'));
     migrateLegacyHome({ legacyDir: legacy, stateDir: state, allowImport: true });
-    expect(fs.lstatSync(path.join(state, 'icons')).isSymbolicLink()).toBe(true);
+    expect(fs.existsSync(path.join(state, 'icons'))).toBe(false);
+    expect(fs.existsSync(path.join(state, 'plugins', 'p1', 'loop'))).toBe(false);
+    expect(fs.readFileSync(path.join(state, 'plugins', 'p1', 'plugin.json'), 'utf8')).toBe('{}');
+    expect(fs.readFileSync(secret, 'utf8')).toBe('SECRET');
   });
 
   test('the old directory replaced by a link is not read', () => {

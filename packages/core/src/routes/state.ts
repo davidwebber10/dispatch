@@ -14,6 +14,7 @@ import { revealClientFrom } from '../files/reveal.js';
 import { clientMessage } from '../http/client-message.js';
 import { PATH_REFUSALS, type PathPolicy } from '../files/path-policy.js';
 import { pathPolicyFor } from '../files/path-policy-default.js';
+import { agentMkdir } from '../privsep/agent-fs.js';
 
 export function createStateRouter(db: Database.Database, opts: { policy?: PathPolicy } = {}): Router {
   const router = policyRouter();
@@ -77,7 +78,7 @@ export function createStateRouter(db: Database.Database, opts: { policy?: PathPo
       dirPath = path.resolve(dirPath);
       const why = policy.problem(dirPath, { project: os.homedir(), use: 'write' });
       if (why) return res.status(403).json({ error: PATH_REFUSALS[why], code: 'path_refused', reason: why });
-      fs.mkdirSync(dirPath, { recursive: true });
+      agentMkdir(dirPath);
       res.json({ ok: true, path: dirPath });
     } catch (err: any) {
       res.status(400).json({ error: clientMessage(err) });
