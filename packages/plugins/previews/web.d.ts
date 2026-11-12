@@ -3,7 +3,7 @@ export type DropKind = 'command' | 'link' | 'code' | 'secret' | 'steps' | 'diff'
 export interface PreviewDoc { id: string; sessionId: string; sessionName?: string | null; terminalId?: string | null; terminalLabel?: string | null; title: string; note?: string | null; text?: string | null; files: { fileId: string; name: string; mime: string; size: number }[]; createdAt: string; seenAt: string | null;
   /** Drops (2026-11-11): the kind and its fields; absent on older drops (the look is inferred). */
   kind?: string; commands?: string[]; cwd?: string; url?: string; language?: string; steps?: { text: string; command?: string }[]; expired?: boolean }
-/** The name the user reads ("Drops"). */
+/** The name the user reads ("Inbox"). */
 export const NAME: string;
 export function inferKind(p: Partial<PreviewDoc>): DropKind;
 export function maskSecret(v: string): string;

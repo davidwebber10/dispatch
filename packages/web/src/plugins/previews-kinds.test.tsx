@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, within, waitFor, act } from '@testing-library/react';
 import { createPluginSdk } from './facade';
 import { useProjects } from '../stores/projects';
-// The bundled Previews plugin is plain JS; its user-facing name is "Drops" (2026-11-11).
+// The bundled Previews plugin is plain JS; its user-facing name is "Inbox" (owner, 2026-11-11).
 import activate, { NAME, inferKind, maskSecret, parseCsv, filterPreviews } from '../../../plugins/previews/web.js';
 
 // Drops (2026-11-11): one tool, a `kind` per card. The owner reads on an iPhone, often in terminal mode,
@@ -37,20 +37,37 @@ const card = (title: string) => screen.getByText(title).closest('[data-testid="p
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe('Drops: the name is one constant', () => {
-  it('NAME is "Drops", and the view, the tab and the project menu use it', () => {
+  it('NAME is "Inbox", and the view, the tab and the project menu use it, with the tray icon', () => {
     const { reg } = setup([]);
-    expect(NAME).toBe('Drops');
+    expect(NAME).toBe('Inbox');
+    expect(reg.views[0].icon).toBe('tray');
+    expect(reg.inspectorTabs[0].icon).toBe('tray');
     expect(reg.views[0].label).toBe(NAME);
     expect(reg.inspectorTabs[0].label).toBe(NAME);
     expect(reg.projectMenu[0].label).toBe(NAME);
   });
 
-  it('the sheet title is "Drops · <project>", and the empty text names Drops', async () => {
+  it('the sheet title is "Inbox · <project>", and the empty text names the Inbox', async () => {
     const { Sheet, reg } = setup([]);
     render(<Sheet />);
     act(() => reg.projectMenu[0].onPick({ session: { id: 's1' } }));
     expect(await screen.findByText(`${NAME} · Alpha`)).toBeInTheDocument();
     expect(await screen.findByText(/Nothing here yet/)).toBeInTheDocument();
+    expect(screen.getByText(/in Inbox for you/)).toBeInTheDocument();
+  });
+});
+
+describe('Inbox: the model calls it the Inbox', () => {
+  it('the tool description and the instructions say "your Inbox", never Drops', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const dir = path.resolve(__dirname, '../../../plugins/previews');
+    // The code, without its comments: the model reads the strings, not the history in the comments.
+    const server = fs.readFileSync(path.join(dir, 'mcp/server.mjs'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    const instr = fs.readFileSync(path.join(dir, 'instructions.md'), 'utf8');
+    expect(server).toMatch(/your Inbox/);
+    expect(instr).toMatch(/your Inbox/);
+    expect(server + instr).not.toMatch(/Drops/);
   });
 });
 

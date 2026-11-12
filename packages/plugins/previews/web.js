@@ -10,10 +10,10 @@
  * The name the user reads, everywhere in this plugin (the view, the tab, the menu row, the sheet title,
  * the empty texts). To rename the feature, change this line (and `name` and the labels in plugin.json).
  */
-export const NAME = 'Drops';
-/** One of them, lower case ("drop"), for "Delete drop" and "1 drop". */
-const ONE = NAME.replace(/s$/i, '').toLowerCase();
-const MANY = NAME.toLowerCase();
+export const NAME = 'Inbox';
+/** One thing in it, and several ("Delete item", "3 new items"): "Inbox" has no plural of its own. */
+const ONE = 'item';
+const MANY = 'items';
 
 /** A secret's text is removed this long after it was posted (also in mcp/kinds.mjs). */
 const SECRET_TTL_MS = 24 * 3_600_000;
@@ -574,17 +574,17 @@ export default function activate(d) {
       : { borderRadius: 'var(--radius-md)', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', height: 36, width: 36 };
     return h('button', { type: 'button', 'aria-label': NAME, title: n ? `${n} new ${MANY}` : NAME, onClick: () => usePv.getState().openSheet(sessionId),
       style: { ...box, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', color: n ? 'var(--color-text-primary)' : 'var(--color-text-secondary)', cursor: 'pointer', padding: 0 } },
-      h(icons.eye, { size: 20 }),
+      h(icons.tray, { size: 20 }),
       n > 0 && h('span', { 'aria-label': `${n} new ${MANY}`, style: { position: 'absolute', top: -5, right: -5, minWidth: 17, height: 17, padding: '0 5px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: 'var(--color-on-accent)', font: '700 10.5px var(--font-sans)', display: 'flex', alignItems: 'center', justifyContent: 'center' } }, n > 99 ? '99+' : n));
   }
   const ProjectEye = ({ session }) => h(Eye, { sessionId: session ? session.id : null });
   // No thread header button (2026-11-07): a thread reaches its previews from the shelf and the thread menu.
 
   d.register({
-    views: [{ id: 'history', label: NAME, icon: 'eye', Component: History }],
+    views: [{ id: 'history', label: NAME, icon: 'tray', Component: History }],
     // The badge (v4.5.2): this thread's new previews. It puts the dot on the thread's ⋯ button and a
     // count on the tab and on the phone's menu row (the thread-menu item that did it left in v4.5.0).
-    inspectorTabs: [{ id: 'thread', label: NAME, icon: 'eye', Component: ThreadTab,
+    inspectorTabs: [{ id: 'thread', label: NAME, icon: 'tray', Component: ThreadTab,
       badge: { subscribe: (cb) => usePv.subscribe(cb), get: ({ terminalId }) => usePv.getState().items.reduce((n, x) => n + (!x.seenAt && x.terminalId === terminalId ? 1 : 0), 0) } }],
     projectMenu: [{ id: 'open', label: NAME, onPick: ({ session }) => usePv.getState().openSheet(session.id) }],
     // No thread-menu item (2026-11-09): a thread shows its own previews (the Previews tab, a row in the

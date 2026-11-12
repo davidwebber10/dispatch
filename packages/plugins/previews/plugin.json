@@ -1,6 +1,6 @@
 {
   "id": "previews",
-  "name": "Drops",
+  "name": "Inbox",
   "version": "1.1.0",
   "description": "A thread hands you commands to run, links, files to look at and text to copy: a badge, a sheet on the phone, a history on the desktop.",
   "author": "dispatch",
@@ -9,9 +9,9 @@
   "web": "web.js",
   "enabledByDefault": true,
   "contributes": {
-    "views": [{ "id": "history", "label": "Drops", "icon": "eye" }],
-    "inspectorTabs": [{ "id": "thread", "label": "Drops" }],
-    "projectMenu": [{ "id": "open", "label": "Drops" }],
+    "views": [{ "id": "history", "label": "Inbox", "icon": "tray" }],
+    "inspectorTabs": [{ "id": "thread", "label": "Inbox" }],
+    "projectMenu": [{ "id": "open", "label": "Inbox" }],
     "slots": ["project.header.actions", "thread.header.actions", "app.overlay"]
   },
   "permissions": ["threads:read-storage", "threads:write-storage"],
