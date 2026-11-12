@@ -41,10 +41,14 @@ export function StickToEndOnLoad({ terminalId, count, onReady }: { terminalId: s
     if (count < prevCountRef.current) readyRef.current = false;
     if (!readyRef.current && count !== prevCountRef.current) {
       if (quietTimerRef.current != null) clearTimeout(quietTimerRef.current);
+      // Newest first (2026-11-12): content opens the gate at once. The replay is one batch (one render),
+      // and this layout effect pins it to the bottom before the paint, so there is no catch-up motion to
+      // hide. Waiting for 180 ms of quiet kept the thread behind a spinner while older pages loaded
+      // above it. An empty view still waits the quiet window (the replay may be on its way).
       quietTimerRef.current = setTimeout(() => {
         quietTimerRef.current = null;
         if (!readyRef.current) { readyRef.current = true; onReady?.(); }
-      }, 180);
+      }, count > 0 ? 0 : 180);
     }
     // `items` only ever GROWS or RESETS-TO-EMPTY (useStructuredChat appends or setItems([])),
     // so a count regression unambiguously means the list was cleared/replaced — a ws-reconnect
@@ -114,6 +118,20 @@ export function LoadEarlierButton({ show, onClick }: { show: boolean; onClick: (
     >
       Load earlier messages
     </button>
+  );
+}
+
+/**
+ * The top of a thread whose whole history is on screen: a quiet line that says nothing older exists,
+ * so a reader who scrolled up knows the view did not stop loading. Shown only when nothing older is
+ * left to page in (and not over a stale view, whose paging state is not known yet).
+ */
+export function ThreadStartMarker({ show }: { show: boolean }) {
+  if (!show) return null;
+  return (
+    <div data-testid="thread-start" style={{ alignSelf: 'center', font: '400 11.5px var(--font-sans)', color: 'var(--color-text-tertiary)', padding: '2px 0' }}>
+      Start of the thread
+    </div>
   );
 }
 

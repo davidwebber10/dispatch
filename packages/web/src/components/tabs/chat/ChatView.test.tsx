@@ -1001,3 +1001,40 @@ describe('ChatView opens from the view cache (W2-I)', () => {
     expect([...container.querySelectorAll<HTMLElement>('*')].some((n) => n.style.visibility === 'hidden')).toBe(true);
   });
 });
+
+// Newest first (2026-11-12): the newest window paints at once, and the top of the view says where it is.
+describe('ChatView — newest first', () => {
+  let opts: any;
+  beforeEach(() => {
+    vi.spyOn(sock, 'openStructuredSocket').mockImplementation((o: any) => { opts = o; return { close: () => {} } as any; });
+    vi.spyOn(api, 'getResumeAdvice').mockResolvedValue({ shouldPrompt: false, ageMinutes: 0, contextTokens: 0 });
+    useTabs.setState({ byProject: { s1: [{ id: 'tn', sessionId: 's1', type: 'grok', label: 'T', status: 'waiting', config: { transport: 'structured' } } as any] } } as never);
+  });
+  const hidden = (container: HTMLElement) => [...container.querySelectorAll<HTMLElement>('*')].some((n) => n.style.visibility === 'hidden');
+  const user = (seq: number, text: string) => ({ seq, kind: 'user', at: '', payload: { type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } } });
+
+  it('content opens the gate on the next tick, not after a quiet window', () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render(<ChatView terminalId="tn" />);
+      act(() => { opts.onJournal({ type: 'journal', reset: true, after: null, items: [user(1, 'newest question')], firstSeq: 1, lastSeq: 1, hasMore: false }); });
+      act(() => { vi.advanceTimersByTime(1); });
+      expect(hidden(container)).toBe(false);
+      expect(screen.getByText('newest question')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('the top says "Start of the thread" when nothing older is left, and offers "Load earlier messages" when there is', () => {
+    vi.spyOn(api, 'getJournal').mockReturnValue(new Promise(() => {}) as any);
+    const { unmount } = render(<ChatView terminalId="tn" />);
+    act(() => { opts.onJournal({ type: 'journal', reset: true, after: null, items: [user(1, 'only one')], firstSeq: 1, lastSeq: 1, hasMore: false }); });
+    expect(screen.getByTestId('thread-start')).toBeInTheDocument();
+    expect(screen.queryByText('Load earlier messages')).toBeNull();
+    unmount();
+    render(<ChatView terminalId="tn" />);
+    act(() => { opts.onJournal({ type: 'journal', reset: true, after: null, items: [user(250, 'newest')], firstSeq: 1, lastSeq: 250, hasMore: true }); });
+    expect(screen.queryByTestId('thread-start')).toBeNull();
+  });
+});

@@ -2,5 +2,5 @@
 // draws. Moved out of ChatView.tsx unchanged; ChatView re-exports every name other files import.
 export { renderTimeline, type TimelineExtensions } from './renderTimeline';
 export { TaskNotice, AssistantTurn, MachineryBlock, ToolGroup, type ToolPair, ReconnectingState, EmptyState, UserBubble, AssistantText, Thinking, ResultFooter } from './leaves';
-export { StickToEndOnLoad, BootstrapOlderPages, LoadEarlierButton, LoadingOlderPill, JumpButton } from './scroll';
+export { StickToEndOnLoad, BootstrapOlderPages, LoadEarlierButton, LoadingOlderPill, JumpButton, ThreadStartMarker } from './scroll';
 export { stableId } from './stableId';
