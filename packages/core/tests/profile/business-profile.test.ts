@@ -14,6 +14,8 @@ let dir: string;
 beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'biz-profile-')); });
 afterEach(() => { closeKits(); fs.rmSync(dir, { recursive: true, force: true }); });
 
+// A hosted kit keeps the token login (DISPATCH_CLAUDE_LOGIN=token): the clean login probes `claude auth status`
+// in the background, which would outlive the test's database.
 const envWith = (extra: Record<string, string>): NodeJS.ProcessEnv => {
   const env = { ...process.env };
   for (const k of ['DISPATCH_PROFILE', 'OS_BASE_URL', 'OS_BOX_TOKEN', 'DISPATCH_BOX_TOKEN', 'OS_PUBLIC_URL', 'DISPATCH_OWNER_EMAIL']) delete env[k];
@@ -241,7 +243,7 @@ describe('one live profile: OS wins, without a restart', () => {
   test('OS business over env developer; a flip to developer applies; an outage keeps the last value', async () => {
     const os = await stubOs();
     try {
-      const k = kit({ env: envWith({ OS_BASE_URL: os.url, OS_BOX_TOKEN: 'x', DISPATCH_PROFILE: 'developer' }) });
+      const k = kit({ env: envWith({ OS_BASE_URL: os.url, OS_BOX_TOKEN: 'x', DISPATCH_PROFILE: 'developer', DISPATCH_CLAUDE_LOGIN: 'token' }) });
       const sid = await project(k);
       const s = await k.server();
       // Before OS answers: the env value.
@@ -263,7 +265,7 @@ describe('one live profile: OS wins, without a restart', () => {
   });
 
   test('a hosted box with no profile from OS or env fails closed to business', async () => {
-    const k = kit({ env: envWith({ OS_BASE_URL: 'http://127.0.0.1:9', OS_BOX_TOKEN: 'x' }) });
+    const k = kit({ env: envWith({ OS_BASE_URL: 'http://127.0.0.1:9', OS_BOX_TOKEN: 'x', DISPATCH_CLAUDE_LOGIN: 'token' }) });
     expect((await request(await k.server()).get('/api/host-context')).body.profile).toBe('business');
   });
 
