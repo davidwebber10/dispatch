@@ -61,6 +61,7 @@ import { createContinuityRouter } from '../os/continuity.js';
 import { setProfileSource, resolveProfile } from '../os/profile.js';
 import { IntegrationsService, type IntegrationLauncher } from '../integrations/service.js';
 import { HeartbeatService } from '../platform/heartbeat.js';
+import { bestEffort, compactLimits, diskUse } from '../platform/fleet-stats.js';
 import { childEnv } from '../platform/inherited-env.js';
 import { platform } from '../platform/index.js';
 import { UsageRecorder } from '../usage/recorder.js';
@@ -650,6 +651,10 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     toolsReachable: osConnections.snapshot().reachable,
     usage7d: usage.total(7),
     usageByModel7d: usage.byModel(7),
+    // Fleet management (OS contract "Fleet management"): each is best effort; a failed read leaves the key out.
+    usage24h: bestEffort(() => usage.total(1)),
+    usageLimits: bestEffort(() => compactLimits(usageGauge.summary())),
+    disk: bestEffort(() => diskUse(os.homedir(), dataDir)),
     pluginJobs: pluginWorkers.scheduledJobs(),
   }));
 

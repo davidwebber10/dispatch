@@ -4,6 +4,7 @@ import { currentProfile } from '../os/profile.js';
 import type Database from 'better-sqlite3';
 import { getRunningVersion } from '../update/version.js';
 import { collectIdleInfo, type IdleInfo, type PluginJobsInfo } from '../os/idle-info.js';
+import type { HeartbeatDisk, HeartbeatLimits } from './fleet-stats.js';
 
 /**
  * Publishes a small per-box state projection to OS.
@@ -66,6 +67,13 @@ export interface BoxHeartbeat {
    */
   usage7d?: { inputTokens: number; outputTokens: number; turns: number };
   usageByModel7d?: Array<{ model: string; inputTokens: number; outputTokens: number; turns: number }>;
+  /** For OS fleet management (contract "Fleet management"), each optional: absent is "unknown" there. */
+  /** The rolling last 24 hours (the "turns per day" chart). */
+  usage24h?: { inputTokens: number; outputTokens: number; turns: number };
+  /** The usage gauge, compact: the worst account's weekly and session use, 0 to 100 (platform/fleet-stats.ts). */
+  usageLimits?: HeartbeatLimits;
+  /** The home's use in bytes; `state`: the state volume's, when it is another file system. */
+  disk?: HeartbeatDisk;
 }
 
 export interface HeartbeatOptions {
@@ -132,6 +140,9 @@ export class HeartbeatService {
       toolsReachable: boolean;
       usage7d?: BoxHeartbeat['usage7d'];
       usageByModel7d?: BoxHeartbeat['usageByModel7d'];
+      usage24h?: BoxHeartbeat['usage24h'];
+      usageLimits?: BoxHeartbeat['usageLimits'];
+      disk?: BoxHeartbeat['disk'];
       pluginJobs?: PluginJobsInfo;
     },
     opts: HeartbeatOptions = {},
@@ -159,6 +170,9 @@ export class HeartbeatService {
       }),
       usage7d: probe.usage7d,
       usageByModel7d: probe.usageByModel7d,
+      ...(probe.usage24h ? { usage24h: probe.usage24h } : {}),
+      ...(probe.usageLimits ? { usageLimits: probe.usageLimits } : {}),
+      ...(probe.disk ? { disk: probe.disk } : {}),
     };
   }
 
