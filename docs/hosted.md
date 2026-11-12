@@ -311,6 +311,7 @@ refuses a business person.
 | `portMappings` | container port `3456`, TCP | |
 | `image` | by digest | |
 | `healthCheck` | none needed; the platform asks `GET <base path>/api/sessions` and `GET <base path>/api/providers` with the inbound token from another host | A call from inside the box with the inbound token gets 401: the owner credential is refused from a local peer |
+| the inbound path | the router and the control plane connect STRAIGHT to the task's own address (service discovery by DNS). No proxy container in the task, no service mesh sidecar | The daemon reads the peer's address from the socket. A proxy inside the task makes every request come from loopback or from the box's own address, and then the owner credential is refused for all of them: the box starts and answers 401 to the platform (the readiness step never passes) |
 | ECS Exec | leave it off for a business person's box. A session is a root process the daemon did not start: it has the container's first environment (both tokens) and none of the limits of a workload. It also needs a writable root file system | |
 
 ### Volumes and mount points
@@ -362,8 +363,9 @@ failed check in `failures`.
 What that provisioner writes agrees with this contract in: the user, the seven dropped capabilities,
 the four mount points and their paths, the two access points and their identities, IAM authorization
 with transit encryption, `DISPATCH_PRIVSEP=1`, the migration flag and when it ends, two different
-token values per task definition, and the two readiness calls. Where it differs, or where the image
-depends on something neither side has measured on the real platform:
+token values per task definition, the two readiness calls, and the inbound path (DNS service
+discovery, no container beside the box's own). Where it differs, or where the image depends on
+something neither side has measured on the real platform:
 
 1. **The capability the platform requires for a business person.** It requires `profile` and
    `privsep-v1`. It does not require `gate-v2`. This image reports all three, so nothing fails; but a
@@ -394,16 +396,37 @@ depends on something neither side has measured on the real platform:
    registry by push time. A pin by digest exists on another branch of the platform. Until the pin is
    what runs, every push of a box image to an environment's registry changes what the next rebuild,
    update or new workspace of that environment gets, and the update check names the pushed version.
+9. **The proxy variables of a locked network and the daemon's own calls.** With `NODE_USE_ENV_PROXY=1`
+   the daemon's calls to `OS_BASE_URL` follow `HTTPS_PROXY` / `HTTP_PROXY` too, unless `NO_PROXY`
+   names that host. The provisioner's default `NO_PROXY` names only loopback. Either the proxy lets
+   the platform's address through, or `NO_PROXY` must name it. Not measured; the box starts either
+   way, but its company tools and its heartbeat depend on it.
 
-Not measured on the real platform (each is an assumption of the design, section 10 of
-hosted-privilege-separation.md; the stage engineer measures them at the first start):
+### What the first start on the real platform must show
 
-| # | Assumption | What to measure | If it does not hold |
-| --- | --- | --- | --- |
-| 1 | The runtime's default capability set holds `SETPCAP`, `SETUID`, `SETGID`, `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `KILL` when the container starts as root | The box log has `privilege separation is ON` and then `daemon.start`; `CapBnd` of the daemon is `00000000000000eb` | `setpriv` fails: the task stops at start |
-| 2 | A volume mounted at `/var/lib/dispatch/state` leaves `/var/lib/dispatch` as root, `0700` | No `FATAL: /var/lib/dispatch must be owned by root` line; `privsep.proof` has `selfCheck: true` (it lists `state-parent`, `state-root`) | The entrypoint stops; or the self-check fails and `privsep-v1` is not reported |
-| 3 | One task role authorizes both access points with IAM and transit encryption | The task reaches RUNNING (a refused mount stops it with `ResourceInitializationError`); a write in each mount works | The task never starts |
-| 4 | The state access point's enforced user lets the daemon (root in the box) create, write and lock its database | `daemon.start` is logged; a thread's history survives a restart | The daemon stops at "open the database" |
-| 5 | Task volumes at `/run/dispatch` and `/tmp` take the image's owner and mode (`/tmp` `1777`) | A chat thread answers a turn; `stat -c '%a' /tmp` is `1777` | Harnesses cannot write scratch files |
-| 6 | A workload cannot learn the path of the task's credential endpoint | As uid 1000 in the box: no `/proc/*/environ` it can read names `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` (the self-check's `env-clean` and `proc-environ-scan`); the task metadata endpoint without its identifier answers nothing useful | An agent can use the box's own role: its own two access points, nothing of another box |
-| 7 | `fs.protected_symlinks` is 1, and the platform's seccomp filter is active; whether a workload can make a user namespace | `cat /proc/sys/fs/protected_symlinks`; `unshare -Ur true` as uid 1000 | The proof shows a user namespace opens nothing; a 0 for protected links matters only for `/tmp`, which the daemon does not trust |
+The design (hosted-privilege-separation.md, section 10) rests on seven assumptions about the platform
+that the box checks ITSELF at every start, as the agent user. The stage engineer reads one log line,
+`privsep.proof`: `guardOk: true`, `selfCheck: true`, `failures: []`, and then `privsep-v1` in
+`GET <base path>/api/host-context`. A failed check is named in `failures`:
+
+| # | Assumption | Names in `failures` when it does not hold |
+| --- | --- | --- |
+| 1 | The state root and its parent cannot be listed, read or written by the agent user | `state-parent`, `state-root`, `state-db`, `state-write` |
+| 2 | The two tokens and the credential locators are in no environment the agent user can read | `env-clean`, `proc-environ-scan` |
+| 3 | The daemon's environment, memory, open files and working directory cannot be read (nor the init process's environment) | `daemon-environ`, `init-environ`, `daemon-mem`, `daemon-fds`, `daemon-cwd` |
+| 4 | The daemon cannot be signalled by the agent user | `signal-daemon` |
+| 5 | `no_new_privs` is 1 and every capability set of a workload is empty | `no-new-privs`, `CapPrm-empty`, `CapEff-empty`, `CapAmb-empty`, `CapInh-empty`, `uid`, `no-root-group` |
+| 6 | A set-uid program does not raise privilege | `setuid-su` |
+| 7 | The agent run dir can be read and cannot be written by the agent user | `run-dir-read`, `run-dir-write` |
+
+What the self-check cannot see. Measure each once, at the first start on the real platform:
+
+| Assumption | What to measure | If it does not hold |
+| --- | --- | --- |
+| The runtime's default capability set holds `SETPCAP`, `SETUID`, `SETGID`, `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `KILL` for a container that starts as root | The log has `privilege separation is ON`, then `daemon.start`; `CapBnd` in `/proc/<daemon pid>/status` is `00000000000000eb` | `setpriv` fails: the task stops at start |
+| A volume mounted at `/var/lib/dispatch/state` leaves `/var/lib/dispatch` as root, `0700` | No line `FATAL: /var/lib/dispatch must be owned by root`; assumption 1 above passes | The entrypoint stops |
+| One task role authorizes both access points (IAM, transit encryption) | The task reaches RUNNING; a refused mount stops it with `ResourceInitializationError` | The task never starts |
+| The state access point's enforced user lets the daemon (root in the box) create, write and lock its database | `daemon.start` is logged; a thread's history survives a restart of the task | The daemon stops when it opens the database |
+| Task volumes at `/run/dispatch` and `/tmp` take the image's owner and mode (`/tmp`: `1777`) | A chat thread answers a turn; `stat -c '%a' /tmp` prints `1777` | The harnesses cannot write scratch files |
+| A workload cannot learn the path of the task's credential endpoint | As uid 1000: the task metadata address without its identifier gives no credential path (assumption 2 covers the environments) | An agent can use the box's own role: its own two access points, nothing of another box |
+| `fs.protected_symlinks` is 1; whether a workload can make a user namespace | `cat /proc/sys/fs/protected_symlinks`; `unshare -Ur true` as uid 1000 | The proof shows that a user namespace opens nothing. A 0 matters only for `/tmp`, which the daemon does not trust |
