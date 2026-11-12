@@ -586,6 +586,19 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     usageByModel7d: usage.byModel(7),
   }));
 
+  // Company tools (os/tools-proxy.ts): the loopback route a thread's os-tools bridge calls, and the
+  // state the Company connections panel reads. On a local install OS is not configured, so the routes
+  // answer "not hosted" and inject nothing. Mounted by mountApiRoutes (osRouters) with approvals and continuity.
+  const osRouters = [
+    createOsToolsRouter({
+      provider: osConnections,
+      onUnreachable: (terminalId, message) => {
+        sessionService.structuredManagerForTerminal(terminalId)?.postEvent?.(terminalId, { type: 'system', subtype: 'dispatch_notice', level: 'warning', message });
+      },
+    }),
+    createApprovalsRouter(db, sessionService),
+    createContinuityRouter(db, sessionService),
+  ];
   bootAnalytics(db);
   // The one list of /api routes.
   mountApiRoutes(app, {
@@ -596,21 +609,8 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     noCredentialStats: auth.noCredentialStats, pairCodes: auth.pairCodes, devices: auth.devices, cookiePath: basePath || '/',
     reachableAddresses: auth.reachableAddresses, refreshPtyEnv: spawnEnv.refresh,
     endless: opts.endless ?? endless, usageLimits: opts.usageLimits ?? limits.routeDeps,
-    watchCatchUp: (id) => watchDispatcher.catchUp(id), outbox, journal: journalWiring.journal,
+    watchCatchUp: (id) => watchDispatcher.catchUp(id), outbox, journal: journalWiring.journal, osRouters,
   });
-  // Company tools (os/tools-proxy.ts): the loopback route a thread's os-tools bridge calls, and the
-  // state the Company connections panel reads. On a local install OS is not configured, so the routes
-  // answer "not hosted" and inject nothing.
-  app.use('/api', createOsToolsRouter({
-    provider: osConnections,
-    onUnreachable: (terminalId, message) => {
-      sessionService.structuredManagerForTerminal(terminalId)?.postEvent?.(terminalId, { type: 'system', subtype: 'dispatch_notice', level: 'warning', message });
-    },
-  }));
-  // Any change from OS (the boot fetch included) reaches the spawn env at once: the short-lived tokens
-  // of OS's own servers live in `env`, and before this they arrived only with some later refresh.
-  app.use('/api', createApprovalsRouter(db, sessionService));
-  app.use('/api', createContinuityRouter(db, sessionService));
   // The profile a spawn reads now: OS's answer (authoritative, live), else DISPATCH_PROFILE.
   setProfileSource(() => osConnections.snapshot().profile ?? envProfile(env));
   osConnections.onChange(() => {

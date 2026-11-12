@@ -158,17 +158,21 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     db.close(); // SQLite (and the message journal in it) is written synchronously: closing it is the flush
     removeOwnPid(dataDir); // only if still ours: a newer daemon may own the file by now
   };
-  const onSignal = () => {
+  for (const sig of ['SIGTERM', 'SIGINT'] as const) process.on(sig, exitAfter(cleanup));
+  return { port, cleanup, keys };
+}
+
+/**
+ * The signal handler: clean up, then exit on our own. With a SIGTERM handler installed Node no longer
+ * exits by default, and a CLI child, a socket or a timer can keep the loop alive: a box under
+ * `docker stop` waited the full timeout and was killed (2026-11-11). The children got SIGTERM in
+ * stop(); give them the kill grace (they are SIGKILLed after it), then go. Inside docker's 10 s and ECS's 30 s.
+ */
+function exitAfter(cleanup: () => void): () => void {
+  return () => {
     cleanup();
-    // Exit on our own. With a SIGTERM handler installed Node no longer exits by default, and a CLI
-    // child, a socket or a timer can keep the loop alive: a box under `docker stop` waited the full
-    // timeout and was killed (2026-11-11). The children got SIGTERM in stop(); give them the kill
-    // grace (they are SIGKILLed after it), then go. Well inside docker's 10 s and ECS's 30 s.
     setTimeout(() => process.exit(0), KILL_GRACE_MS + 500).unref();
   };
-  process.on('SIGTERM', onSignal);
-  process.on('SIGINT', onSignal);
-  return { port, cleanup, keys };
 }
 
 // When run directly via tsx src/server.ts

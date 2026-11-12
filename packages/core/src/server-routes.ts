@@ -122,6 +122,11 @@ export interface ApiRouteDeps {
   watchCatchUp?: (watchId: string) => string | null;
   /** The delivery outbox (W2-C): GET /api/outbox lists its rows. */
   outbox?: import('./delivery/outbox.js').DeliveryOutbox;
+  /**
+   * The hosted-box routers (os/*: company tools, approvals, continuity), each mounted at /api. Built in
+   * daemon/build.ts from services this file does not know; absent in a bare createApp.
+   */
+  osRouters?: import('express').Router[];
   /** The message journal (W3-D): GET /api/terminals/:terminalId/journal reads its pages. */
   journal?: import('./journal/journal.js').MessageJournal;
   usageLimits?: {
@@ -166,6 +171,7 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
       .catch(() => res.json({ tailscale: [], lan: [] }));
   });
 
+  for (const r of d.osRouters ?? []) app.use('/api', r);
   app.use('/api/sessions', createSessionsRouter(d.sessionService, d.broadcaster, d.db));
   app.use('/api', createTerminalsRouter(d.sessionService, d.terminalsBroadcaster, d.statusService));
   if (d.journal) app.use('/api', createJournalRouter(d.journal, (id) => !!d.sessionService.getTerminal(id))); // W3-D
