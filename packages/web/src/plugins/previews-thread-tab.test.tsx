@@ -47,7 +47,7 @@ describe('Previews: a right-column tab for the open thread (2026-11-09)', () => 
   it('a thread with no previews says so', async () => {
     const Tab = tabs[0].Component;
     render(<Tab terminalId="t9" sessionId="s1" />);
-    expect(await screen.findByText(new RegExp(`No ${NAME.toLowerCase()} from this thread yet`))).toBeInTheDocument();
+    expect(await screen.findByText(/No items from this thread yet/)).toBeInTheDocument();
   });
 });
 
@@ -100,7 +100,7 @@ describe('Previews thread tab: a page of 20 with Show older', () => {
     expect(screen.queryByText('Other 2')).not.toBeNull();
     expect(screen.queryByRole('button', { name: /Show older/ })).toBeNull(); // 3 previews: no more pages
     rerender(<Tab terminalId={null} sessionId="s1" />);
-    expect(screen.getByText(`Open a thread to see its ${NAME.toLowerCase()}.`)).toBeInTheDocument();
+    expect(screen.getByText('Open a thread to see its items.')).toBeInTheDocument();
     rerender(<Tab terminalId="t1" sessionId="s1" />);
     expect(screen.queryByText('Preview 19')).not.toBeNull();
     expect(screen.queryByText('Preview 20')).toBeNull();

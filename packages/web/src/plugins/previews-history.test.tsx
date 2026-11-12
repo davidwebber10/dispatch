@@ -43,7 +43,7 @@ describe('the Previews history filters are the shared FilterBar (2026-11-07)', (
   it('one row: the search, then Filters; no native select; Project and Thread are the facets', async () => {
     render(<History />);
     await screen.findByText('Preview a');
-    const search = screen.getByRole('searchbox', { name: `Search ${NAME.toLowerCase()}` });
+    const search = screen.getByRole('searchbox', { name: 'Search items' });
     const filters = screen.getByRole('button', { name: 'Filters' });
     expect(search.closest('[data-filterbar-row]')).toBe(filters.closest('[data-filterbar-row]'));
     expect(document.querySelector('select')).toBeNull();

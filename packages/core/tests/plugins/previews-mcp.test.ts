@@ -157,7 +157,7 @@ describe('the Previews plugin MCP server', () => {
     await request(app).post('/api/plugins/previews/disable').set('Origin', `http://127.0.0.1:${port}`).expect(200);
     const off = await callPreview({ text: 'hello' });
     expect(off.isError).toBe(true);
-    expect(off.text).toMatch(/Drops plugin \(id previews\) is disabled/);
+    expect(off.text).toMatch(/Inbox plugin \(id previews\) is disabled/);
     expect(pluginData.listDocs(db, 'previews')).toEqual([]);
   });
 });
