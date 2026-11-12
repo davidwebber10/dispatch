@@ -43,6 +43,7 @@ import type {
 } from './manager.js';
 import { GrokTranslator, buildPermissionResponse, type AcpPermissionOption, type GrokAction } from './grok-translate.js';
 import { inheritedEnv } from '../platform/inherited-env.js';
+import { acpSmartAllows } from '../os/approvals.js';
 import { EventRing } from './shared/event-ring.js';
 import type { JournalRecorder, ThreadRecorder } from '../journal/recorder.js';
 import { BlockDeltaCoalescer } from './shared/stream-compaction.js';
@@ -85,6 +86,10 @@ interface GrokSession {
   /** Writes the finished items of this session to the message journal (W3-D). Absent with no journal. */
   recorder?: ThreadRecorder;
   escalate: boolean;
+  /** Smart approvals (os/approvals.ts): Grok asks per the static rule set; OpenCode's config already holds it. */
+  smart?: boolean;
+  /** The thread's working dir: smart rules allow reads and edits inside it only. */
+  workDir?: string;
   pending: PendingPermission | null;
   /** The ACP request a surfaced `pending` answers (server req id + its options). */
   pendingApproval: { requestId: RpcId; options: AcpPermissionOption[] } | null;
@@ -139,6 +144,8 @@ export class AcpStructuredSessionManager extends StructuredEmitter implements IS
       ring: new EventRing(),
       coalescer: new BlockDeltaCoalescer(),
       escalate: opts.escalate ?? false,
+      smart: opts.approvals === 'smart',
+      workDir: opts.workDir,
       pending: null,
       pendingApproval: null,
       model: opts.model,
@@ -332,6 +339,17 @@ export class AcpStructuredSessionManager extends StructuredEmitter implements IS
   /** The escalate/auto-allow membrane (same policy as the other managers): surface when
    *  supervised, else answer with the request's own allow option so the thread never blocks. */
   private handleApproval(session: GrokSession, action: Extract<GrokAction, { kind: 'approval' }>): void {
+    // Smart approvals, RULE-BASED (os/approvals.ts acpSmartAllows): Grok runs reads/searches and edits
+    // inside the project and a short list of safe commands; the rest asks. OpenCode applies the same
+    // rules in its own config, so what it still asks for is surfaced.
+    if (session.smart && !session.escalate && !action.alwaysSurface) {
+      const allow = this.dialect === 'grok' && acpSmartAllows(action.toolKind, action.pending.toolName, action.pending.input, session.workDir ?? process.cwd());
+      if (allow) { session.conn.respond(action.requestId, action.autoApprove); return; }
+      session.pending = action.pending;
+      session.pendingApproval = { requestId: action.requestId, options: action.options };
+      this.fire('permission', session.terminalId, action.pending);
+      return;
+    }
     if (session.escalate || action.alwaysSurface) {
       session.pending = action.pending;
       session.pendingApproval = { requestId: action.requestId, options: action.options };
@@ -339,6 +357,11 @@ export class AcpStructuredSessionManager extends StructuredEmitter implements IS
     } else {
       session.conn.respond(action.requestId, action.autoApprove);
     }
+  }
+
+  postEvent(terminalId: string, event: Record<string, unknown>): void {
+    const session = this.sessions.get(terminalId);
+    if (session) this.pushEvent(session, event);
   }
 
   private pushEvent(session: GrokSession, event: unknown): void {

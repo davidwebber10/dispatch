@@ -6,12 +6,13 @@ import type { EventBroadcaster } from '../ws/events.js';
 import { applyUpdate, preflightUpdate, type GitExec } from '../update/apply.js';
 import { checkForUpdateOnce } from '../update/checker.js';
 import { getRunningVersion, isNewerVersion } from '../update/version.js';
-import { markUpdateStarted, readUpdateProgress } from '../update/progress.js';
+import { markUpdateStarted, markHostedUpdateStarted, readUpdateProgress } from '../update/progress.js';
 import { platform } from '../platform/index.js';
 import path from 'path';
 import {
   applyHostedUpdate,
   checkHostedUpdate,
+  resetHostedUpdateCache,
   hostedTarget,
   type HostedTarget,
 } from '../update/hosted.js';
@@ -78,7 +79,7 @@ export function createUpdateRouter(broadcaster: EventBroadcaster, repoDir: strin
   // GET /api/update/progress — the running (or last) update's step, error and output tail,
   // from the updater's status file (update/progress.ts). The update window polls it.
   router.get('/progress', (_req, res) => {
-    res.json(readUpdateProgress({ dataDir, logPath: updateLogPath }));
+    res.json(readUpdateProgress({ dataDir, logPath: updateLogPath, hosted: !!hosted }));
   });
 
   // POST /api/update/check — poll GitHub for the latest release right now (the
@@ -90,6 +91,7 @@ export function createUpdateRouter(broadcaster: EventBroadcaster, repoDir: strin
     // that nobody has built into an image is not an update this box can take.
     if (hosted) {
       const state = await hostedCheck(hosted, getRunningVersion());
+      resetHostedUpdateCache({ version: getRunningVersion(), state }); // GET /api/state/update agrees at once
       res.json({ ...state, url: null, publishedAt: null, hosted: true });
       return;
     }
@@ -120,6 +122,7 @@ export function createUpdateRouter(broadcaster: EventBroadcaster, repoDir: strin
         res.status(409).json({ ok: false, reason: out.reason, hosted: true });
         return;
       }
+      markHostedUpdateStarted(dataDir); // one step, "Move your workspace to the new version"
       // Same event the git path emits, so the client shows the same progress UI.
       // The rollover ends with this process being replaced; the client sees the
       // socket drop and reconnects to the new task.

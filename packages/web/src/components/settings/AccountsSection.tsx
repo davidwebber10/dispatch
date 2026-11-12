@@ -12,6 +12,7 @@ import { useIsMobile } from '../../hooks/useIsMobile';
 import { USAGE_ACCESS_TEXT, updatedAgo, usageAccessOf } from '../../stores/accounts';
 import { hostCopy } from '../../lib/hostCopy';
 import { Button } from '../ui';
+import { CompanyConnections } from '../connections/CompanyConnections';
 
 /**
  * Settings → Accounts (multi-account spec 2026-11-06): the signed-in accounts under each harness,
@@ -238,6 +239,8 @@ export function AccountsSection() {
     <div ref={nav.top}>
       <SettingsPage intro="New threads use the default account unless you pick another. Usage limits show every account.">
         {error && <div role="alert" style={errText}>{error}</div>}
+        {/* Hosted box only (renders nothing on a local daemon). */}
+        <CompanyConnections />
         {list('claude')}
         {list('codex')}
       </SettingsPage>

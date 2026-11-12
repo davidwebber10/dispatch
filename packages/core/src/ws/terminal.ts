@@ -1,3 +1,4 @@
+import { isHostedBox } from '../os/hosted-mode.js';
 import type { StatusService } from '../status/service.js';
 import type { IncomingMessage } from 'http';
 import type { WebSocket } from 'ws';
@@ -102,7 +103,10 @@ export function handleTerminalConnection(
   // process isn't alive, relaunch it (resumes via external_id when set).
   if (isTerminalRoute && sessionService && !ptyManager.isAlive(targetId)) {
     const terminal = sessionService.getTerminal(targetId);
-    if (terminal && isPtyType(terminal.type)) {
+    // A hosted box never restarts a sign-in by itself (box defect #7): a "Sign in — X" thread whose
+    // login ended stays ended; the person starts a new sign-in when they want one.
+    const isHostedSignIn = !!terminal && isHostedBox() && typeof (terminal.config as { signIn?: unknown } | undefined)?.signIn === 'string';
+    if (terminal && isPtyType(terminal.type) && !isHostedSignIn) {
       try { sessionService.relaunchTerminal(targetId); } catch {}
     }
   }

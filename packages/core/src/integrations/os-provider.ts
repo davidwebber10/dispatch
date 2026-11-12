@@ -13,7 +13,17 @@ import type { McpServerSpec } from '../mcp/injection.js';
  *
  * It plugs into the seam Dispatch already has — `setIntegrationsSpecs` is evaluated
  * per spawn, so this is one more spec provider rather than new machinery.
+ *
+ * The answer also carries the person's PROFILE (authoritative, can change at any time),
+ * the connections that need a one-off consent, and `osTools`: the address of OS's own
+ * MCP endpoint. The box never hands that address or its box token to a thread; a thread
+ * reaches it through the daemon's loopback proxy (os/tools-proxy.ts).
  */
+
+export type OsProfile = 'business' | 'developer';
+
+/** One connection the person still has to consent to in OS (the "Connect <label>" card). */
+export interface OsConsent { system: string; label: string; connectUrl: string }
 
 export interface OsConnectionsResponse {
   /** MCP servers to attach for THIS project — the attached set, not everything the user may use. */
@@ -23,7 +33,12 @@ export interface OsConnectionsResponse {
   /** Standing instruction appended to the agent's system prompt describing the tools. */
   systemPrompt?: string | null;
   /** Connections that need a one-off user consent before they can be attached. */
-  needsConsent?: Array<{ id: string; label: string; connectUrl: string }>;
+  needsConsent?: Array<{ system?: string; id?: string; label?: string; connectUrl?: string }>;
+  /** The granted system ids (contract 2026-11-11). An older OS sent a boolean. */
+  entitled?: string[] | boolean;
+  profile?: string;
+  osPublicUrl?: string | null;
+  osTools?: { url?: string } | null;
 }
 
 /** What the box last learned from OS, including whether the answer is trustworthy. */
@@ -31,7 +46,14 @@ export interface OsConnectionsState {
   servers: McpServerSpec[];
   env: Record<string, string>;
   systemPrompt: string | null;
-  needsConsent: Array<{ id: string; label: string; connectUrl: string }>;
+  needsConsent: OsConsent[];
+  /** The system ids OS grants this person (contract: `entitled`). Null until OS answered once. */
+  entitled: string[] | null;
+  /** OS's profile for the person. Null until OS answered (then the env DISPATCH_PROFILE applies). */
+  profile: OsProfile | null;
+  osPublicUrl: string | null;
+  /** OS's MCP endpoint. Null: OS gives this person no company tools. */
+  osTools: { url: string } | null;
   /**
    * Distinguishes "OS says you have no tools" from "OS could not be reached".
    * Collapsing these is how an outage becomes an agent that silently can't do
@@ -42,9 +64,24 @@ export interface OsConnectionsState {
   fetchedAt: string | null;
 }
 
+/** What the web page may read (GET /api/os/connections): no env, no server args, no tokens. */
+export interface OsConnectionsPublic {
+  hosted: boolean;
+  reachable: boolean;
+  error: string | null;
+  fetchedAt: string | null;
+  entitled: string[] | null;
+  profile: OsProfile | null;
+  osPublicUrl: string | null;
+  osToolsEnabled: boolean;
+  needsConsent: OsConsent[];
+  /** Names of the MCP servers OS attached directly (not the os-tools proxy). */
+  servers: string[];
+}
+
 const EMPTY: OsConnectionsState = {
-  servers: [], env: {}, systemPrompt: null, needsConsent: [],
-  reachable: true, error: null, fetchedAt: null,
+  servers: [], env: {}, systemPrompt: null, needsConsent: [], entitled: null, profile: null,
+  osPublicUrl: null, osTools: null, reachable: true, error: null, fetchedAt: null,
 };
 
 export interface OsConnectionsOptions {
@@ -55,6 +92,32 @@ export interface OsConnectionsOptions {
   ttlMs?: number;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
+  /** First retry delay after a failed fetch; it doubles up to `retryMaxMs`. */
+  retryMinMs?: number;
+  retryMaxMs?: number;
+}
+
+function httpUrl(raw: unknown): string | null {
+  if (typeof raw !== 'string' || !raw.trim()) return null;
+  try {
+    const u = new URL(raw.trim());
+    return u.protocol === 'http:' || u.protocol === 'https:' ? raw.trim().replace(/\/+$/, '') : null;
+  } catch { return null; }
+}
+
+/** The consent list in the contract shape. `id` is the older name of `system`. Bad rows are dropped. */
+export function normalizeConsent(raw: unknown): OsConsent[] {
+  if (!Array.isArray(raw)) return [];
+  const out: OsConsent[] = [];
+  for (const r of raw) {
+    if (!r || typeof r !== 'object') continue;
+    const o = r as Record<string, unknown>;
+    const system = typeof o.system === 'string' ? o.system : typeof o.id === 'string' ? o.id : '';
+    const connectUrl = typeof o.connectUrl === 'string' ? o.connectUrl : '';
+    if (!system || !connectUrl) continue;
+    out.push({ system, label: typeof o.label === 'string' && o.label ? o.label : system, connectUrl });
+  }
+  return out;
 }
 
 export class OsConnectionsProvider {
@@ -66,6 +129,12 @@ export class OsConnectionsProvider {
   private readonly ttlMs: number;
   private readonly fetchImpl: typeof fetch;
   private readonly timeoutMs: number;
+  private readonly retryMinMs: number;
+  private readonly retryMaxMs: number;
+  private retryTimer: NodeJS.Timeout | null = null;
+  private retryDelay: number;
+  private stopped = false;
+  private listeners = new Set<(s: OsConnectionsState, prev: OsConnectionsState) => void>();
 
   constructor(opts: OsConnectionsOptions = {}) {
     this.baseUrl = (opts.baseUrl ?? process.env.OS_BASE_URL)?.replace(/\/+$/, '') || undefined;
@@ -74,12 +143,36 @@ export class OsConnectionsProvider {
     this.ttlMs = opts.ttlMs ?? 60_000;
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.timeoutMs = opts.timeoutMs ?? 5_000;
+    this.retryMinMs = opts.retryMinMs ?? 5_000;
+    this.retryMaxMs = opts.retryMaxMs ?? 60_000;
+    this.retryDelay = this.retryMinMs;
   }
 
   /** True when this daemon is configured to broker tools from OS at all. */
   get enabled(): boolean { return Boolean(this.baseUrl && this.boxToken); }
 
+  /** The headers that authenticate the box to OS. Never handed to a thread. */
+  boxHeaders(): Record<string, string> {
+    if (!this.boxToken) return {};
+    return { 'x-dispatch-box-token': this.boxToken, ...(this.ownerEmail ? { 'x-dispatch-owner': this.ownerEmail } : {}) };
+  }
+
   snapshot(): OsConnectionsState { return { ...this.state }; }
+
+  publicSnapshot(): OsConnectionsPublic {
+    const s = this.state;
+    return {
+      hosted: this.enabled, reachable: s.reachable, error: s.error, fetchedAt: s.fetchedAt, entitled: s.entitled,
+      profile: s.profile, osPublicUrl: s.osPublicUrl, osToolsEnabled: !!s.osTools, needsConsent: s.needsConsent,
+      servers: s.servers.map((x) => x.name),
+    };
+  }
+
+  /** Called after every refresh whose result differs (profile, reachability, consent, tools, env, prompt). Returns an unsubscribe. */
+  onChange(fn: (s: OsConnectionsState, prev: OsConnectionsState) => void): () => void {
+    this.listeners.add(fn);
+    return () => { this.listeners.delete(fn); };
+  }
 
   /**
    * Specs for the current spawn. Synchronous by necessity — `setIntegrationsSpecs`
@@ -89,7 +182,9 @@ export class OsConnectionsProvider {
    */
   getServerSpecs(): McpServerSpec[] {
     if (!this.enabled) return [];
-    if (this.isStale()) void this.refresh();
+    // Stale, or OS was not reachable at the last try: ask again now (coalesced, 5 s timeout). This
+    // spawn still gets the cache; the os-tools bridge picks the tools up by itself when OS answers.
+    if (this.isStale() || !this.state.reachable) void this.refresh();
     return this.state.servers;
   }
 
@@ -100,6 +195,11 @@ export class OsConnectionsProvider {
 
   getSystemPrompt(): string | null {
     return this.enabled ? this.state.systemPrompt : null;
+  }
+
+  /** OS's MCP endpoint, or null (not hosted, or OS gives no company tools). */
+  osToolsUrl(): string | null {
+    return this.enabled ? this.state.osTools?.url ?? null : null;
   }
 
   private isStale(): boolean {
@@ -118,10 +218,7 @@ export class OsConnectionsProvider {
       try {
         const res = await this.fetchImpl(`${this.baseUrl}/api/dispatch/connections`, {
           method: 'GET',
-          headers: {
-            'x-dispatch-box-token': this.boxToken!,
-            ...(this.ownerEmail ? { 'x-dispatch-owner': this.ownerEmail } : {}),
-          },
+          headers: this.boxHeaders(),
           signal: controller.signal,
         });
         if (!res.ok) {
@@ -129,17 +226,25 @@ export class OsConnectionsProvider {
           return;
         }
         const body = (await res.json()) as OsConnectionsResponse;
-        this.state = {
+        const profile = body?.profile === 'business' || body?.profile === 'developer' ? body.profile : null;
+        const toolsUrl = httpUrl(body?.osTools?.url);
+        this.set({
           servers: Array.isArray(body?.servers) ? body.servers : [],
-          env: body?.env ?? {},
-          systemPrompt: body?.systemPrompt ?? null,
-          needsConsent: body?.needsConsent ?? [],
+          env: body?.env && typeof body.env === 'object' ? body.env : {},
+          systemPrompt: typeof body?.systemPrompt === 'string' && body.systemPrompt.trim() ? body.systemPrompt : null,
+          needsConsent: normalizeConsent(body?.needsConsent),
+          entitled: Array.isArray(body?.entitled) ? body.entitled.filter((x): x is string => typeof x === 'string') : null,
+          // An answer without a profile keeps the one we had (an older OS build).
+          profile: profile ?? this.state.profile,
+          osPublicUrl: httpUrl(body?.osPublicUrl) ?? this.state.osPublicUrl,
+          osTools: toolsUrl ? { url: toolsUrl } : null,
           reachable: true,
           error: null,
           fetchedAt: new Date().toISOString(),
-        };
+        });
+        this.retryDelay = this.retryMinMs;
       } catch (err: any) {
-        this.markUnreachable(err?.message || 'request failed');
+        this.markUnreachable(err?.name === 'AbortError' ? `no answer from OS within ${this.timeoutMs} ms` : err?.message || 'request failed');
       } finally {
         clearTimeout(timer);
       }
@@ -151,11 +256,46 @@ export class OsConnectionsProvider {
   }
 
   /**
+   * Record that a call to OS (the connections fetch, or a tools call through the proxy) failed.
    * Keep the last good specs but flag the outage. Dropping them would silently
    * disarm every agent the moment OS hiccups; keeping them stale is the lesser
-   * evil, and `reachable:false` lets the UI say so.
+   * evil, and `reachable:false` lets the UI say so. A retry runs in the background.
    */
-  private markUnreachable(error: string): void {
-    this.state = { ...this.state, reachable: false, error };
+  markUnreachable(error: string): void {
+    this.set({ ...this.state, reachable: false, error });
+    this.scheduleRetry();
+  }
+
+  /** Stop the background retry (daemon stop). */
+  stop(): void {
+    this.stopped = true;
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+  }
+
+  private scheduleRetry(): void {
+    if (this.stopped || this.retryTimer || !this.enabled) return;
+    const delay = this.retryDelay;
+    this.retryDelay = Math.min(this.retryDelay * 2, this.retryMaxMs);
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      void this.refresh();
+    }, delay);
+    this.retryTimer.unref?.();
+  }
+
+  private set(next: OsConnectionsState): void {
+    const prev = this.state;
+    this.state = next;
+    const changed = prev.reachable !== next.reachable || prev.profile !== next.profile || JSON.stringify(prev.entitled) !== JSON.stringify(next.entitled)
+      || (prev.osTools?.url ?? null) !== (next.osTools?.url ?? null)
+      || JSON.stringify(prev.needsConsent) !== JSON.stringify(next.needsConsent)
+      || prev.systemPrompt !== next.systemPrompt
+      || JSON.stringify(prev.servers) !== JSON.stringify(next.servers)
+      || JSON.stringify(prev.env) !== JSON.stringify(next.env);
+    if (!changed) return;
+    for (const fn of this.listeners) {
+      try { fn(this.snapshot(), prev); } catch { /* a listener never breaks a refresh */ }
+    }
   }
 }

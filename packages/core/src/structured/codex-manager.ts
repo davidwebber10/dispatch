@@ -28,6 +28,8 @@ import type {
 import { CodexTranslator, buildApprovalResponse, type ApprovalMethod, type TranslatedAction } from './codex-translate.js';
 import { adaptForPolicy } from '../overseer/policy-adapter.js';
 import { inheritedEnv } from '../platform/inherited-env.js';
+import { randomUUID } from 'node:crypto';
+import { blockedEvent, blockedResolvedEvent, approvalTitle, approvalMessage, type BlockedAction, type Approvals } from '../os/approvals.js';
 import { EventRing } from './shared/event-ring.js';
 import type { JournalRecorder, ThreadRecorder } from '../journal/recorder.js';
 import { BlockDeltaCoalescer } from './shared/stream-compaction.js';
@@ -62,6 +64,10 @@ function openAppServer(spec: { command: string; args: string[]; cwd: string; env
 }
 
 interface CodexSession {
+  /** Smart approvals (os/approvals.ts): on-request + workspace-write + the auto_review reviewer. */
+  smart?: boolean;
+  /** Reviewer denials nobody answered yet (the in-thread cards), with the raw notification for approveGuardianDeniedAction. */
+  blocked?: Array<{ block: BlockedAction; raw: any }>;
   terminalId: string;
   translator: CodexTranslator;
   /** The recent events for replay; its `lastPushAt` is IStructuredManager.lastFrameAt. */
@@ -203,7 +209,10 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
       translator: new CodexTranslator(),
       ring: new EventRing(),
       coalescer: new BlockDeltaCoalescer(),
-      escalate: opts.escalate ?? false,
+      // Smart: a request that reaches Dispatch is one the reviewer handed to the person (high risk): surface it.
+      escalate: (opts.escalate ?? false) || opts.approvals === 'smart',
+      smart: opts.approvals === 'smart' && !opts.toolPolicy,
+      blocked: [],
       pending: null,
       pendingApproval: null,
       turnActive: false,
@@ -269,9 +278,7 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
         // Carry a governed thread's per-spawn override through crash recovery too — otherwise a
         // coordinator resumed after the shared app-server child restarts would silently fall
         // back to the manager-wide default (see CodexSession.approvalPolicy/sandbox doc comment).
-        approvalPolicy: session.approvalPolicy ?? this.approvalPolicy,
-        sandbox: session.sandbox ?? this.sandbox,
-        ...governedReviewer(session),
+        ...approvalParams(session, this.approvalPolicy, this.sandbox),
         ...threadConfigParam(session),
         // Resent for completeness, but NOT load-bearing: live-verified on codex-cli 0.156.1,
         // thread/resume accepts developerInstructions yet does not apply it to an existing
@@ -288,9 +295,7 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
       const res = await conn.request('thread/start', {
         cwd: session.cwd,
         model: session.model ?? null,
-        approvalPolicy: session.approvalPolicy ?? this.approvalPolicy,
-        sandbox: session.sandbox ?? this.sandbox,
-        ...governedReviewer(session),
+        ...approvalParams(session, this.approvalPolicy, this.sandbox),
         ...threadConfigParam(session),
         // TOP-LEVEL, camelCase — NOT `settings.developer_instructions` (the OpenAI-documented
         // spelling is silently ignored by codex-cli; verified live on codex-cli 0.155.1).
@@ -412,6 +417,7 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
     // Track turn liveness for interrupt/steer BEFORE translating (the translator only emits UI).
     if (method === 'turn/started') { session.turnActive = true; session.currentTurnId = params?.turn?.id;}
     else if (method === 'turn/completed') { session.turnActive = false; }
+    if (method === 'item/autoApprovalReview/completed') this.onReviewCompleted(session, params);
     this.applyActions(session, session.translator.translate({ method, params }));
   }
 
@@ -669,6 +675,59 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
     session.pickedEffort = effort;
   }
 
+  postEvent(terminalId: string, event: Record<string, unknown>): void {
+    const session = this.sessions.get(terminalId);
+    if (session) this.pushEvent(session, event);
+  }
+
+  /** The reviewer denied an action (critical risk, or it judged it unsafe): a card with its risk and rationale. */
+  private onReviewCompleted(session: CodexSession, params: any): void {
+    const review = params?.review;
+    if (review?.status !== 'denied') return;
+    const { toolName, detail } = describeReviewAction(params?.action);
+    const block: BlockedAction = {
+      id: typeof params?.reviewId === 'string' ? params.reviewId : randomUUID(),
+      toolName, title: approvalTitle(toolName), detail,
+      reason: typeof review.rationale === 'string' ? review.rationale : null,
+      riskLevel: typeof review.riskLevel === 'string' ? review.riskLevel : null,
+      at: Date.now(),
+    };
+    session.blocked = [...(session.blocked ?? []).filter((x) => x.block.id !== block.id), { block, raw: params }].slice(-20);
+    this.pushEvent(session, blockedEvent(block));
+  }
+
+  async setApprovals(terminalId: string, mode: Approvals): Promise<void> {
+    const session = this.sessions.get(terminalId);
+    if (!session) throw new Error('This thread is not running');
+    // Codex reads approvalPolicy/sandbox/reviewer at thread/start or thread/resume: the change
+    // holds from the next start of this thread; the membrane side applies at once.
+    session.smart = mode === 'smart' && !session.toolPolicy;
+    this.setEscalate(terminalId, mode !== 'auto');
+  }
+
+  getBlocked(terminalId: string): BlockedAction[] {
+    return (this.sessions.get(terminalId)?.blocked ?? []).map((b) => b.block);
+  }
+
+  async resolveBlocked(terminalId: string, id: string, decision: 'allow' | 'keep'): Promise<boolean> {
+    const session = this.sessions.get(terminalId);
+    const hit = session?.blocked?.find((b) => b.block.id === id);
+    if (!session || !hit) return false;
+    session.blocked = session.blocked!.filter((b) => b.block.id !== id);
+    this.pushEvent(session, blockedResolvedEvent(id, decision));
+    if (decision !== 'allow') return true;
+    // Codex's own override. Its `event` is a serialized GuardianAssessmentEvent; we hand back the
+    // review notification we got (UNTESTED against a real denial). If Codex refuses it, the same
+    // naming-and-approving message as Claude's goes in as the next turn.
+    try {
+      if (!this.conn || !session.threadId) throw new Error('no thread');
+      await this.conn.request('thread/approveGuardianDeniedAction', { threadId: session.threadId, event: hit.raw });
+    } catch {
+      this.sendMessage(terminalId, approvalMessage(hit.block));
+    }
+    return true;
+  }
+
   postNotice(terminalId: string, message: string): void {
     const session = this.sessions.get(terminalId);
     if (session) this.pushEvent(session, { type: 'system', subtype: 'settings_refused', message });
@@ -809,6 +868,31 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
  */
 function governedReviewer(session: CodexSession): { approvalsReviewer?: 'user' } {
   return session.toolPolicy ? { approvalsReviewer: 'user' } : {};
+}
+
+/**
+ * approvalPolicy, sandbox and reviewer of thread/start + thread/resume. Smart approvals (an ungoverned
+ * thread only): `on-request` + `workspace-write` + `approvalsReviewer: 'auto_review'` — Codex's own
+ * reviewer lets low/medium risk run, denies critical, and hands high risk to the person. Names
+ * verified against the codex-cli 0.167.0 app-server schema (generate-ts, 2026-11-11).
+ */
+function approvalParams(session: CodexSession, policy: string, sandbox: string): Record<string, unknown> {
+  if (session.smart && !session.toolPolicy) return { approvalPolicy: 'on-request', sandbox: 'workspace-write', approvalsReviewer: 'auto_review' };
+  return { approvalPolicy: session.approvalPolicy ?? policy, sandbox: session.sandbox ?? sandbox, ...governedReviewer(session) };
+}
+
+/** A plain one-line description of a reviewed action (GuardianApprovalReviewAction). */
+export function describeReviewAction(a: any): { toolName: string; detail: string | null } {
+  switch (a?.type) {
+    case 'command': return { toolName: 'Bash', detail: typeof a.command === 'string' ? a.command : null };
+    case 'execve': return { toolName: 'Bash', detail: [a.program, ...(Array.isArray(a.argv) ? a.argv.slice(1) : [])].filter(Boolean).join(' ') || null };
+    case 'applyPatch': return { toolName: 'Edit', detail: Array.isArray(a.files) ? a.files.join(', ') : null };
+    case 'networkAccess': return { toolName: 'WebFetch', detail: typeof a.target === 'string' ? a.target : a?.host ?? null };
+    case 'mcpToolCall': return { toolName: `mcp__${a.server}__${a.toolName}`, detail: a.toolTitle ?? null };
+    case 'writeStdin': return { toolName: 'Bash', detail: 'input to a running command' };
+    case 'requestPermissions': return { toolName: 'Permissions', detail: a.reason ?? null };
+    default: return { toolName: 'tool', detail: null };
+  }
 }
 
 /** The thread's own `config` overrides (its MCP identity), or nothing when it has none. */

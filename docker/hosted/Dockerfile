@@ -31,9 +31,17 @@ FROM node:22-bookworm-slim
 #   git/curl/ca-certificates: agent workflows + the claude installer
 #   procps                  : platform.listProcessIds() shells out to `ps`
 #   less                    : pagers used by git and the CLIs
+#   util-linux (setpriv)    : the entrypoint starts as root, writes the managed settings, then drops to uid 1000
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      build-essential python3 git curl ca-certificates ripgrep procps less unzip \
+      build-essential python3 git curl ca-certificates ripgrep procps less unzip util-linux \
     && rm -rf /var/lib/apt/lists/*
+
+# --- Agent CLI versions (pinned: a fleet moves versions by redeploying a known image) ---
+# Bump these together with a release; `build-box-image.sh --claude/--codex/--opencode` overrides them.
+ARG CLAUDE_VERSION=2.1.322
+ARG CODEX_VERSION=0.167.0
+ARG OPENCODE_VERSION=1.19.5
+ARG MCP_REMOTE_VERSION=0.14.3
 
 # --- Non-root user; $HOME is the EFS mount point in production --------------
 # uid/gid 1000 must match the EFS access point's POSIX owner. The node base image
@@ -56,8 +64,11 @@ RUN groupmod -n dispatch node \
 # individual Max subscriptions, and Claude Code EXITS AT STARTUP when the active
 # credential belongs to a different org — which would lock every Max user out of a
 # box that otherwise looks healthy.
-RUN mkdir -p /etc/claude-code \
-    && printf '%s\n' '{"forceLoginMethod":"claudeai"}' > /etc/claude-code/managed-settings.json
+#
+# The file is written by the ENTRYPOINT (as root, before it drops to uid 1000), not here, so one
+# image serves both modes: the default subscription login writes it; DISPATCH_ALLOW_MODEL_GATEWAY=1
+# (tests and a later phase) leaves it out. The directory stays root-owned: no thread can change it.
+RUN mkdir -p /etc/claude-code && chmod 755 /etc/claude-code
 
 # AGENT_HOME is where the agent CLI *binaries* live. It must be OUTSIDE $HOME:
 # in production /home/dispatch is an EFS mount, and mounting it shadows anything
@@ -79,7 +90,9 @@ RUN corepack enable && corepack prepare pnpm@11.5.2 --activate
 
 # --- Dispatch source + build ----------------------------------------------
 WORKDIR /app
-COPY --chown=dispatch:dispatch . .
+# Root-owned and read-only to the runtime user (uid 1000): a thread must not be able to change the
+# daemon it runs under. (The old `chown -R /app` layer also duplicated all of /app, ~380 MB.)
+COPY --chown=root:root . .
 
 # Dev-only dependencies are needed to BUILD (tsc, vite), so install the full tree.
 # NODE_ENV=production would make pnpm skip devDependencies, so override for install.
@@ -91,7 +104,7 @@ RUN NODE_ENV=development pnpm install --frozen-lockfile \
 # $HOME is an EFS mount in production and would shadow them. The installer honours
 # $HOME, so override it for the install step only. Binaries stay root-owned and
 # world-executable: shared, immutable, versioned with the image.
-RUN HOME=/opt/agents bash -c 'mkdir -p /opt/agents && curl -fsSL https://claude.ai/install.sh | bash' \
+RUN HOME=/opt/agents bash -c "mkdir -p /opt/agents && curl -fsSL https://claude.ai/install.sh | bash -s ${CLAUDE_VERSION}" \
     && chmod -R a+rX /opt/agents \
     && ln -sf /opt/agents/.local/bin/claude /usr/local/bin/claude \
     && printf '%s\n' 'export PATH="/opt/agents/.local/bin:$PATH"' > /etc/profile.d/agent-clis.sh
@@ -99,7 +112,11 @@ RUN HOME=/opt/agents bash -c 'mkdir -p /opt/agents && curl -fsSL https://claude.
 # `npx -y mcp-remote@0.14.3 <url>`, which on a box means an npm fetch on every single spawn.
 # Baking it in makes spawns faster and removes a network dependency from the path
 # that attaches a user's tools.
-RUN npm install -g @openai/codex mcp-remote@0.14.3
+# OpenCode (npm `opencode-ai`) is installed here too, so no box depends on the in-app installer
+# (which put a copy into the HOME volume that then shadowed every image upgrade; the entrypoint
+# now moves such a copy aside: the image's CLIs win).
+RUN npm install -g "@openai/codex@${CODEX_VERSION}" "mcp-remote@${MCP_REMOTE_VERSION}" "opencode-ai@${OPENCODE_VERSION}" \
+    && npm cache clean --force
 
 # Verify the CLIs resolve **on a LOGIN shell's PATH**, not just this build shell.
 # That distinction is the whole point: startServer() replaces process.env.PATH with
@@ -108,13 +125,17 @@ RUN npm install -g @openai/codex mcp-remote@0.14.3
 # is exactly that case, which is why the symlink into /usr/local/bin above exists.
 # Asserting with `bash -lc` is what makes this class of bug fail the build instead
 # of surfacing as "command not found" inside a user's first thread.
-RUN bash -lc 'command -v claude && command -v codex && command -v mcp-remote && claude --version'
+RUN bash -lc 'command -v claude && command -v codex && command -v opencode && command -v mcp-remote && claude --version && codex --version && opencode --version'
 
-RUN chown -R dispatch:dispatch /app
-COPY --chown=dispatch:dispatch docker/hosted/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+# No chmod/chown -R over /app: a recursive mode or owner change copies every file into a new layer
+# (~380 MB). Root-owned files under the default umask are already readable and not writable by uid 1000.
+COPY --chown=root:root docker/hosted/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod 755 /usr/local/bin/entrypoint.sh
 
-USER dispatch
+# The entrypoint starts as root ONLY to write /etc/claude-code/managed-settings.json and prepare
+# $HOME, then runs the daemon as `dispatch` (uid 1000) with setpriv. Nothing else runs as root.
+USER root
+ENV HOME=/home/dispatch
 WORKDIR /home/dispatch
 EXPOSE 3456
 

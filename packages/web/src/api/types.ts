@@ -491,7 +491,7 @@ export interface EndlessDocCopy { project: string; path: string; absPath: string
 /** GET /api/endless/docs: one in-progress doc of a project (core docs/list.ts DocRow). */
 export interface EndlessDocRow { path: string; name: string; status: string | null; source: 'worktree' | 'branch'; worktree: string | null; worktreeRel: string | null; branch: string | null; vsMain: 'changed' | 'not_on_main'; modifiedAt: string; copies: number; writer: { id: string; label: string } | null }
 /** GET /api/update/progress — the updater's status file plus its output tail (core update/progress.ts). */
-export type UpdateStepName = 'pull' | 'install' | 'build' | 'tools' | 'restart';
+export type UpdateStepName = 'pull' | 'install' | 'build' | 'tools' | 'restart' | 'rollover';
 export interface UpdateProgress {
   state: 'idle' | 'running' | 'restarting' | 'failed' | 'done';
   step: UpdateStepName | null;
@@ -503,6 +503,8 @@ export interface UpdateProgress {
   version: string | null;
   finishedAt: string | null;
   log: string[];
+  /** The daemon's plain label for each step (core update/progress.ts STEP_LABELS). Absent on an older daemon. */
+  stepLabels?: Record<string, string>;
 }
 /** GET/POST /api/claude-auth — the daemon's headless Claude login (`claude setup-token`). */
 /** The device-code sign-in of an added Codex account (core auth/codex-login.ts); `idle` when none runs. */

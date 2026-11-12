@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import type { McpServerEntry } from './grok-home.js';
 import { OPENCODE_DEFAULT_MODEL } from './opencode.js';
+import { opencodeSmartPermission } from '../os/approvals.js';
 
 /**
  * Writes the per-thread OpenCode config an `opencode acp` child runs under, pointed at via
@@ -28,6 +29,8 @@ export interface OpencodeConfigSpec {
   model?: string;
   /** True when the thread is supervised — tools surface as permission requests. */
   escalate?: boolean;
+  /** Smart approvals: the static rule set of os/approvals.ts (opencodeSmartPermission), rule-based. */
+  smart?: boolean;
   systemPrompt?: string;
   mcpServers?: Record<string, McpServerEntry>;
   /**
@@ -50,7 +53,7 @@ export function writeOpencodeConfig(spec: OpencodeConfigSpec): string {
   const cfg: Record<string, unknown> = {
     $schema: 'https://opencode.ai/config.json',
     model: spec.model || OPENCODE_DEFAULT_MODEL,
-    permission: spec.toolsDisabled ? { '*': 'deny' } : { edit: mode, bash: mode, webfetch: mode },
+    permission: spec.toolsDisabled ? { '*': 'deny' } : spec.smart && !spec.escalate ? opencodeSmartPermission() : { edit: mode, bash: mode, webfetch: mode },
   };
 
   const rulesPath = path.join(spec.dir, 'rules.md');

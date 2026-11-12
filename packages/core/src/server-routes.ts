@@ -124,6 +124,11 @@ export interface ApiRouteDeps {
   watchCatchUp?: (watchId: string) => string | null;
   /** The delivery outbox (W2-C): GET /api/outbox lists its rows. */
   outbox?: import('./delivery/outbox.js').DeliveryOutbox;
+  /**
+   * The hosted-box routers (os/*: company tools, approvals, continuity), each mounted at /api. Built in
+   * daemon/build.ts from services this file does not know; absent in a bare createApp.
+   */
+  osRouters?: import('express').Router[];
   /** The message journal (W3-D): GET /api/terminals/:terminalId/journal reads its pages. */
   journal?: import('./journal/journal.js').MessageJournal;
   /** The profile and host facts (profile/host-context.ts). Absent (a bare createApp): developer, not hosted. */
@@ -178,6 +183,7 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
       .catch(() => res.json({ tailscale: [], lan: [] }));
   });
 
+  for (const r of d.osRouters ?? []) app.use('/api', r);
   app.use('/api/sessions', createSessionsRouter(d.sessionService, d.broadcaster, d.db));
   app.use('/api', createTerminalsRouter(d.sessionService, d.terminalsBroadcaster, d.statusService));
   if (d.journal) app.use('/api', createJournalRouter(d.journal, (id) => !!d.sessionService.getTerminal(id))); // W3-D
@@ -217,6 +223,14 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
       // The CLI login's profile comes from its own token (keychain or credentials file) and is
       // only shown; an added account's is written back so the next list needs no call.
       claudeProfile: async (accountId) => {
+        // The clean login (hosted): `claude auth status` in the account's own config dir; no token is read.
+        if (d.claudeLogin.usesCleanLogin) {
+          const st = await d.claudeLogin.cliStatus({ configDir: accountId === 'cli' ? null : accounts.claudeConfigDir(accountId) });
+          if (!st?.loggedIn) return null;
+          const p = { ...(st.email ? { email: st.email } : {}), ...(st.planTier || st.subscriptionType ? { plan: st.planTier || st.subscriptionType } : {}) };
+          if (accountId !== 'cli') accounts.updateClaude(accountId, p);
+          return p;
+        }
         const token = accountId === 'cli' ? await readClaudeToken({}) : accounts.claudeToken(accountId);
         if (!token) return null;
         const p = await fetchClaudeProfile(token);

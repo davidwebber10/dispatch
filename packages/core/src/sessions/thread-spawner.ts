@@ -1,3 +1,4 @@
+import { expandHome } from './project-dir.js';
 import { redactKeys } from '../auth/redact-keys.js';
 import { clientMessage } from '../http/client-message.js';
 import os from 'os';
@@ -14,6 +15,8 @@ import { readCodexSessionModel } from './codex-sessions.js';
 import { platform } from '../platform/index.js';
 import { maxLiveThreadsPerProject } from '../caps.js';
 import { systemPromptFor, modelFor } from '../overseer/prompts.js';
+import { approvalsFor, claudeSmartAskRules, claudeSmartSettings } from '../os/approvals.js';
+import { currentProfile } from '../os/profile.js';
 import { resolveSpawnModel, isClaudeTierAlias } from '../overseer/spawn-model.js';
 import { COORDINATOR_DISALLOWED_TOOLS, makeCoordinatorPolicy } from '../overseer/coordinator-policy.js';
 import { ROLE_DISALLOWED_TOOLS, roleToolPolicy } from '../roles/role-policy.js';
@@ -166,7 +169,7 @@ export class ThreadSpawner {
     const session = sessionsDb.getById(this.db, terminal.session_id);
     if (!session) throw new Error('Session not found');
 
-    const workDir = terminal.working_dir || session.working_dir;
+    const workDir = expandHome(terminal.working_dir || session.working_dir);
 
     // Runner terminals (agent runs) persist their prompt in config and always
     // launch the headless autonomous command — never resume/interactive.
@@ -442,6 +445,11 @@ export class ThreadSpawner {
       this.configStore.patch(terminal.id, { model: resolvedModel });
     }
 
+    // The thread's approvals setting (os/approvals.ts): `ask` escalates every gated tool, `auto` runs
+    // them, `smart` lets the harness's own judgement decide. Null: today's rule, unchanged.
+    const approvals = approvalsFor(config, currentProfile());
+    const smart = approvals === 'smart' && !config.role;
+    const smartForCommand = smart && terminal.type === 'claude-code';
     let sc: { command: string; args: string[] };
     if (this.wiring.structuredCommandOverride) {
       // Test seam: spawn the fake instead of real claude. Still surface `-r <id>` on
@@ -455,7 +463,7 @@ export class ThreadSpawner {
       // toolset is the enforcement; the policy deny remains as a backstop.
       // A Claude overseer loads only its own memory folder (overseer memory scope spec, Unit 1).
       const autoMemoryDirectory = this.overseerMemoryFor(terminal, config, workDir, coordinatorFolders);
-      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: persona, resumeSessionId, model: resolvedModel, effort: terminal.type === 'claude-code' ? effortFor(config) : undefined, grokPluginDir, disallowedTools: disallowedToolsFor(config), autoMemoryDirectory });
+      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: persona, resumeSessionId, model: resolvedModel, effort: terminal.type === 'claude-code' ? effortFor(config) : undefined, grokPluginDir, disallowedTools: disallowedToolsFor(config), autoMemoryDirectory, ...(smartForCommand ? { smartApprovals: { settings: claudeSmartSettings(claudeSmartAskRules()) } } : {}) });
       if (!built) throw new Error('structured transport not supported for this provider');
       sc = built;
     }
@@ -483,7 +491,7 @@ export class ThreadSpawner {
     // an explicit config.autonomy === 'supervised' re-arms the per-tool membrane (rare opt-in,
     // surfaces plain gated tools to the human). Persisted in config.autonomy so it survives a
     // resume after a daemon restart.
-    const escalate = config.role === 'agent' && config.autonomy === 'supervised';
+    const escalate = approvals === 'ask' ? true : approvals === 'auto' ? false : config.role === 'agent' && config.autonomy === 'supervised';
 
     // Daemon-enforced ground rules for the coordinator's own tool use (see coordinator-policy.ts) —
     // consulted by the manager's can_use_tool membrane ahead of the escalate/auto-allow branches.
@@ -540,6 +548,7 @@ export class ThreadSpawner {
           dir: path.join(this.wiring.statusContext.hooksDir, 'opencode-homes', terminal.id),
           model: resolvedModel,
           escalate,
+          smart,
           systemPrompt: [persona, toolsDisabled ? undefined : structuredMcp?.systemPrompt].filter(Boolean).join('\n\n') || undefined,
           mcpServers,
           toolsDisabled,
@@ -555,6 +564,7 @@ export class ThreadSpawner {
       escalate,
       toolPolicy,
       seedEvents,
+      ...(smart ? { approvals: 'smart' as const } : {}),
       // Codex resumes/pins-model out-of-band over JSON-RPC (Claude encodes both in `args` and
       // ignores these); shared on the interface so this one call drives either manager.
       resumeId: resumeSessionId,
@@ -639,7 +649,7 @@ export class ThreadSpawner {
     // messages. With an external_id, spawnStructured resumes the same conversation.
     const session = sessionsDb.getById(this.db, terminal.session_id);
     if (!session) return false;
-    const workDir = terminal.working_dir || session.working_dir;
+    const workDir = expandHome(terminal.working_dir || session.working_dir);
     try {
       this.spawnStructured(terminal, config, workDir);
       this.lastSpawnError.delete(terminalId);

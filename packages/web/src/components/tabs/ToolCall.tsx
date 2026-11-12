@@ -6,6 +6,8 @@ import { getToolView, parseToolInput } from './toolviews/registry';
 import { can } from '../../lib/profile';
 import { useToolExpanded, useToolTab, uiKeyOf } from '../../hooks/useToolUIState';
 import { askLook } from './chat/askLook';
+import { ConnectCard } from '../connections/ConnectCard';
+import { notConnectedOf } from '../../stores/osConnections';
 
 /**
  * One mono glyph per tool family (2026-08-16 pretty-chat redesign): the leading column of a
@@ -164,6 +166,8 @@ export function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?
           ? <span style={{ marginLeft: 'auto', flexShrink: 0, font: '400 11px var(--font-mono)', color: meta.color }}>{meta.text}</span>
           : <span className="chat-shimmer" style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 11 }}>running…</span>}
       </button>
+      {/* A company tool that needs the person's consent first (os-tools `not_connected`): the Connect card, inline. */}
+      {(() => { const nc = err ? notConnectedOf(out) : null; return nc ? <ConnectCard compact label={nc.label} connect={nc.connect} /> : null; })()}
       {open && expandable && (
         <div style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', background: 'var(--color-elevated)', overflow: 'hidden', margin: '4px 20px 8px' }}>
           {view ? view.expanded(tool, result) : (

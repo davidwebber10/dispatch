@@ -44,6 +44,13 @@ import { jsonErrorHandler } from '../http/error-handler.js';
 import { createJsonBody } from '../http/json-body.js';
 import { jsonCompression } from '../http/compress.js';
 import { OsConnectionsProvider } from '../integrations/os-provider.js';
+import { createOsToolsRouter, osToolsServerSpec } from '../os/tools-proxy.js';
+import { ClaudeCliLogin, planOf } from '../auth/claude-cli-login.js';
+import { useCleanClaudeLogin, isHostedBox } from '../os/hosted-mode.js';
+import { wireStopOnAuthFailure } from '../os/auth-stop.js';
+import { createApprovalsRouter } from '../os/approvals-routes.js';
+import { createContinuityRouter } from '../os/continuity.js';
+import { setProfileSource, envProfile } from '../os/profile.js';
 import { IntegrationsService, type IntegrationLauncher } from '../integrations/service.js';
 import { HeartbeatService } from '../platform/heartbeat.js';
 import { inheritedEnv } from '../platform/inherited-env.js';
@@ -469,6 +476,14 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   // Terminal-free Claude login (design doc §11.2). Its token is injected by the spawn-env refresh,
   // so a box authenticated mid-session takes effect on the next spawn without a daemon restart.
   const claudeLogin = new ClaudeLoginService(dataDir);
+  // A hosted box (or DISPATCH_CLAUDE_LOGIN=cli) signs in with Claude Code's own `claude auth login`:
+  // no token is read, kept or injected (auth/claude-cli-login.ts). A local install keeps setup-token.
+  if (useCleanClaudeLogin(env)) {
+    claudeLogin.useCleanLogin(new ClaudeCliLogin({ env: () => ({ ...inheritedEnv(), ...spawnEnv.current() }) }), { ownerEmail: env.DISPATCH_OWNER_EMAIL });
+    claudeLogin.onAccountConfigDir = ({ id, label, configDir, status }) => {
+      accounts.upsertClaudeConfigDir({ id, label, configDir, ...(status.email ? { email: status.email } : {}), ...(planOf(status) ? { plan: planOf(status)! } : {}) });
+    };
+  }
   // Added Codex accounts sign in with `codex login --device-auth` under the threads' spawn env
   // (PATH with the bundled tools), so it runs the same `codex` the threads do.
   const codexLogin = new CodexLoginService({
@@ -480,6 +495,10 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     accounts, claudeLogin, pushService, broadcaster, spawnEnv: () => spawnEnv.current(), network, clock: opts.clock,
   });
   const { usageLimits, limitSnapshots, usageGauge } = limits;
+  // A hosted box: a chat thread whose CLI is signed out gives its process back (os/auth-stop.ts).
+  const stopAuthWatch = isHostedBox(env) || useCleanClaudeLogin(env)
+    ? wireStopOnAuthFailure({ managers: harnesses.managers.values(), stop: (id) => sessionService.stopTerminal(id), onAuthFailure: () => claudeLogin.noteAuthFailure() })
+    : () => {};
   // Fleet totals are a read-only projection of the canonical analytics ledger.
   const usage = new UsageRecorder(db);
   wireThreadSettledPush(db, statusService, pushService);
@@ -520,8 +539,17 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
       has: (type, id) => { const p = providerOfType(type); return p ? accounts.has(p, id) : false; },
       defaultId: (type) => { const p = providerOfType(type); return p ? accounts.defaultId(p) : 'cli'; },
     },
-    secretsServerSpec: () => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }),
-    integrationsSpecs: () => [...integrationsService.getServerSpecs(), ...osConnections.getServerSpecs()],
+    // OS's standing instruction (systemPrompt of /api/dispatch/connections) rides with the Doppler note,
+    // so every harness gets it the way it gets that one (Claude --append-system-prompt, Codex
+    // developerInstructions, Grok --rules, OpenCode's rules file).
+    secretsServerSpec: () => ({ spec: secretsService.getServerSpec(), prompt: [secretsService.getSystemPrompt(), osConnections.getSystemPrompt()].filter(Boolean).join('\n\n') || null }),
+    // The company tools (os/tools-proxy.ts): one `os-tools` server per thread when OS gives this
+    // person tools, reaching OS only through this daemon's loopback route.
+    integrationsSpecs: () => {
+      const specs = [...integrationsService.getServerSpecs(), ...osConnections.getServerSpecs()];
+      if (osConnections.osToolsUrl() && daemonApi) specs.push(osToolsServerSpec(daemonApi));
+      return specs;
+    },
     toolsAwareness: () => {
       // Sync, so it can only serve the cache; a stale one is refreshed behind this spawn.
       // Not without the network: the check runs each bundled CLI, and a test's tools folder can be a real one.
@@ -561,6 +589,19 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     usageByModel7d: usage.byModel(7),
   }));
 
+  // Company tools (os/tools-proxy.ts): the loopback route a thread's os-tools bridge calls, and the
+  // state the Company connections panel reads. On a local install OS is not configured, so the routes
+  // answer "not hosted" and inject nothing. Mounted by mountApiRoutes (osRouters) with approvals and continuity.
+  const osRouters = [
+    createOsToolsRouter({
+      provider: osConnections,
+      onUnreachable: (terminalId, message) => {
+        sessionService.structuredManagerForTerminal(terminalId)?.postEvent?.(terminalId, { type: 'system', subtype: 'dispatch_notice', level: 'warning', message });
+      },
+    }),
+    createApprovalsRouter(db, sessionService),
+    createContinuityRouter(db, sessionService),
+  ];
   bootAnalytics(db);
   // The one list of /api routes.
   mountApiRoutes(app, {
@@ -571,8 +612,14 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     noCredentialStats: auth.noCredentialStats, pairCodes: auth.pairCodes, devices: auth.devices, cookiePath: basePath || '/',
     reachableAddresses: auth.reachableAddresses, refreshPtyEnv: spawnEnv.refresh,
     endless: opts.endless ?? endless, usageLimits: opts.usageLimits ?? limits.routeDeps,
-    watchCatchUp: (id) => watchDispatcher.catchUp(id), outbox, journal: journalWiring.journal,
+    watchCatchUp: (id) => watchDispatcher.catchUp(id), outbox, journal: journalWiring.journal, osRouters,
     hostContext,
+  });
+  // The profile a spawn reads now: OS's answer (authoritative, live), else DISPATCH_PROFILE.
+  setProfileSource(() => osConnections.snapshot().profile ?? envProfile(env));
+  osConnections.onChange(() => {
+    spawnEnv.refresh();
+    broadcaster.broadcast({ type: 'os:connections', state: osConnections.publicSnapshot() });
   });
   const webDist = opts.webDist === undefined ? defaultWebDist(env) : opts.webDist;
   const servesWeb = mountWeb(app, { webDist, basePath, dataDir, plugins, hostContext });
@@ -645,6 +692,8 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
       usageLimits.stop();
       usageGauge.stop();
       boxHeartbeat.stop();
+      osConnections.stop();
+      stopAuthWatch();
       threadAutoNamer.dispose();
       endless.stop();
       endlessManager.killAll();

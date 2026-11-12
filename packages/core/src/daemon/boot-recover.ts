@@ -6,6 +6,8 @@ import { flushOutboxAtBoot } from '../delivery/wiring.js';
 import { finishRestartedUpdate } from '../update/progress.js';
 import { getRunningVersion } from '../update/version.js';
 import type { DaemonServices } from './build.js';
+import { resumeChatsAfterRestart } from '../os/hosted-mode.js';
+import { settleRestartedThreads } from '../os/continuity.js';
 
 /**
  * What the daemon does once after it starts to listen, to recover from the last shutdown.
@@ -61,6 +63,11 @@ export async function runBootRecovery(s: DaemonServices, opts: { network: boolea
     if (reconciled.restoredQuestions.length) console.log(`Kept ${reconciled.restoredQuestions.length} pending question(s) through the restart`);
     const waitsOnQuestion = new Set(reconciled.restoredQuestions);
     const aliveOrWaiting = (id: string) => alive(id) || waitsOnQuestion.has(id);
+    // Hosted: a thread whose process the restart replaced is not an error (os/continuity.ts).
+    if (resumeChatsAfterRestart()) {
+      const settled = settleRestartedThreads(db, aliveOrWaiting, (id, activity) => statusService.markIdle(id, activity));
+      if (settled.length) console.log(`Settled ${settled.length} thread(s) the restart stopped (not errors)`);
+    }
     statusService.reconcileProcesses(aliveOrWaiting);
     // Runs that the restart left open: closed here, so their schedules can fire again (W1-D).
     // After the kickstart and the process check, so a thread that runs again keeps its run.

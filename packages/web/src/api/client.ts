@@ -1,5 +1,6 @@
+import { isBoxDownAnswer, noteBoxDown } from '../lib/boxRestart';
 import type { harnessCapabilities } from '../../../core/src/providers/capabilities';
-import { apiPath } from '../lib/basePath';
+import { apiPath, BASE } from '../lib/basePath';
 import type { AccountsView, AccountThread, AccountProvider, ClaudeLoginSession as ClaudeLoginSessionT, CodexLoginSession, PluginRow, PluginDoc, PluginDocMeta, WorkerStats, Marketplace, CatalogEntry, PluginUpdate, MarketVersion, SkillRow } from './types';
 import { reloadForSignIn } from '../lib/signInReload';
 import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerTokenScope, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolsResponse, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, ControlPlaneAnalytics, OpencodeModel, OpencodeCatalogEntry, LedgerCard, LedgerSource } from './types';
@@ -67,6 +68,13 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     headers: init?.body || init?.headers ? { ...(init?.body ? { 'Content-Type': 'application/json' } : {}), ...(init?.headers as Record<string, string> | undefined) } : undefined,
     body: init?.body,
   });
+  // A hosted box restarting: the router's 503/redirect/launcher page is not data and not an error
+  // to show. Quietly reconnect (lib/boxRestart.ts); the caller gets a 503 it can treat as "later".
+  // Only under a base path (a hosted box): a local daemon at the origin root keeps its old behaviour.
+  if (BASE && (!res.ok || res.redirected || /text\/html/i.test(res.headers?.get?.('content-type') ?? '')) && await isBoxDownAnswer(res)) {
+    noteBoxDown();
+    throw new ApiError(`${init?.method ?? 'GET'} ${path}: Reconnecting…`, 503);
+  }
   if (!res.ok) {
     // Carry the server's { error } text when there is one: a bare "failed: 404" cannot tell
     // a deleted file from a directory or a refused path.
@@ -199,7 +207,7 @@ export const api = {
     req<{ ok: true }>('/api/endless/send', { method: 'POST', body: body({ text, project, images, files }) }),
   endlessRetry: () => req<{ ok: true }>('/api/endless/retry', { method: 'POST' }),
   endlessStop: () => req<{ ok: true }>('/api/endless/stop', { method: 'POST' }),
-  claudeAuthStatus: () => req<{ authenticated: boolean; session: ClaudeLoginSession | null }>('/api/claude-auth'),
+  claudeAuthStatus: () => req<{ authenticated: boolean; session: ClaudeLoginSession | null; method?: 'claude-auth-login'; account?: { email: string | null; plan: string | null; orgName: string | null } | null }>('/api/claude-auth'),
   claudeLoginStart: () => req<ClaudeLoginSession>('/api/claude-auth/login', { method: 'POST' }),
   claudeLoginCode: (code: string) => req<ClaudeLoginSession>('/api/claude-auth/login/code', { method: 'POST', body: body({ code }) }),
   endlessState: () => req<EndlessState>('/api/endless/state'),
@@ -288,6 +296,14 @@ export const api = {
     reply?: string; imageCount?: number; canned?: 'discuss' | 'dismiss';
   }) =>
     req<void>(`/api/terminals/${terminalId}/permission`, { method: 'POST', body: body(payload) }),
+  // Approvals of a chat thread (core os/approvals-routes.ts): auto / ask / smart, the blocked-action cards.
+  getApprovals: (terminalId: string) => req<ThreadApprovals>(`/api/terminals/${terminalId}/approvals`),
+  setApprovals: (terminalId: string, mode: 'auto' | 'ask' | 'smart') =>
+    req<{ mode: string; live: boolean }>(`/api/terminals/${terminalId}/approvals`, { method: 'POST', body: body({ mode }) }),
+  // A Grok/OpenCode thread a restart interrupted (core os/continuity.ts): continue it.
+  continueThread: (terminalId: string) => req<void>(`/api/terminals/${terminalId}/continue`, { method: 'POST' }),
+  resolveBlocked: (terminalId: string, blockId: string, decision: 'allow' | 'keep') =>
+    req<void>(`/api/terminals/${terminalId}/blocked/${encodeURIComponent(blockId)}`, { method: 'POST', body: body({ decision }) }),
   // Autonomy dial: supervised (surface gated tools as Needs) ⇄ autonomous (auto-allow, run free).
   setAutonomy: (terminalId: string, mode: 'supervised' | 'autonomous') =>
     req<Terminal>(`/api/terminals/${terminalId}/autonomy`, { method: 'POST', body: body({ mode }) }),
@@ -511,6 +527,10 @@ export const api = {
     claude: v.claude.map((a) => ({ ...a, label: accountDisplayLabel('claude', a.label, a.isCli) })),
     codex: v.codex.map((a) => ({ ...a, label: accountDisplayLabel('codex', a.label, a.isCli) })),
   } : v)),
+  // Company connections on a hosted box (core os/tools-proxy.ts). A local daemon answers hosted:false.
+  getOsConnections: () => req<OsConnections>('/api/os/connections'),
+  refreshOsConnections: () => req<OsConnections>('/api/os/connections/refresh', { method: 'POST' }),
+  getOsTools: () => req<OsToolsList>('/api/os/tools'),
   /** A new Claude account; with `accountId`, "Sign in again" for that saved account (its token is replaced in place). */
   accountsClaudeLogin: (label: string, accountId?: string) => req<ClaudeLoginSessionT>('/api/accounts/claude/login', { method: 'POST', body: body({ label, ...(accountId ? { accountId } : {}) }) }),
   /** "Check again": the daemon reads that Claude account's usage and profile now, whatever its wait. */
@@ -725,3 +745,29 @@ export const api = {
   removeWorktree: (sessionId: string, path: string) =>
     req<{ removed: true; path: string; branch: string }>(`/api/sessions/${sessionId}/worktrees/remove`, { method: 'POST', body: body({ path }) }),
 };
+
+/** What OS last said about the person's company connections (GET /api/os/connections). No secrets. */
+export interface OsConnections {
+  hosted: boolean;
+  reachable: boolean;
+  error: string | null;
+  fetchedAt: string | null;
+  entitled: string[] | null;
+  profile: 'business' | 'developer' | null;
+  osPublicUrl: string | null;
+  osToolsEnabled: boolean;
+  needsConsent: Array<{ system: string; label: string; connectUrl: string }>;
+  servers: string[];
+}
+
+/** OS's company tools as the Company connections panel lists them (GET /api/os/tools). */
+export interface OsToolsList {
+  enabled: boolean;
+  reachable: boolean;
+  error?: string;
+  tools: Array<{ name: string; title: string | null; description: string | null; system: string | null; readOnly: boolean | null }>;
+}
+
+/** An action the harness blocked by itself (Claude's classifier, Codex's reviewer). */
+export interface BlockedAction { id: string; toolName: string; title: string; detail: string | null; reason: string | null; riskLevel?: string | null; at: number }
+export interface ThreadApprovals { mode: 'auto' | 'ask' | 'smart'; blocked: BlockedAction[]; pending: import('./types').PendingPermission | null }

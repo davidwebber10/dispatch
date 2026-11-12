@@ -78,3 +78,29 @@ command line, and `mcp-remote` fills in `${NAME}` from its environment.
 An integration without refs runs exactly as it did before. A Doppler change takes effect
 the next time the server starts. The launcher is part of the built daemon (`dist/`); under
 `pnpm dev` (tsx) integrations keep their plain, unresolved spec.
+
+## Company tools on a hosted box (`os-tools`)
+
+A box that POLYWOOD OS provisions (`OS_BASE_URL` + `OS_BOX_TOKEN`) asks OS
+`GET /api/dispatch/connections` for the person's tools. When the answer has `osTools: {url}`,
+every agent thread gets one more MCP server, `os-tools`:
+
+```
+thread CLI --stdio--> node dist/os/os-tools-mcp.js --HTTP, thread key--> POST /api/os-tools/mcp (loopback only)
+           --box token, owner, thread id--> osTools.url (POLYWOOD OS)
+```
+
+- **The box token never reaches a thread.** The bridge sends the thread's own key
+  (`DISPATCH_AUTH`, given as an environment reference like the `dispatch` server's), and only the
+  daemon adds `x-dispatch-box-token`, `x-dispatch-owner` and `x-dispatch-thread-id`. The route
+  refuses any caller that is not a thread key on a loopback address.
+- **Every harness gets the same stdio entry.** Claude Code's `--mcp-config` file, Codex's
+  `mcp_servers.os-tools.*` (`env_vars = ["DISPATCH_AUTH"]`), Grok's plugin and OpenCode's config.
+  A native HTTP entry would need the key as a literal header for Codex Pretty and OpenCode.
+- **OS down is not "no tools".** The bridge answers `initialize` itself, lists no tools, returns a
+  plain `os_unreachable` error for a call, and sends `notifications/tools/list_changed` when OS is
+  back. The thread gets one notice line; the daemon retries the connections fetch in the
+  background (5 s, doubling to 60 s), and a spawn while OS is flagged down asks again.
+- OS's `systemPrompt` is appended to every thread's system prompt. `needsConsent`, `profile` and
+  reachability are at `GET /api/os/connections` (owner); `POST /api/os/connections/refresh` asks
+  OS again; `GET /api/os/tools` is OS's tool list for the Company connections panel.
