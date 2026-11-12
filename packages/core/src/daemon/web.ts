@@ -19,7 +19,7 @@ export function defaultWebDist(env: NodeJS.ProcessEnv): string {
  * The SPA fallback returns index.html for any non-/api, non-WS GET.
  * Returns true when a web build is served.
  */
-export function mountWeb(app: express.Express, i: { webDist: string | null; basePath: string; dataDir: string; plugins: PluginRegistry; hostContext?: HostContext }): boolean {
+export function mountWeb(app: express.Express, i: { webDist: string | null; basePath: string; dataDir: string; plugins: PluginRegistry; hostContext?: HostContext | (() => HostContext) }): boolean {
   // Plugin files, with or without a web build (the dev server proxies /plugins here).
   app.get('/plugins/:id/*', ...pluginAssetHandler(i.plugins));
   const webDist = i.webDist;
@@ -30,9 +30,11 @@ export function mountWeb(app: express.Express, i: { webDist: string | null; base
   const indexHtml = createIndexProvider(path.join(webDist, 'index.html'), i.basePath);
   // A hosted box or a set profile adds one <meta> with the host context (profile/host-context.ts), so the
   // page knows its profile and theme before the first paint. A local install sends the file unchanged.
-  const hostContext = i.hostContext;
+  // Read per request: the profile is live (os/profile.ts), so a reload after a change from OS gets it.
+  const given = i.hostContext;
   const sendIndex = (_req: express.Request, res: express.Response) => {
-    res.type('html').send(hostContext ? indexHtmlWithHostContext(indexHtml(), hostContext) : indexHtml());
+    const ctx = typeof given === 'function' ? given() : given;
+    res.type('html').send(ctx ? indexHtmlWithHostContext(indexHtml(), ctx) : indexHtml());
   };
   app.get('/icons/:name', publicRoute, customIconHandler(i.dataDir));
   // Build files: content-hashed, so compressed once and cached forever (web-assets.ts).

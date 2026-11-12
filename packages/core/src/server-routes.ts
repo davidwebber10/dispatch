@@ -71,7 +71,7 @@ import { createEndlessRouter } from './routes/endless.js';
 import { createUsageLimitsRouter } from './routes/usage-limits.js';
 import { createBootstrapRouter } from './routes/bootstrap.js';
 import { businessProfileGate } from './profile/business-gate.js';
-import type { HostContext } from './profile/host-context.js';
+import { hostContextResponse, type HostContext } from './profile/host-context.js';
 
 /** Everything the `/api` routes need. `createApp` (tests) and `startServer` (daemon) both build one. */
 export interface ApiRouteDeps {
@@ -131,8 +131,11 @@ export interface ApiRouteDeps {
   osRouters?: import('express').Router[];
   /** The message journal (W3-D): GET /api/terminals/:terminalId/journal reads its pages. */
   journal?: import('./journal/journal.js').MessageJournal;
-  /** The profile and host facts (profile/host-context.ts). Absent (a bare createApp): developer, not hosted. */
-  hostContext?: HostContext;
+  /**
+   * The profile and host facts NOW (profile/host-context.ts `liveHostContext`), read per request so a
+   * profile change from OS applies without a restart. Absent (a bare createApp): developer, not hosted.
+   */
+  hostContext?: HostContext | (() => HostContext);
   usageLimits?: {
     /** The Refresh button of the usage window (2026-11-09): read every account now. */
     refresh?: () => Promise<void>;
@@ -154,14 +157,16 @@ export interface ApiRouteDeps {
  */
 export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   const d = deps;
-  const hostContext: HostContext = d.hostContext ?? { profile: 'developer', hosted: false, osBaseUrl: null, ownerEmail: null };
+  const given = d.hostContext ?? { profile: 'developer', hosted: false, osBaseUrl: null, ownerEmail: null };
+  const hostContext = (): HostContext => (typeof given === 'function' ? given() : given);
   // The business profile's refusals, in front of every route (profile/business-gate.ts). Developer: a no-op.
-  app.use(businessProfileGate(hostContext.profile));
+  app.use(businessProfileGate(() => hostContext().profile));
   app.get('/api/whoami', publicRoute, whoamiHandler);
   // What the page needs at launch to choose its profile, theme and way back to OS. No secrets.
   app.get('/api/host-context', ownerOnly, (_req, res) => {
     res.setHeader('Cache-Control', 'no-cache');
-    res.json(hostContext);
+    // `capabilities`: what this build enforces. OS reads it at provisioning (box contract 2026-11-11).
+    res.json(hostContextResponse(hostContext()));
   });
   app.get('/api/access/no-credential-stats', ownerOnly, noCredentialStatsHandler(d.noCredentialStats));
   // The owner (a signed-in or local browser) makes a code; a thread key gets owner_only. The code

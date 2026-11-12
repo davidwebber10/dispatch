@@ -41,6 +41,7 @@ const NO_WORKTREE = 'Separate working copies are not available in your workspace
 const NO_PLUGINS = 'Adding or turning on plugins is not available in your workspace.';
 const NO_SKILLS = 'Adding skills is not available in your workspace.';
 const NO_INTEGRATIONS = 'Changing tool connections is not available in your workspace. Ask your administrator.';
+const ALWAYS_SMART = 'In your workspace, risky actions always ask first.';
 
 /** True when the harness has a structured (chat) transport on this daemon. */
 function hasChatTransport(type: string): boolean {
@@ -53,8 +54,9 @@ function hasChatTransport(type: string): boolean {
  *   • `shell` (including the CLI sign-in shell) and `browser`: refused;
  *   • a harness with no structured transport, or one asked for as a CLI (transport 'pty'): refused;
  *   • a harness with no transport named: made structured, the chat form.
- * A new chat thread is also marked `autonomy: 'supervised'`, the existing supervised setting,
- * unless the request names one.
+ * A new PLAIN chat thread (no role, runner or role authority) is saved with `approvals: 'smart'`
+ * (os/approvals.ts): a business person's threads are always smart. A thread with a role keeps its
+ * own membrane.
  */
 function threadCreate(req: Request): Denial | null {
   const body = (req.body ?? {}) as { type?: unknown; config?: Record<string, unknown> | null };
@@ -65,7 +67,8 @@ function threadCreate(req: Request): Denial | null {
   const config = body.config && typeof body.config === 'object' ? body.config : {};
   if (config.transport === 'pty' || !hasChatTransport(type)) return { message: NO_TERMINAL };
   config.transport = 'structured';
-  if (config.autonomy === undefined) config.autonomy = 'supervised';
+  const plain = !config.role && !config.runner && !config.roleAuthority;
+  if (plain) config.approvals = 'smart';
   body.config = config;
   req.body = body;
   return null;
@@ -83,6 +86,11 @@ export const BUSINESS_RULES: readonly BusinessRule[] = [
   },
   // Raw keystrokes into a PTY (the CLI form of a thread).
   { id: 'thread.pty-input', method: 'POST', path: /^\/api\/terminals\/[^/]+\/input\/?$/, check: deny(NO_TERMINAL) },
+  // Approvals: a business person's chat threads stay `smart` (os/approvals-routes.ts).
+  {
+    id: 'thread.approvals', method: 'POST', path: /^\/api\/terminals\/[^/]+\/approvals\/?$/,
+    check: (req) => ((req.body as { mode?: unknown } | undefined)?.mode === 'smart' ? null : { message: ALWAYS_SMART }),
+  },
   // Worktrees: making one. Listing them and removing one stay allowed.
   { id: 'worktree.create', method: 'POST', path: /^\/api\/sessions\/[^/]+\/worktrees\/?$/, check: deny(NO_WORKTREE) },
   // Plugins: install, enable, create, import, copy, update, roll back, add a marketplace.
@@ -120,10 +128,20 @@ export function businessDecision(req: Request): { rule: BusinessRule; denial: De
   return null;
 }
 
-/** The middleware, mounted once in front of every /api route (server-routes.ts). Developer: a no-op. */
-export function businessProfileGate(profile: Profile): RequestHandler {
-  if (profile !== 'business') return (_req, _res, next) => next();
+/** A profile, or a function that reads the live one (os/profile.ts). */
+export type ProfileSource = Profile | (() => Profile);
+
+function read(profile: ProfileSource): Profile {
+  return typeof profile === 'function' ? profile() : profile;
+}
+
+/**
+ * The middleware, mounted once in front of every /api route (server-routes.ts). It reads the profile
+ * on EVERY request, so a change from OS applies at once. Developer: passes everything.
+ */
+export function businessProfileGate(profile: ProfileSource): RequestHandler {
   return (req, res, next) => {
+    if (read(profile) !== 'business') return next();
     const hit = businessDecision(req);
     if (!hit) return next();
     // `error` is the sentence the page shows (api/client.ts shows a body's `error`); `code` is for programs.
@@ -132,7 +150,7 @@ export function businessProfileGate(profile: Profile): RequestHandler {
 }
 
 /** For the upgrade handler: may this profile open a WebSocket at `url` (mount prefix already stripped)? */
-export function upgradeAllowedForProfile(profile: Profile, url: string): boolean {
-  if (profile !== 'business') return true;
+export function upgradeAllowedForProfile(profile: ProfileSource, url: string): boolean {
+  if (read(profile) !== 'business') return true;
   return !BUSINESS_UPGRADE_DENY.some((re) => re.test(url));
 }

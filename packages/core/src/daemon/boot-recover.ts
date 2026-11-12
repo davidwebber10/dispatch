@@ -31,6 +31,8 @@ export async function runBootRecovery(s: DaemonServices, opts: { network: boolea
     void s.osConnections.refresh().then((r) => {
       if (s.osConnections.enabled) console.log(`OS tools: ${r.servers.length} server(s), reachable=${r.reachable}`);
     });
+    // Then keep it current (the live profile among it, os/profile.ts) without waiting for a spawn.
+    s.osConnections.startPolling();
     // First CLI auth-check pass, now the thread spawn env is final. Non-blocking; the Tools page
     // and the awareness note read its cache.
     void s.toolsAuth.refresh();

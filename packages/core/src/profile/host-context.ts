@@ -8,6 +8,8 @@
 // A local install sets none of these variables, so it is a developer with `hosted: false`, which is
 // what it always was.
 import { hostedTarget } from '../update/hosted.js';
+import { BOX_CAPABILITIES } from '../platform/capabilities.js';
+import { envProfile } from '../os/profile.js';
 
 export type Profile = 'business' | 'developer';
 export const PROFILES: readonly Profile[] = ['business', 'developer'];
@@ -48,13 +50,39 @@ function publicUrl(raw: string | undefined): string | null {
   }
 }
 
+/**
+ * The host context at boot, from the env alone. The profile here is the FALLBACK (os/profile.ts):
+ * DISPATCH_PROFILE, else business on a hosted box (fail closed), else developer. A running daemon
+ * serves `liveHostContext`, where OS's live answer wins.
+ */
 export function readHostContext(env: NodeJS.ProcessEnv = process.env, warn?: (line: string) => void): HostContext {
   const hosted = hostedTarget(env) !== null;
   // OS_BASE_URL is what the box uses to call OS (it can be a private address); OS_PUBLIC_URL is the
   // one a person's browser can open. Prefer the public one.
   const osBaseUrl = hosted ? publicUrl(env.OS_PUBLIC_URL) ?? publicUrl(env.OS_BASE_URL) : publicUrl(env.OS_PUBLIC_URL);
   const ownerEmail = env.DISPATCH_OWNER_EMAIL?.trim() || null;
-  return { profile: readProfile(env, warn), hosted, osBaseUrl, ownerEmail };
+  // A hosted box with no valid DISPATCH_PROFILE fails closed (business); readProfile still warns on a bad value.
+  const fromEnv = readProfile(env, warn);
+  const profile: Profile = hosted && envProfile(env) === null ? 'business' : fromEnv;
+  return { profile, hosted, osBaseUrl, ownerEmail };
+}
+
+/** What GET /api/host-context answers: the context plus what this build enforces (platform/capabilities.ts). */
+export interface HostContextResponse extends HostContext {
+  capabilities: string[];
+}
+
+/**
+ * The context NOW: the boot facts, the live profile (os/profile.ts) and OS's live public address when
+ * OS sent one. Called per request, so a profile change from OS needs no restart.
+ */
+export function liveHostContext(base: HostContext, live: { profile: Profile; osPublicUrl?: string | null }): HostContext {
+  const osBaseUrl = base.hosted ? publicUrl(live.osPublicUrl ?? undefined) ?? base.osBaseUrl : base.osBaseUrl;
+  return { ...base, profile: live.profile, osBaseUrl };
+}
+
+export function hostContextResponse(ctx: HostContext): HostContextResponse {
+  return { ...ctx, capabilities: [...BOX_CAPABILITIES] };
 }
 
 /** True when the page must be told: a hosted box, or a profile set on purpose. Else the page keeps its defaults. */

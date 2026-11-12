@@ -39,7 +39,7 @@ import type { NoCredentialStats } from '../auth/no-credential-stats.js';
 import type { TailscaleAccess } from '../auth/tailscale-access.js';
 import { securityHeaders } from '../auth/security-headers.js';
 import { mountApiRoutes, type ApiRouteDeps } from '../server-routes.js';
-import { readHostContext } from '../profile/host-context.js';
+import { liveHostContext, readHostContext } from '../profile/host-context.js';
 import { jsonErrorHandler } from '../http/error-handler.js';
 import { createJsonBody } from '../http/json-body.js';
 import { jsonCompression } from '../http/compress.js';
@@ -50,7 +50,7 @@ import { useCleanClaudeLogin, isHostedBox } from '../os/hosted-mode.js';
 import { wireStopOnAuthFailure } from '../os/auth-stop.js';
 import { createApprovalsRouter } from '../os/approvals-routes.js';
 import { createContinuityRouter } from '../os/continuity.js';
-import { setProfileSource, envProfile } from '../os/profile.js';
+import { setProfileSource, resolveProfile } from '../os/profile.js';
 import { IntegrationsService, type IntegrationLauncher } from '../integrations/service.js';
 import { HeartbeatService } from '../platform/heartbeat.js';
 import { inheritedEnv } from '../platform/inherited-env.js';
@@ -333,8 +333,9 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   const basePath = normalizeBasePath(env.DISPATCH_BASE_PATH);
   /** Shared secret the router injects on every request to a hosted box. Unset ⇒ open (local). */
   const boxToken = env.DISPATCH_BOX_TOKEN?.trim() || undefined;
-  // The person's profile and the host facts (profile/host-context.ts): read once, at build.
-  const hostContext = readHostContext(env);
+  // The host facts at boot (profile/host-context.ts). The profile in them is only the fallback: the
+  // live one is OS's answer (os/profile.ts), read by `hostContext()` below once the provider exists.
+  const bootHostContext = readHostContext(env);
   // The daemon's own address for first-party callers (hooks, the shim, MCP helpers): loopback, the
   // bound port and the base path. It is also the only destination that a thread key may be sent to.
   // null until a port is known: a build that never listens tells no thread an address.
@@ -519,7 +520,12 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   // an MCP server) so Claude Code / Codex agents can add & retrieve secrets.
   const integrationsService = new IntegrationsService(db, integrationLauncher(dataDir), () => { const st = secretsService.status(); return st.connected && st.enabled; });
   // Tools brokered by OS, resolved per spawn (design §4.2.1).
-  const osConnections = new OsConnectionsProvider();
+  const osConnections = new OsConnectionsProvider({ baseUrl: env.OS_BASE_URL, boxToken: env.OS_BOX_TOKEN, ownerEmail: env.DISPATCH_OWNER_EMAIL });
+  // ONE profile for this daemon: OS's live answer (kept while OS is unreachable), else DISPATCH_PROFILE,
+  // else business on a hosted box / developer locally. The gate, the sockets, the page and every spawn read it.
+  const profileNow = () => resolveProfile(osConnections.snapshot().profile, env);
+  setProfileSource(profileNow);
+  const hostContext = () => liveHostContext(bootHostContext, { profile: profileNow(), osPublicUrl: osConnections.snapshot().osPublicUrl });
   const toolsBase = opts.toolsDir ?? path.join(dataDir, 'tools');
   // Whether each bundled CLI can really sign in from a thread: runs its authCheck with the
   // thread spawn env (kept current by the refresh below), not this daemon's bare env.
@@ -615,8 +621,6 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     watchCatchUp: (id) => watchDispatcher.catchUp(id), outbox, journal: journalWiring.journal, osRouters,
     hostContext,
   });
-  // The profile a spawn reads now: OS's answer (authoritative, live), else DISPATCH_PROFILE.
-  setProfileSource(() => osConnections.snapshot().profile ?? envProfile(env));
   osConnections.onChange(() => {
     spawnEnv.refresh();
     broadcaster.broadcast({ type: 'os:connections', state: osConnections.publicSnapshot() });
@@ -640,7 +644,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   let stopTimers: (() => void) | null = null;
   let stopped = false;
   const onUpgrade = createUpgradeHandler({
-    sockets, basePath, boxToken: auth.boxToken, profile: hostContext.profile, accessGate: auth.accessGate, devices: auth.devices,
+    sockets, basePath, boxToken: auth.boxToken, profile: profileNow, accessGate: auth.accessGate, devices: auth.devices,
     sessionService, statusService, ptyManager, terminalMonitor, claudeManager: harnesses.claude,
   });
   return {

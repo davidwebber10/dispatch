@@ -2,8 +2,7 @@ import type http from 'http';
 import type { Duplex } from 'node:stream';
 import type { WebSocketServer } from 'ws';
 import { upgradeAllowed } from '../auth/box-token.js';
-import { upgradeAllowedForProfile } from '../profile/business-gate.js';
-import type { Profile } from '../profile/host-context.js';
+import { upgradeAllowedForProfile, type ProfileSource } from '../profile/business-gate.js';
 import type { AccessGate } from '../auth/access-gate.js';
 import type { DeviceStore } from '../auth/devices.js';
 import { refuseKeyUpgrade } from '../auth/request-principal.js';
@@ -41,7 +40,7 @@ export interface UpgradeInputs {
   basePath: string;
   boxToken: string | undefined;
   /** The business profile opens no PTY terminal socket (profile/business-gate.ts). Absent: developer. */
-  profile?: Profile;
+  profile?: ProfileSource;
   accessGate: AccessGate | undefined;
   devices: DeviceStore | undefined;
   sessionService: SessionService;

@@ -132,6 +132,7 @@ export class OsConnectionsProvider {
   private readonly retryMinMs: number;
   private readonly retryMaxMs: number;
   private retryTimer: NodeJS.Timeout | null = null;
+  private pollTimer: NodeJS.Timeout | null = null;
   private retryDelay: number;
   private stopped = false;
   private listeners = new Set<(s: OsConnectionsState, prev: OsConnectionsState) => void>();
@@ -266,11 +267,24 @@ export class OsConnectionsProvider {
     this.scheduleRetry();
   }
 
-  /** Stop the background retry (daemon stop). */
+  /**
+   * Ask OS again every `ttlMs` (default 60 s) while the daemon runs, so a change made in OS (the
+   * profile above all, also consent and tools) arrives without waiting for a spawn. One small GET per
+   * minute; a failure only marks the state unreachable and keeps the last answer.
+   */
+  startPolling(): void {
+    if (!this.enabled || this.pollTimer || this.stopped) return;
+    this.pollTimer = setInterval(() => { void this.refresh(); }, this.ttlMs);
+    this.pollTimer.unref?.();
+  }
+
+  /** Stop the background retry and the poll (daemon stop). */
   stop(): void {
     this.stopped = true;
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = null;
+    if (this.pollTimer) clearInterval(this.pollTimer);
+    this.pollTimer = null;
   }
 
   private scheduleRetry(): void {

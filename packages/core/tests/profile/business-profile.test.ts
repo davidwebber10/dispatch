@@ -61,14 +61,24 @@ describe('business profile: threads', () => {
     expectRefused(r, 'thread.create');
   });
 
-  test('a harness with no transport named becomes a structured, supervised chat thread', async () => {
+  test('a harness with no transport named becomes a structured chat thread with smart approvals', async () => {
     const k = business();
     const sid = await project(k);
     const r = await request(await k.server()).post(`/api/sessions/${sid}/terminals`).send({ type: 'claude-code', label: 'chat' });
     expect(r.status).toBe(201);
     const cfg = JSON.parse(terminalsDb.getById(k.db, r.body.id)!.config ?? "{}");
     expect(cfg.transport).toBe('structured');
-    expect(cfg.autonomy).toBe('supervised');
+    expect(cfg.approvals).toBe('smart');
+    expect(cfg.autonomy).toBeUndefined();
+  });
+
+  test('a business thread stays on smart approvals', async () => {
+    const k = business();
+    const s = await k.server();
+    expectRefused(await request(s).post('/api/terminals/t1/approvals').send({ mode: 'auto' }), 'thread.approvals');
+    expectRefused(await request(s).post('/api/terminals/t1/approvals').send({ mode: 'ask' }), 'thread.approvals');
+    const ok = await request(s).post('/api/terminals/t1/approvals').send({ mode: 'smart' });
+    expect(ok.body.code).toBeUndefined();
   });
 
   test('a switch to the CLI is refused; a switch to chat reaches the route', async () => {
@@ -166,6 +176,7 @@ describe('developer profile', () => {
     const cfg = JSON.parse(terminalsDb.getById(k.db, r.body.id)!.config ?? "{}");
     expect(cfg.transport).toBeUndefined();
     expect(cfg.autonomy).toBeUndefined();
+    expect(cfg.approvals).toBeUndefined();
   });
 });
 
@@ -173,7 +184,7 @@ describe('GET /api/host-context', () => {
   test('a local build: developer, not hosted', async () => {
     const r = await request(await developer().server()).get('/api/host-context');
     expect(r.status).toBe(200);
-    expect(r.body).toEqual({ profile: 'developer', hosted: false, osBaseUrl: null, ownerEmail: null });
+    expect(r.body).toEqual({ profile: 'developer', hosted: false, osBaseUrl: null, ownerEmail: null, capabilities: ['base-path', 'os-tools-proxy', 'profile'] });
   });
 
   test('a business build reports its profile', async () => {
@@ -209,5 +220,54 @@ describe('the rule list', () => {
   test('a GET is never refused', () => {
     const req = { method: 'GET', path: '/api/integrations', body: {} } as never;
     expect(businessDecision(req)).toBeNull();
+  });
+});
+
+describe('one live profile: OS wins, without a restart', () => {
+  async function stubOs(): Promise<{ url: string; set: (p: string | null, status?: number) => void; close: () => void }> {
+    const http = await import('node:http');
+    let profile: string | null = 'business';
+    let status = 200;
+    const srv = http.createServer((req, res) => {
+      if (status !== 200) { res.writeHead(status); return void res.end(); }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ servers: [], env: {}, needsConsent: [], entitled: [], osTools: null, ...(profile ? { profile } : {}) }));
+    });
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()));
+    const port = (srv.address() as { port: number }).port;
+    return { url: `http://127.0.0.1:${port}`, set: (p, s = 200) => { profile = p; status = s; }, close: () => { srv.close(); srv.closeAllConnections(); } };
+  }
+
+  test('OS business over env developer; a flip to developer applies; an outage keeps the last value', async () => {
+    const os = await stubOs();
+    try {
+      const k = kit({ env: envWith({ OS_BASE_URL: os.url, OS_BOX_TOKEN: 'x', DISPATCH_PROFILE: 'developer' }) });
+      const sid = await project(k);
+      const s = await k.server();
+      // Before OS answers: the env value.
+      expect((await request(s).get('/api/host-context')).body.profile).toBe('developer');
+      await k.daemon.services.osConnections.refresh();
+      const ctx = (await request(s).get('/api/host-context')).body;
+      expect(ctx.profile).toBe('business');
+      expect(ctx.capabilities).toEqual(['base-path', 'os-tools-proxy', 'profile']);
+      expectRefused(await request(s).post(`/api/sessions/${sid}/terminals`).send({ type: 'shell' }), 'thread.create');
+      os.set('developer');
+      await k.daemon.services.osConnections.refresh();
+      expect((await request(s).get('/api/host-context')).body.profile).toBe('developer');
+      expect((await request(s).post(`/api/sessions/${sid}/terminals`).send({ type: 'shell' })).body.code).toBeUndefined();
+      os.set(null, 503);
+      await k.daemon.services.osConnections.refresh();
+      expect(k.daemon.services.osConnections.snapshot().reachable).toBe(false);
+      expect((await request(s).get('/api/host-context')).body.profile).toBe('developer');
+    } finally { os.close(); }
+  });
+
+  test('a hosted box with no profile from OS or env fails closed to business', async () => {
+    const k = kit({ env: envWith({ OS_BASE_URL: 'http://127.0.0.1:9', OS_BOX_TOKEN: 'x' }) });
+    expect((await request(await k.server()).get('/api/host-context')).body.profile).toBe('business');
+  });
+
+  test('a local install with no profile is developer', async () => {
+    expect((await request(await developer().server()).get('/api/host-context')).body.profile).toBe('developer');
   });
 });
