@@ -59,9 +59,9 @@ function inboxServer(b: Box, env: Record<string, string> = {}) {
   const rpc = (method: string, params?: unknown): Promise<any> => new Promise((r) => { const id = next++; pending.set(id, r); child.stdin!.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n'); });
   const drop = async (args: Record<string, unknown>): Promise<string> => {
     const r = await rpc('tools/call', { name: 'preview', arguments: args });
-    // The model reads a sentence first; the JSON follows for a caller that parses it.
-    expect(r.result.content[0].text).toMatch(/^Sent to the person's Inbox: .+\. They can open it now; do not send it again\.$/);
-    const parsed = JSON.parse(r.result.content[1].text);
+    // One JSON text: a plain sentence for the model first, then the fields a caller parses.
+    const parsed = JSON.parse(r.result.content[0].text);
+    expect(parsed.message).toMatch(/^Sent to the person's Inbox: .+\. They can open it now; do not send it again\.$/);
     expect(parsed.ok).toBe(true);
     return parsed.id as string;
   };

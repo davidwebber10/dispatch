@@ -170,11 +170,12 @@ async function preview(args) {
 }
 
 /**
- * The text the model reads after a drop: plain words first, so it tells the person and does not post the
- * same thing again; then the JSON (`ok`, `id`, `title`, `files`) for a caller that parses it.
+ * The text the model reads after a drop: ONE JSON object (callers parse it: the OS view's Inbox card, the
+ * proof script), whose first field is a plain sentence, so the model tells the person and does not post
+ * the same thing again. Then `ok`, `id`, `title`, `files` as before.
  */
 function sentText(result) {
-  return `Sent to the person's Inbox: ${result.title}. They can open it now; do not send it again.`;
+  return JSON.stringify({ message: `Sent to the person's Inbox: ${result.title}. They can open it now; do not send it again.`, ...result });
 }
 
 /**
@@ -223,7 +224,7 @@ async function callTool(name, args) {
     if (name === 'inbox_secret' && !BUSINESS) return { content: await inboxSecret(args) };
     if (name !== 'preview') return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
     const result = await preview(args);
-    return { content: [{ type: 'text', text: sentText(result) }, { type: 'text', text: JSON.stringify(result) }] };
+    return { content: [{ type: 'text', text: sentText(result) }] };
   } catch (e) {
     return { content: [{ type: 'text', text: `Error: ${e && e.message ? e.message : String(e)}` }], isError: true };
   }
