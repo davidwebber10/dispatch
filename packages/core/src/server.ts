@@ -2,6 +2,8 @@
  * The entry of the daemon. Everything is built in `daemon/build.ts` (W3-A): `createApp` is the test
  * build of it, and `startServer` is the daemon: build, attach, listen, boot recover, start timers.
  */
+import './privsep/install.js'; // FIRST: on a box with privilege separation, before any module can start a process or read a secret
+import { KILL_GRACE_MS } from './platform/kill-grace.js';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -24,6 +26,14 @@ import type { IStructuredManager } from './structured/manager.js';
 import type { ApiRouteDeps } from './server-routes.js';
 import { buildDaemon, NoopPTYManager } from './daemon/build.js';
 import { createDaemonHttpServer } from './daemon/http-server.js';
+import { boxLog } from './os/box-log.js';
+import { prepareSeparationAtStart, proveSeparationAtStart } from './privsep/boot.js';
+import { runDirFor } from './privsep/paths.js';
+import { privsep } from './privsep/config.js';
+import { getRunningVersion } from './update/version.js';
+import { currentProfile } from './os/profile.js';
+import { boxCapabilities } from './platform/capabilities.js';
+import { describeBoxTokenMode, takeBoxSecrets, type BoxTokenMode } from './platform/box-secrets.js';
 
 export { buildDaemon, wireLedger } from './daemon/build.js';
 export type { BuildDaemonOptions, Daemon, DaemonServices } from './daemon/build.js';
@@ -82,12 +92,26 @@ export function createApp(options: CreateAppOptions): express.Express {
   return app;
 }
 
-export async function startServer(options?: { port?: number; allowRandomPortFallback?: boolean }): Promise<{ port: number; cleanup: () => void; keys: KeyRegistry }> {
-  const preferredPort = options?.port ?? 3456;
-  // DISPATCH_BIND: checked first, so an invalid value stops the start before anything is opened or spawned.
-  const bindHost = parseBindHost(process.env.DISPATCH_BIND);
+/**
+ * Take the two box secrets out of the environment and refuse one value in both roles
+ * (platform/box-secrets.ts). A local install has neither: nothing changes for it.
+ */
+function takeBoxSecretsAtStart(): BoxTokenMode {
+  const mode = takeBoxSecrets();
+  if (mode !== 'local') console.log(`[dispatch] ${describeBoxTokenMode(mode)}`);
+  return mode;
+}
 
-  // Resolve the user's shell PATH so PTYs inherit it (fixes Finder/login-items launches)
+/** Resolve the user's shell PATH so PTYs inherit it (fixes Finder/login-items launches). */
+function adoptLoginPath(): void {
+  // On a box with privilege separation the PATH is the image's, as the container was given it. The
+  // login shell reads start files in the person's home (~/.profile, ~/.bashrc), and the home is the
+  // agent's: a workload could choose what `claude`, `codex` or `git` means for every later thread,
+  // and have its own commands run at each start of the daemon. So no login shell is asked there.
+  if (privsep()) {
+    console.log(`PATH: the image's (${(process.env.PATH ?? '').split(':').length} entries); no login shell is asked on a box with privilege separation`);
+    return;
+  }
   const shellPath = platform.resolveLoginPath();
   if (shellPath) {
     process.env.PATH = shellPath;
@@ -95,12 +119,23 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   }
   try {
     fs.writeFileSync(
-      path.join(os.homedir(), '.dispatch', 'path-debug.log'),
+      path.join(platform.dataDir(), 'path-debug.log'),
       `ts=${new Date().toISOString()}\nSHELL=${process.env.SHELL}\nshellPath=${shellPath}\nprocess.env.PATH=${process.env.PATH}\n`,
     );
   } catch {}
+}
+
+export async function startServer(options?: { port?: number; allowRandomPortFallback?: boolean }): Promise<{ port: number; cleanup: () => void; keys: KeyRegistry }> {
+  const preferredPort = options?.port ?? 3456;
+  // FIRST, before anything is spawned (the PATH probe below starts a shell): no child inherits a box secret.
+  const tokenMode = takeBoxSecretsAtStart();
+  // DISPATCH_BIND: checked first, so an invalid value stops the start before anything is opened or spawned.
+  const bindHost = parseBindHost(process.env.DISPATCH_BIND);
+  adoptLoginPath();
 
   const dataDir = platform.dataDir();
+  // Privilege separation (hosted): check the roots and move an older box's state out of the home.
+  const separated = prepareSeparationAtStart();
   // Private to the user before anything else is written (network exposure spec 7.14).
   lockDownDataDir(dataDir, [platform.logDir()]);
   const db = createDatabase(path.join(dataDir, 'dispatch.db'));
@@ -108,12 +143,17 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   // Build: every service and the app (daemon/build.ts). The browser shim points at the daemon's own address.
   const basePath = normalizeBasePath(process.env.DISPATCH_BASE_PATH);
-  const shimFor = (port: number) => platform.installBrowserShim({ dataDir, serverUrl: `http://127.0.0.1:${port}${basePath}` });
+  // With privilege separation the shim is written where workloads can read it (and cannot change it).
+  const shimDir = separated ? runDirFor(dataDir, 'shim') : dataDir;
+  const shimFor = (port: number) => platform.installBrowserShim({ dataDir: shimDir, serverUrl: `http://127.0.0.1:${port}${basePath}` });
   const daemon = buildDaemon({ db, dataDir, auth: 'gate', port: preferredPort, shimEnv: shimFor(preferredPort) });
   const { sessionService, keys } = daemon.services;
   // A Claude overseer loads only its own memory folder under this home (overseer memory scope spec 2026-10-07, Unit 1).
   sessionService.setOverseerMemoryHome(os.homedir());
   if (daemon.webDist) console.log(`Serving web client from ${daemon.webDist}${basePath ? ` under ${basePath}` : ''}`);
+
+  // Prove the separation before anything listens (a child that would run as the daemon user is fatal).
+  await proveSeparationAtStart(separated);
 
   // Attach and listen. DISPATCH_BIND unset: every interface, the same call as before. Set: that address only (platform/bind.ts).
   const server = createDaemonHttpServer(daemon.app);
@@ -140,6 +180,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   writeListenInfo(dataDir, { port, bind: boundAddress }); // "dispatch status" prints it
   daemon.listening(port, port !== preferredPort ? { shimEnv: shimFor(port) } : undefined);
   console.log(`Dispatch server listening on port ${port}`);
+  logDaemonStart(port, basePath, tokenMode);
   if (daemon.services.accessGate) console.log('Network: other devices need the access token (run "dispatch access"). Tailscale devices on your own account are allowed.');
 
   // Boot recovery does not block the start: it waits a short settle delay before it reads any status.
@@ -154,12 +195,33 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     console.log('Shutting down Dispatch server...');
     for (const g of loopbackGuards) g.close();
     daemon.stop(); // the timers, the processes, the sockets and the HTTP server
-    db.close();
+    db.close(); // SQLite (and the message journal in it) is written synchronously: closing it is the flush
     removeOwnPid(dataDir); // only if still ours: a newer daemon may own the file by now
   };
-  process.on('SIGTERM', cleanup);
-  process.on('SIGINT', cleanup);
+  for (const sig of ['SIGTERM', 'SIGINT'] as const) process.on(sig, exitAfter(cleanup, sig));
   return { port, cleanup, keys };
+}
+
+/** Hosted box log (os/box-log.ts): one line that says which build started, and how. Local: no line. */
+function logDaemonStart(port: number, basePath: string, tokenMode: BoxTokenMode): void {
+  boxLog('daemon.start', {
+    version: getRunningVersion(), profile: currentProfile(), basePath: basePath || '/', capabilities: boxCapabilities(),
+    port, node: process.version, tokenMode, ...(process.env.DISPATCH_BOX_ID ? { boxId: process.env.DISPATCH_BOX_ID } : {}),
+  });
+}
+
+/**
+ * The signal handler: clean up, then exit on our own. With a SIGTERM handler installed Node no longer
+ * exits by default, and a CLI child, a socket or a timer can keep the loop alive: a box under
+ * `docker stop` waited the full timeout and was killed (2026-11-11). The children got SIGTERM in
+ * stop(); give them the kill grace (they are SIGKILLed after it), then go. Inside docker's 10 s and ECS's 30 s.
+ */
+function exitAfter(cleanup: () => void, signal: string): () => void {
+  return () => {
+    boxLog('daemon.shutdown', { signal, uptimeSec: Math.round(process.uptime()) });
+    cleanup();
+    setTimeout(() => process.exit(0), KILL_GRACE_MS + 500).unref();
+  };
 }
 
 // When run directly via tsx src/server.ts

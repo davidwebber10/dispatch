@@ -1,10 +1,11 @@
 import { useShownStatus, type ShownStatus } from '../../stores/connection';
+import { hostCopy } from '../../lib/hostCopy';
 
 const STYLES = {
   open:       { color: 'var(--color-accent)', label: 'Connected' },
-  connecting: { color: 'var(--color-status-yellow)', label: 'Connecting…' },
-  reconnecting: { color: 'var(--color-status-yellow)', label: 'Reconnecting…' },
-  closed:     { color: 'var(--color-status-red)', label: 'Disconnected' },
+  connecting: { color: 'var(--color-status-yellow)', label: hostCopy('conn.connecting', 'Connecting…') },
+  reconnecting: { color: 'var(--color-status-yellow)', label: hostCopy('conn.reconnecting', 'Reconnecting…') },
+  closed:     { color: 'var(--color-status-red)', label: hostCopy('conn.closed', 'Disconnected') },
 } as const;
 
 /** `shown`: a status the caller already settled (its own grace period ran), so this one doesn't wait again. */

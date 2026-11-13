@@ -5,7 +5,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import * as readline from 'readline';
 import { looksLikeQuestion } from '../status/question.js';
 import { broadKillDenial } from './broad-kill-guard.js';
-import { inheritedEnv } from '../platform/inherited-env.js';
+import { childEnv } from '../platform/inherited-env.js';
 import { redactKeys } from '../auth/redact-keys.js';
 import { detectClaudeLimit, pauseLabel, type UsageLimit } from '../limits/detect.js';
 import { killWithGrace } from '../platform/kill-grace.js';
@@ -14,6 +14,13 @@ import { EventRing } from './shared/event-ring.js';
 import type { JournalRecorder, ThreadRecorder } from '../journal/recorder.js';
 import { ClaudeStreamCompactor } from './shared/stream-compaction.js';
 import { settleTurn, type SettleDeps } from './shared/settle-turn.js';
+import { blockedEvent, blockedResolvedEvent, approvalTitle, allowedOnceMessage, sameToolCall, inputDetail, SMART_FALLBACK_NOTICE, ALLOW_ONCE_MS, type BlockedAction, type Approvals } from '../os/approvals.js';
+import { boxLog } from '../os/box-log.js';
+import { logThreadModel } from './model-log.js';
+import { SENT_MARK } from '../conversation/task-notification.js';
+import { isHostedBox } from '../os/hosted-mode.js';
+import { forbiddenInitTools, initServerNames, unexpectedInitMcpTools, unexpectedServers, unexpectedServersNotice, NO_SERVER_LIST_NOTICE } from '../os/hosted-mcp-policy.js';
+import { SubagentTracker, stripAgentIdLine, resultText, RUNNING_STATES, type SubagentInfo, type SubagentState, type StopAgentResult } from './shared/subagents.js';
 import { StructuredEmitter, type AnyStructuredListener, type StructuredListener, type StructuredManagerEventName, type StructuredManagerEvents } from './shared/events.js';
 
 /**
@@ -27,6 +34,8 @@ export interface PendingPermission {
   input: any;
   toolUseId?: string;
   questions?: any[];
+  /** subagents-v1: the subagent that asks (its id: Claude the Agent call id, Codex the sub-thread id). Absent: the main agent. */
+  agentId?: string;
 }
 
 /**
@@ -67,6 +76,14 @@ interface Session {
   toolPolicy?: (toolName: string, input: unknown) => { allow: true } | { allow: false; message: string };
   /** The single in-flight permission request awaiting a human decision, if any. */
   pending: PendingPermission | null;
+  /** Requests that came while `pending` waited (parallel subagents ask together); surfaced one at a time. */
+  pendingQueue?: PendingPermission[];
+  /** The subagents of this thread (Agent/Task calls), see shared/subagents.ts. */
+  subagents?: SubagentTracker;
+  /** A subagent's tool_use id → the subagent that made the call (finds the subagent of a can_use_tool). */
+  toolOwner?: Map<string, string>;
+  /** Claude's own agent/task id (`task_started.task_id`, `agentId`) → the subagent (its Agent call id). */
+  taskToAgent?: Map<string, string>;
   /** The last STDERR_TAIL chars of the CLI's stderr. Read so the pipe never fills, and carried
    *  on 'exit': a CLI that dies early often says why only there (#76). */
   stderrTail?: string;
@@ -110,9 +127,58 @@ interface Session {
   model?: string;
   /** The account the thread runs on (StructuredSpawnOpts.accountId), for auth_required. */
   accountId?: string;
+  /** Smart approvals (os/approvals.ts): --permission-mode auto; every can_use_tool that arrives is surfaced. */
+  smart?: boolean;
+  /** Smart was asked for but the CLI runs another mode (the model has no auto mode): escalate instead. */
+  smartFallback?: boolean;
+  /** Smart was switched on live: the init frame reflects the spawn flags, so only `status` frames count. */
+  smartLive?: boolean;
+  /** A live switch to smart is waiting for the CLI's answer: mode reports before it are stale. */
+  smartSwitching?: boolean;
+  /** Actions the classifier blocked this session, newest last, for the in-thread cards. */
+  blocked?: BlockedAction[];
+  /** The full input of each blocked call, by block id (the card shows a short detail only). Never sent to a client. */
+  blockedInputs?: Map<string, unknown>;
+  /**
+   * "Allow this" (os/approvals.ts): the one call the person allowed, held by the daemon. While it is set the
+   * CLI runs in its asking mode, so the retry comes to the daemon as a request, and only a request for this
+   * very call is answered `allow`. `input` undefined: the blocked call's input is not known, so nothing is
+   * answered for the person and the retry shows as an ordinary approval card.
+   */
+  allowOnce?: { toolName: string; input: unknown; known: boolean; timer: NodeJS.Timeout; /** Turn ends to let pass: the turn that was open when the person allowed the call. */ skipResults: number } | null;
   /** Our own control requests awaiting the CLI's control_response (set_model). */
   controls?: Map<string, { resolve: (r: any) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>;
+  /** StructuredSpawnOpts.mcpExpected: every init frame of the process is checked against it. */
+  mcpExpected?: string[] | null;
+  /** The model the thread was started with (StructuredSpawnOpts.model; null: the CLI default), for the `thread.model` log line. */
+  requestedModel?: string | null;
+  /** The `thread.model` line was written for this process (once, at its first init frame). */
+  modelLogged?: boolean;
+  /** True once an init frame was checked (the first one always logs its servers). */
+  mcpChecked?: boolean;
+  /** Names already warned about, so a frame each turn does not repeat the same warning. */
+  mcpWarned?: Set<string>;
 }
+
+/**
+ * The environment of a Pretty Claude Code thread. CLAUDE_CODE_ARTIFACT=1 (2026-11-12): print mode
+ * (`claude -p`) turns the Artifact tools off by default ("sdk_default_off"), so a Pretty thread had
+ * none and the CLI thread had them. It is only a default: a value in the daemon's environment or the
+ * thread's env wins. On a HOSTED box never: the Artifact tools publish to the person's claude.ai
+ * account, outside the platform (os/hosted-mcp-policy.ts); the spawner passes 0 there and the image's
+ * managed policy turns them off.
+ */
+export function claudeChildEnv(defaultEnv: Record<string, string> | undefined, threadEnv: Record<string, string> | undefined, hosted: boolean = isHostedBox()): Record<string, string> {
+  const env = childEnv(defaultEnv, threadEnv);
+  if (hosted) env.CLAUDE_CODE_ARTIFACT = '0';
+  else if (env.CLAUDE_CODE_ARTIFACT === undefined) env.CLAUDE_CODE_ARTIFACT = '1';
+  return env;
+}
+
+/** After the last subagent ended, how long the held idle of the main turn waits for the CLI to wake its main agent. */
+const SUBAGENT_RELEASE_MS = 3000;
+/** The tools that start a Claude Code subagent. */
+const AGENT_TOOLS = new Set(['Agent', 'Task']);
 
 /** How long a set_model control request may wait for the CLI's answer. */
 const CONTROL_TIMEOUT_MS = 15_000;
@@ -124,6 +190,9 @@ const SYNTHETIC = '<synthetic>';
  *  manager they identify how to reach its app-server — but the shape is shared so
  *  `SessionService.spawnStructured` can drive either without branching. */
 export interface StructuredSpawnOpts {
+  /** Smart approvals (os/approvals.ts). Claude: the command carries --permission-mode auto; Codex: the
+   *  auto_review reviewer; Grok/OpenCode: the static rule set. Absent: today's escalate/auto-allow. */
+  approvals?: 'smart';
   command: string;
   args: string[];
   workDir: string;
@@ -133,6 +202,12 @@ export interface StructuredSpawnOpts {
    *  back to the CLI with the policy's message (no pending, no human involvement). */
   toolPolicy?: (toolName: string, input: unknown) => { allow: true } | { allow: false; message: string };
   seedEvents?: unknown[];
+  /**
+   * Claude only, on a hosted box: the MCP server names Dispatch passed. The first `system/init`
+   * frame's `mcp_servers` is logged (`thread.mcp`, names only), and a name not in this list gives a
+   * warning line and a notice in the thread (os/hosted-mcp-policy.ts).
+   */
+  mcpExpected?: string[];
   /**
    * App-server-style managers (Codex) resume/model out-of-band over JSON-RPC rather than via
    * `args`: `resumeId` is the external thread id to `thread/resume`, `model` the thread's
@@ -304,6 +379,17 @@ export interface IStructuredManager extends EventEmitter {
   setEffort?(terminalId: string, effort: string): Promise<void>;
   /** A line in the thread for a model/effort change the harness refused (kept in the replay ring). */
   postNotice?(terminalId: string, message: string): void;
+  /**
+   * Put one event the daemon wrote itself into the thread (kept in the replay ring and the journal, pushed
+   * quiet): a `{type:'system', subtype:…}` notice such as `dispatch_notice` or `permission_blocked`.
+   */
+  postEvent?(terminalId: string, event: Record<string, unknown>): void;
+  /** Switch the live thread between auto / ask / smart approvals (os/approvals.ts). */
+  setApprovals?(terminalId: string, mode: Approvals): Promise<void>;
+  /** The actions the harness blocked by itself and nobody answered yet (the in-thread cards). */
+  getBlocked?(terminalId: string): BlockedAction[];
+  /** "Allow this" / "Keep blocked" on a blocked action. False: no such action. */
+  resolveBlocked?(terminalId: string, id: string, decision: 'allow' | 'keep'): Promise<boolean>;
   /** Codex: the efforts each model takes, from the app-server's last `model/list`, or null if never asked. */
   modelEfforts?(): Record<string, string[]> | null;
   /** Codex: the effort each model runs at by default (same source), or null if never asked. */
@@ -311,6 +397,16 @@ export interface IStructuredManager extends EventEmitter {
   /** Codex: ask the app-server for them now (cached for a while). null when no app-server is running. */
   loadModelEfforts?(): Promise<Record<string, string[]> | null>;
   isAlive(terminalId: string): boolean;
+  /** subagents-v1: the subagents of a live thread, oldest first; null when it has no live session. */
+  listSubagents?(terminalId: string): SubagentInfo[] | null;
+  /** subagents-v1: stop one subagent (Claude `stop_task`, Codex `turn/interrupt` of its sub-thread). */
+  stopSubagent?(terminalId: string, agentId: string): Promise<StopAgentResult>;
+  /** subagents-v1: stop every running subagent, and the main turn when it runs. */
+  stopAllSubagents?(terminalId: string): Promise<{ stopped: string[]; unsupported: string[]; mainInterrupted: boolean }>;
+  /** subagents-v1: a subagent's history from the harness (Codex `thread/read` of its sub-thread), tagged with its id. */
+  readSubagentHistory?(terminalId: string, agentId: string): Promise<unknown[] | null>;
+  /** subagents-v1: a request waits behind the one in front of the person (an answer must name its request id). */
+  hasWaitingPermission?(terminalId: string): boolean;
   /**
    * Epoch ms of the last frame the live session's CLI put in the ring, or undefined when there is
    * no live session or no frame yet. The stall watchdog reads it (runtime/stall-watchdog.ts).
@@ -341,6 +437,18 @@ export function turnTextsFromEvents(events: readonly unknown[]): string[] {
     if (text) texts.push(text);
   }
   return texts.reverse();
+}
+
+/** The input of the tool_use with this id in a Claude-shaped ring (newest first), or undefined. */
+export function toolUseInput(events: readonly unknown[], toolUseId: unknown): unknown {
+  if (typeof toolUseId !== 'string' || !toolUseId) return undefined;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e: any = events[i];
+    if (e?.type !== 'assistant' || !Array.isArray(e.message?.content)) continue;
+    const b = e.message.content.find((c: any) => c?.type === 'tool_use' && c.id === toolUseId);
+    if (b) return b.input;
+  }
+  return undefined;
 }
 
 /** How much of a structured CLI's stderr to keep for its exit report. */
@@ -398,23 +506,34 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
   /** The message journal's recorder (W3-D). Set by the daemon; a manager with none writes no journal. */
   journal?: JournalRecorder;
 
+  /** After the last subagent ended, how long a held main-turn idle waits for the CLI's own wake turn (a test shortens it). */
+  subagentReleaseMs = SUBAGENT_RELEASE_MS;
+  /** The time limit of a held idle with no subagent frame (shared/subagents.ts; a test shortens it). */
+  subagentLostAfterMs = 30 * 60_000;
+
   setDefaultEnv(env: Record<string, string>): void { this.defaultEnv = env; }
 
   spawn(terminalId: string, opts: StructuredSpawnOpts): number {
     if (this.sessions.has(terminalId)) this.kill(terminalId);
     const child = spawn(opts.command, opts.args, {
       cwd: opts.workDir,
-      // CLAUDE_CODE_ARTIFACT=1 (2026-11-12): print mode (`claude -p`) turns the Artifact tools off by
-      // default ("sdk_default_off"), so a Pretty thread had none and the CLI thread had them. It comes
-      // first: a value in the daemon's environment or the thread's env still wins.
-      env: { CLAUDE_CODE_ARTIFACT: '1', ...inheritedEnv(), ...this.defaultEnv, ...opts.env },
+      env: claudeChildEnv(this.defaultEnv, opts.env),
       stdio: ['pipe', 'pipe', 'pipe'],
     }) as ChildProcessWithoutNullStreams;
     child.stdin.on('error', () => {}); // Fix 2: suppress EPIPE if child closes stdin while alive
 
     const counterScope = randomUUID(); // Claude result counters restart with each CLI invocation.
     const rl = readline.createInterface({ input: child.stdout });
-    const session: Session = { child, rl, ring: new EventRing(), compactor: new ClaudeStreamCompactor(), escalate: opts.escalate ?? false, toolPolicy: opts.toolPolicy, pending: null, accountId: opts.accountId };
+    const session: Session = { child, rl, ring: new EventRing(), compactor: new ClaudeStreamCompactor(), escalate: opts.escalate ?? false, toolPolicy: opts.toolPolicy, pending: null, accountId: opts.accountId, smart: opts.approvals === 'smart', blocked: [], mcpExpected: opts.mcpExpected ?? null, requestedModel: opts.model ?? null };
+    // subagents-v1: each state change of a subagent is one frame in the thread. The CLI wakes its main
+    // agent by itself when a background agent ends; the release delay gives that turn time to start.
+    session.subagents = new SubagentTracker('claude-code', {
+      emit: (frame) => { if (this.sessions.get(terminalId) === session) { session.ring.push(frame, { quiet: true }); this.fire('event', terminalId, frame); } },
+      releaseDelayMs: this.subagentReleaseMs,
+      lostAfterMs: this.subagentLostAfterMs,
+    });
+    session.toolOwner = new Map();
+    session.taskToAgent = new Map();
     // Resume backfill: seed the ring with prior history (restored from the claude
     // transcript) BEFORE any live event lands, so a ws (re)connect replays the past
     // conversation first and the View isn't blank after a daemon restart.
@@ -461,10 +580,14 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
       // The active model: init carries it on every turn; a lead assistant frame carries what
       // answered. A sub-agent's frame (parent_tool_use_id) and a synthetic frame never count.
       if (event?.type === 'system' && event?.subtype === 'init' && typeof event.model === 'string' && event.model) session.model = event.model;
+      if (event?.type === 'system' && event?.subtype === 'init' && !session.modelLogged) { session.modelLogged = true; logThreadModel(terminalId, 'claude-code', session.requestedModel ?? null, typeof event.model === 'string' ? event.model : null); }
+      // Every init frame (Claude Code sends one each turn): a connector or server can load after the first.
+      if (event?.type === 'system' && event?.subtype === 'init' && session.mcpExpected) this.checkMcpServers(terminalId, session, event);
       if (event?.type === 'assistant' && event?.parent_tool_use_id == null) {
         const m = event.message?.model;
         if (typeof m === 'string' && m && m !== SYNTHETIC) session.model = m;
       }
+      if (session.smart) this.observeSmart(terminalId, session, event);
       if (event?.type === 'control_request' && event?.request?.subtype === 'can_use_tool') {
         const r = event.request;
         // Track regardless of the allow/deny path below — every tool call passes through
@@ -491,19 +614,35 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
             type: 'control_response',
             response: { subtype: 'success', request_id: event.request_id, response: { behavior: 'deny', message: denied.message } },
           });
-        } else if (session.escalate || isAsk) {
+        } else if (!isAsk && session.allowOnce?.known && sameToolCall(session.allowOnce, { toolName, input: r?.input })) {
+          // The ONE call the person allowed ("Allow this", see allowOnce()): answered by the daemon, once.
+          this.write(terminalId, {
+            type: 'control_response',
+            response: { subtype: 'success', request_id: event.request_id, response: { behavior: 'allow', updatedInput: r?.input } },
+          });
+          void this.endAllowOnce(terminalId, session);
+        } else if (session.escalate || isAsk || session.smart || session.allowOnce) {
+          // Smart approvals: auto mode let the routine calls run without asking, so EVERY request
+          // that still arrives is one the classifier or an `ask` rule wants a person for.
           // Do NOT auto-allow. Capture the pending decision and surface it so it can be
           // approved/denied (or an AskUserQuestion answered). The CLI stays blocked on stdin
           // until answerPermission() writes the response.
+          const agentId = this.agentOfRequest(session, r);
           const pending: PendingPermission = {
             requestId: event.request_id,
             toolName: r?.tool_name,
             input: r?.input,
             toolUseId: r?.tool_use_id,
             questions,
+            ...(agentId ? { agentId } : {}),
           };
-          session.pending = pending;
-          this.fire('permission', terminalId, pending);
+          if (agentId) session.subagents?.update(agentId, { state: 'needs_input' });
+          // One request in front of the person at a time: parallel subagents can ask together.
+          if (session.pending) (session.pendingQueue ??= []).push(pending);
+          else {
+            session.pending = pending;
+            this.fire('permission', terminalId, pending);
+          }
         } else {
           // Auto-allow tool permission requests — parity with --dangerously-skip-permissions.
           this.write(terminalId, {
@@ -516,6 +655,10 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
       // interrupt while a question is up, in the same millisecond as the interrupt's reply.
       if (event?.type === 'control_cancel_request' && session.pending && event.request_id === session.pending.requestId) {
         this.clearPending(terminalId, session);
+      } else if (event?.type === 'control_cancel_request' && session.pendingQueue?.length) {
+        const gone = session.pendingQueue.find((p) => p.requestId === event.request_id);
+        session.pendingQueue = session.pendingQueue.filter((p) => p.requestId !== event.request_id);
+        if (gone?.agentId && session.pending?.agentId !== gone.agentId && !session.pendingQueue.some((p) => p.agentId === gone.agentId)) session.subagents?.update(gone.agentId, { state: 'working' });
       }
       // A turn the CLI began on its own (no sendMessage): open it here, before its frames and
       // its `result` are delivered, so the status edge and the thread's report fire at its end.
@@ -525,6 +668,7 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
         && (event?.type === 'assistant' || (event?.type === 'stream_event' && event?.event?.type === 'message_start'));
       if (!session.turnOpen && startsTurn) {
         session.turnOpen = true;
+        session.subagents?.turnStarted(); // the CLI woke its main agent (a background agent ended): the held idle is over
         this.fire('busy', terminalId);
       }
       // Deliver the final frame before settle listeners close analytics or start another turn.
@@ -537,6 +681,8 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
         this.fire('event', terminalId, auth);
         this.fire('auth-required', terminalId, auth);
       }
+      // subagents-v1: the list and state of the subagents (after the frame, so a viewer has the call first).
+      this.observeSubagents(session, event);
       // Turn boundary: a `result` event ends the current turn. Three things can have
       // happened: the agent DECLARED how it ended (via report_status — see
       // noteDeclaredStatus/Session.declared), the LAST tool called this turn was a
@@ -554,11 +700,22 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
         const hit = detectClaudeLimit(event, Date.now());
         if (hit) session.limit = hit;
       }
+      // The turn ended with the allowed call still unused, and nothing waits for the person: the window closes.
+      // (The turn that was already running when the person allowed it ends first: that end does not count.)
+      if (event?.type === 'result' && session.allowOnce && !session.pending) {
+        if (session.allowOnce.skipResults > 0) session.allowOnce.skipResults--;
+        else void this.endAllowOnce(terminalId, session);
+      }
       if (event?.type === 'result') {
         session.turnOpen = false;
         // Backstop: a CLI blocked on a request cannot end a turn, so a pending still set here is
         // stale. Cleared before the settle emits below, so the status sees it while the turn is open.
-        if (session.pending) this.clearPending(terminalId, session);
+        // A background subagent's request is not: it outlives the main turn (subagents-v1).
+        if (session.pendingQueue?.length) session.pendingQueue = session.pendingQueue.filter((p) => p.agentId && session.subagents?.isRunning(p.agentId));
+        if (session.pending && !(session.pending.agentId && session.subagents?.isRunning(session.pending.agentId))) this.clearPending(terminalId, session);
+        // A subagent that was not sent to the background ends with its call; one still running at the
+        // main turn's end was cut off with it.
+        session.subagents?.stopAll(undefined, (a) => a.background !== true && a.parentId === null && event.is_error === true);
         const declared = session.declared;
         const wake = session.lastToolUse && WAKE_TOOLS.has(session.lastToolUse.name) ? session.lastToolUse : undefined;
         session.lastToolUse = undefined; // reset for the next turn
@@ -596,11 +753,12 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
           // free). A question there is marked inferred, so it renders as a guess and the
           // false-positive rate stays measurable.
           const text = declared ? '' : this.lastAssistantText(terminalId);
-          settleTurn(
-            { terminalId, declared },
-            !declared && looksLikeQuestion(text) ? { kind: 'needs-help', ask: text, summary: text } : { kind: 'idle' },
-            this.settleDeps,
-          );
+          const action = !declared && looksLikeQuestion(text) ? { kind: 'needs-help' as const, ask: text, summary: text } : { kind: 'idle' as const };
+          const settle = () => settleTurn({ terminalId, declared }, action, this.settleDeps);
+          // subagents-v1: a background subagent still runs, so the thread stays working; the idle is let
+          // go when the last one ends, unless the CLI wakes its main agent first (it does, with the result).
+          const held = action.kind === 'idle' && declared?.state !== 'needs_you' && (session.subagents?.holdIdle(settle) ?? false);
+          if (!held) settle();
         }
 
         // The turn that just ended is now fully flushed to the transcript (result is always
@@ -626,6 +784,9 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
       if (this.sessions.get(terminalId)?.child !== child) return;
       recorder?.close(); // W3-D: a block that streamed when the CLI exited is written
       session.pending = null; // drop any unanswered permission — the process is gone
+      session.pendingQueue = [];
+      session.subagents?.stopAll('The session ended.'); // written while the session can still emit
+      session.subagents?.dispose();
       for (const c of session.controls?.values() ?? []) { clearTimeout(c.timer); c.reject(new Error('The thread stopped')); }
       session.controls?.clear();
       this.sessions.delete(terminalId);
@@ -675,8 +836,9 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
     // Mirror the wire shape: a string becomes a single text block; blocks pass through
     // unchanged (so an image block re-renders inline via the chat's image parser).
     const echoContent: ContentBlock[] = typeof content === 'string' ? [{ type: 'text', text: content }] : content;
-    const ev: { type: 'user'; message: { role: 'user'; content: ContentBlock[] }; meta?: { source: MessageSource } } =
-      { type: 'user', message: { role: 'user', content: echoContent } };
+    // SENT_MARK: a sent message, never classified as harness context (journal/recorder.ts).
+    const ev: { type: 'user'; message: { role: 'user'; content: ContentBlock[] }; meta?: { source: MessageSource }; [SENT_MARK]: true } =
+      { type: 'user', message: { role: 'user', content: echoContent }, [SENT_MARK]: true };
     if (source) ev.meta = { source };
     const s = this.sessions.get(terminalId);
     if (s) {
@@ -687,7 +849,7 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
     }
     this.fire('event', terminalId, ev);
     // Turn start: delivering a message kicks off work → the thread is busy.
-    if (s) s.turnOpen = true;
+    if (s) { s.turnOpen = true; s.subagents?.turnStarted(); }
     this.fire('busy', terminalId);
   }
 
@@ -731,6 +893,8 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
   ): boolean {
     const s = this.sessions.get(terminalId);
     if (!s || !s.pending) return false;
+    // Only the request in front of the person is answered: a request that waits behind it has not
+    // been shown, and the caller built `updatedInput` from the one in front.
     if (requestId && s.pending.requestId !== requestId) return false;
     const rid = s.pending.requestId;
     const response =
@@ -751,9 +915,17 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
    * for it (a cancel, or a stale pending at a turn end).
    */
   private clearPending(terminalId: string, s: Session): void {
+    const answered = s.pending;
     s.pending = null;
     this.fire('resolved', terminalId);
     this.fire('permission-cleared', terminalId);
+    if (answered?.agentId && !s.pendingQueue?.some((p) => p.agentId === answered.agentId)) s.subagents?.update(answered.agentId, { state: 'working' });
+    // The next request that waited is now in front of the person.
+    const next = s.pendingQueue?.shift();
+    if (next) {
+      s.pending = next;
+      this.fire('permission', terminalId, next);
+    }
   }
 
   /**
@@ -769,6 +941,13 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
     const s = this.sessions.get(terminalId);
     if (!s) return false;
     s.escalate = escalate;
+    if (!escalate && s.pendingQueue?.length) {
+      for (const p of s.pendingQueue.filter((q) => !q.questions)) {
+        this.write(terminalId, { type: 'control_response', response: { subtype: 'success', request_id: p.requestId, response: { behavior: 'allow', updatedInput: p.input } } });
+        if (p.agentId) s.subagents?.update(p.agentId, { state: 'working' });
+      }
+      s.pendingQueue = s.pendingQueue.filter((q) => !!q.questions);
+    }
     if (!escalate && s.pending && !s.pending.questions) {
       const rid = s.pending.requestId;
       const updatedInput = s.pending.input;
@@ -830,6 +1009,371 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
   }
 
   /** A line in the thread for the viewers and the replay: a model/effort change the CLI refused. */
+  /**
+   * The init-frame check of a hosted Claude Code thread (os/hosted-mcp-policy.ts), on EVERY init frame.
+   * One `thread.mcp` line on the first frame and on a frame with something new. A warning (the
+   * `thread.mcp.unexpected` line, the console, and a notice in the thread that the journal keeps) for:
+   * a server Dispatch did not pass, an Artifact tool, an MCP tool of a server Dispatch did not pass,
+   * and a frame with no server list. Each name is reported once per process.
+   */
+  private checkMcpServers(terminalId: string, session: Session, event: unknown): void {
+    const NO_LIST_KEY = '(no server list)'; // in `mcpWarned`: the no-list warning was given
+    const expected = session.mcpExpected ?? [];
+    const seen = (session.mcpWarned ??= new Set<string>());
+    const first = !session.mcpChecked;
+    session.mcpChecked = true;
+    const list = initServerNames(event);
+    const reported = list ?? [];
+    const tools = [...forbiddenInitTools(event), ...unexpectedInitMcpTools(expected, event)];
+    const all = [...unexpectedServers(expected, reported), ...tools];
+    const extra = all.filter((n) => !seen.has(n));
+    const noList = list === null && !seen.has(NO_LIST_KEY);
+    if (first || extra.length || noList) {
+      boxLog('thread.mcp', { thread: terminalId, harness: 'claude-code', servers: list ?? null, expected: [...expected], unexpected: all });
+    }
+    if (noList) {
+      seen.add(NO_LIST_KEY);
+      boxLog('thread.mcp.unexpected', { thread: terminalId, harness: 'claude-code', reason: 'no server list in the init frame' }, 'warn');
+      console.warn(`[mcp] WARNING thread ${terminalId}: the init frame has no server list; the servers could not be checked`);
+      this.postEvent(terminalId, { type: 'system', subtype: 'dispatch_notice', level: 'warning', message: NO_SERVER_LIST_NOTICE });
+    }
+    if (extra.length === 0) return;
+    for (const n of extra) seen.add(n);
+    const newTools = tools.filter((t) => extra.includes(t));
+    boxLog('thread.mcp.unexpected', { thread: terminalId, harness: 'claude-code', unexpected: extra, ...(newTools.length ? { tools: newTools } : {}) }, 'warn');
+    console.warn(`[mcp] WARNING thread ${terminalId}: the harness loaded MCP servers or tools Dispatch did not pass: ${extra.join(', ')}`);
+    this.postEvent(terminalId, { type: 'system', subtype: 'dispatch_notice', level: 'warning', message: unexpectedServersNotice(extra) });
+  }
+
+  // --- subagents (subagents-v1) ---------------------------------------------------------------
+
+  /**
+   * Keep the list and state of the subagents from the CLI's frames. Measured on Claude Code 2.1.323
+   * (tests/fixtures/subagents/*.jsonl are recordings):
+   *  - an `Agent`/`Task` tool_use starts one (its id is the subagent's id); its own frames carry
+   *    `parent_tool_use_id` = that id (and `agent_id`, the CLI's id for it);
+   *  - `system/task_started` (task_id, tool_use_id, is_backgrounded, prompt), `task_progress`
+   *    (usage: total_tokens, tool_uses), `task_notification` (status completed|failed|stopped|killed,
+   *    summary, usage) report its life; a `local_bash` task (a background shell) is not a subagent;
+   *  - the main `tool_result` of the call ends a foreground one (`tool_use_result` has the figures),
+   *    or says `async_launched` for one that runs on in the background;
+   *  - an older CLI reports a background end as a `<task-notification>` user text instead.
+   */
+  private observeSubagents(s: Session, e: any): void {
+    const t = s.subagents;
+    if (!t || !e || typeof e !== 'object') return;
+    const parent = typeof e.parent_tool_use_id === 'string' && e.parent_tool_use_id ? e.parent_tool_use_id : null;
+    if (parent) {
+      const a = t.ensure(parent, typeof e.task_description === 'string' ? { title: e.task_description } : {});
+      t.touch(parent);
+      if (typeof e.agent_id === 'string' && e.agent_id) { s.taskToAgent?.set(e.agent_id, parent); if (!a.nativeId) a.nativeId = e.agent_id; }
+      const model = e.type === 'assistant' ? e.message?.model : undefined;
+      if (typeof model === 'string' && model && model !== SYNTHETIC && !a.model) a.model = model;
+      if (a.state === 'starting') t.update(parent, { state: 'working' });
+    }
+    if (e.type === 'assistant' && Array.isArray(e.message?.content)) {
+      for (const b of e.message.content) {
+        if (b?.type !== 'tool_use' || typeof b.id !== 'string') continue;
+        if (parent) { t.step(parent); s.toolOwner?.set(b.id, parent); }
+        if (AGENT_TOOLS.has(b.name)) {
+          const input = b.input ?? {};
+          t.ensure(b.id, {
+            parentId: parent, callId: b.id,
+            title: str(input.description) ?? str(input.name) ?? str(input.subagent_type) ?? 'Agent',
+            kind: str(input.subagent_type), prompt: str(input.prompt), model: str(input.model),
+            ...(input.run_in_background === true ? { background: true } : {}),
+          });
+        }
+      }
+      return;
+    }
+    if (e.type === 'system') { this.observeTask(s, e); return; }
+    if (e.type !== 'user' || !Array.isArray(e.message?.content) && typeof e.message?.content !== 'string') return;
+    const content = e.message.content;
+    if (Array.isArray(content)) {
+      for (const b of content) {
+        if (b?.type === 'tool_result' && typeof b.tool_use_id === 'string' && t.has(b.tool_use_id) && !parent) this.agentCallEnded(s, b, e.tool_use_result ?? e.toolUseResult);
+      }
+    }
+    // An older CLI's background end: a whole `<task-notification>` user text.
+    if (!parent) {
+      const text = typeof content === 'string' ? content : resultText(content);
+      const block = /^\s*<task-notification>([\s\S]*)<\/task-notification>\s*$/.exec(text)?.[1];
+      const tag = (n: string) => block ? (new RegExp(`<${n}>([\\s\\S]*?)</${n}>`).exec(block)?.[1] ?? '').trim() : '';
+      const id = tag('tool-use-id');
+      if (block && id && t.isRunning(id)) {
+        const state = taskState(tag('status'));
+        if (state) t.update(id, { state, ...(tag('result') ? { result: tag('result') } : {}), ...(state === 'failed' ? { error: tag('summary') || undefined } : {}) });
+      }
+    }
+  }
+
+  /** `system/task_*` frames of a subagent (a `local_agent` task, or one whose tool_use_id is a known Agent call). */
+  private observeTask(s: Session, e: any): void {
+    const t = s.subagents!;
+    const callId = typeof e.tool_use_id === 'string' ? e.tool_use_id : (typeof e.task_id === 'string' ? s.taskToAgent?.get(e.task_id) : undefined);
+    if (callId && t.has(callId)) t.touch(callId);
+    switch (e.subtype) {
+      case 'task_started': {
+        if (!callId || (e.task_type && e.task_type !== 'local_agent' && !t.has(callId))) return;
+        if (typeof e.task_id === 'string') s.taskToAgent?.set(e.task_id, callId);
+        t.ensure(callId, { title: str(e.description), kind: str(e.subagent_type), prompt: str(e.prompt), nativeId: str(e.task_id) });
+        const a = t.get(callId)!;
+        if (!a.nativeId && typeof e.task_id === 'string') a.nativeId = e.task_id;
+        if (e.is_backgrounded === true) a.background = true;
+        return;
+      }
+      case 'task_progress': {
+        if (!callId || !t.has(callId)) return;
+        const u = e.usage ?? {};
+        t.update(callId, {
+          ...(typeof u.total_tokens === 'number' ? { tokens: u.total_tokens } : {}),
+          ...(typeof u.tool_uses === 'number' ? { steps: u.tool_uses } : {}),
+          ...(t.get(callId)!.state === 'starting' ? { state: 'working' as const } : {}),
+        });
+        return;
+      }
+      case 'task_notification': {
+        if (!callId || !t.has(callId)) return;
+        const state = taskState(e.status);
+        const u = e.usage ?? {};
+        const figures = {
+          ...(typeof u.total_tokens === 'number' ? { tokens: u.total_tokens } : {}),
+          ...(typeof u.tool_uses === 'number' ? { steps: u.tool_uses } : {}),
+        };
+        if (!state || !t.isRunning(callId)) { t.update(callId, figures); return; }
+        const summary = str(e.summary);
+        t.update(callId, { state, ...figures, ...(state === 'done' && summary ? { result: summary } : {}), ...(state === 'failed' && summary ? { error: summary } : {}) });
+        return;
+      }
+      default:
+        return;
+    }
+  }
+
+  /** The main tool_result of an Agent call: `async_launched` (it runs on), or its end. */
+  private agentCallEnded(s: Session, block: any, tur: any): void {
+    const t = s.subagents!;
+    const id: string = block.tool_use_id;
+    const info = tur && typeof tur === 'object' ? tur : {};
+    if (typeof info.agentId === 'string' && info.agentId) s.taskToAgent?.set(info.agentId, id);
+    const figures = {
+      ...(typeof info.agentId === 'string' && info.agentId && !t.get(id)!.nativeId ? { nativeId: info.agentId } : {}),
+      ...(typeof info.resolvedModel === 'string' && info.resolvedModel ? { model: info.resolvedModel } : {}),
+      ...(typeof info.totalTokens === 'number' ? { tokens: info.totalTokens } : {}),
+      ...(typeof info.totalToolUseCount === 'number' ? { steps: info.totalToolUseCount } : {}),
+      ...(info.usage && typeof info.usage.input_tokens === 'number' ? { usage: { input: info.usage.input_tokens, output: info.usage.output_tokens } } : {}),
+    };
+    if (info.status === 'async_launched' || info.isAsync === true) {
+      t.update(id, { ...figures, background: true });
+      return;
+    }
+    const text = stripAgentIdLine(resultText(block.content));
+    if (!t.isRunning(id)) {
+      // Ended already (a task_notification came first): keep the full text and the figures.
+      t.update(id, { ...figures, ...(text && block.is_error !== true ? { result: text } : {}) });
+      return;
+    }
+    const startedAt = t.get(id)!.startedAt;
+    const endedAt = typeof info.totalDurationMs === 'number' && startedAt ? startedAt + info.totalDurationMs : undefined;
+    if (block.is_error === true) t.update(id, { ...figures, state: 'failed', error: text || 'The subagent could not finish.', ...(endedAt ? { endedAt } : {}) });
+    else t.update(id, { ...figures, state: /interrupted by user/i.test(text) ? 'stopped' : 'done', result: text, ...(endedAt ? { endedAt } : {}) });
+  }
+
+  /** The subagent a can_use_tool request comes from: the CLI's `agent_id`, else the owner of its tool_use id. */
+  private agentOfRequest(s: Session, r: any): string | undefined {
+    const byAgent = typeof r?.agent_id === 'string' ? s.taskToAgent?.get(r.agent_id) : undefined;
+    if (byAgent) return byAgent;
+    return typeof r?.tool_use_id === 'string' ? s.toolOwner?.get(r.tool_use_id) : undefined;
+  }
+
+  listSubagents(terminalId: string): SubagentInfo[] | null {
+    return this.sessions.get(terminalId)?.subagents?.list() ?? null;
+  }
+
+  /** True while a request waits behind the one in front of the person (an answer must then name its request). */
+  hasWaitingPermission(terminalId: string): boolean {
+    return (this.sessions.get(terminalId)?.pendingQueue?.length ?? 0) > 0;
+  }
+
+  /**
+   * Stop one subagent with the CLI's `stop_task` control request (task_id = the CLI's own id of the
+   * agent). Live-checked on Claude Code 2.1.323 (tests/fixtures/subagents/claude-subagent-stop-*.jsonl),
+   * for a background and a foreground agent: the CLI answers success and reports the agent with a
+   * `task_notification` of status `stopped`. With no CLI id known yet (no task_started, no agent frame),
+   * nothing can be named: 'unsupported'.
+   */
+  async stopSubagent(terminalId: string, agentId: string): Promise<StopAgentResult> {
+    const s = this.sessions.get(terminalId);
+    const a = s?.subagents?.get(agentId);
+    if (!s || !a) return 'not-found';
+    if (!RUNNING_STATES.has(a.state)) return 'not-running';
+    if (!a.nativeId) return 'unsupported';
+    try {
+      await this.control(terminalId, { subtype: 'stop_task', task_id: a.nativeId }, 'stop of a subagent');
+    } catch {
+      return 'unsupported';
+    }
+    // The task_notification normally came already; a CLI that answered without one still ends it here.
+    s.subagents?.update(agentId, { state: 'stopped' });
+    return 'stopped';
+  }
+
+  /** Stop every running subagent (stop_task each), and the main turn when it runs (interrupt). */
+  async stopAllSubagents(terminalId: string): Promise<{ stopped: string[]; unsupported: string[]; mainInterrupted: boolean }> {
+    const s = this.sessions.get(terminalId);
+    const out = { stopped: [] as string[], unsupported: [] as string[], mainInterrupted: false };
+    if (!s) return out;
+    for (const a of s.subagents?.running() ?? []) {
+      const r = await this.stopSubagent(terminalId, a.id);
+      if (r === 'stopped') out.stopped.push(a.id);
+      else if (r === 'unsupported') out.unsupported.push(a.id);
+    }
+    if (s.turnOpen) out.mainInterrupted = this.interrupt(terminalId);
+    return out;
+  }
+
+  postEvent(terminalId: string, event: Record<string, unknown>): void {
+    const s = this.sessions.get(terminalId);
+    if (!s) return;
+    s.ring.push(event, { quiet: true });
+    this.fire('event', terminalId, event);
+  }
+
+  /**
+   * Smart approvals, per CLI frame (measured on Claude Code 2.1.322, 2026-11-11):
+   *  - `system/permission_denied` (decision_reason_type classifier): auto mode refused a call and
+   *    told only the model. It becomes a card: what, why, Allow this / Keep blocked.
+   *  - `system/init` or `system/status` naming a permissionMode other than `auto`: the model has no
+   *    auto mode and the CLI fell back silently. Escalate every tool instead, with one plain line.
+   */
+  private observeSmart(terminalId: string, session: Session, event: any): void {
+    if (event?.type !== 'system') return;
+    if (event.subtype === 'permission_denied') {
+      const toolName = typeof event.tool_name === 'string' ? event.tool_name : 'tool';
+      // The event names the call, not its input: find the input in the call's own tool_use frame.
+      const input = event.tool_input ?? event.input ?? toolUseInput(session.ring.snapshot(), event.tool_use_id);
+      const b: BlockedAction = {
+        id: typeof event.tool_use_id === 'string' && event.tool_use_id ? event.tool_use_id : randomUUID(),
+        toolName, title: approvalTitle(toolName, input), detail: inputDetail(input),
+        reason: typeof event.decision_reason === 'string' ? event.decision_reason : typeof event.message === 'string' ? event.message : null,
+        at: Date.now(),
+      };
+      // subagents-v1: the subagent whose call was blocked, so the card can name it.
+      const agentId = (typeof event.agent_id === 'string' ? session.taskToAgent?.get(event.agent_id) : undefined)
+        ?? (typeof event.tool_use_id === 'string' ? session.toolOwner?.get(event.tool_use_id) : undefined);
+      if (agentId) b.agentId = agentId;
+      session.blocked = [...(session.blocked ?? []).filter((x) => x.id !== b.id), b].slice(-20);
+      (session.blockedInputs ??= new Map()).set(b.id, input);
+      for (const id of session.blockedInputs.keys()) if (!session.blocked.some((x) => x.id === id)) session.blockedInputs.delete(id);
+      this.postEvent(terminalId, blockedEvent(b));
+      return;
+    }
+    // While one allowed call is awaited the CLI is in its asking mode on purpose: that is not a fallback.
+    const counts = !session.smartSwitching && !session.allowOnce && (event.subtype === 'status' || (event.subtype === 'init' && !session.smartLive));
+    const mode = counts ? event.permissionMode ?? event.permission_mode : undefined;
+    if (typeof mode === 'string' && mode && mode !== 'auto' && !session.smartFallback) this.fallBackFromSmart(terminalId, session);
+  }
+
+  private fallBackFromSmart(terminalId: string, session: Session): void {
+    session.smartFallback = true;
+    session.escalate = true;
+    this.postEvent(terminalId, { type: 'system', subtype: 'dispatch_notice', level: 'info', message: SMART_FALLBACK_NOTICE });
+  }
+
+  async setApprovals(terminalId: string, mode: Approvals): Promise<void> {
+    const s = this.sessions.get(terminalId);
+    if (!s) throw new Error('This thread is not running');
+    if (mode === 'smart') {
+      s.smart = true;
+      s.smartLive = true;
+      s.smartFallback = false;
+      s.escalate = false;
+      s.smartSwitching = true;
+      try {
+        await this.control(terminalId, { subtype: 'set_permission_mode', mode: 'auto' }, 'approval change');
+      } catch {
+        // `auto_mode_model`: this model has no auto mode. Ask for every tool instead.
+        this.fallBackFromSmart(terminalId, s);
+      } finally {
+        s.smartSwitching = false;
+      }
+      return;
+    }
+    if (s.smart) await this.control(terminalId, { subtype: 'set_permission_mode', mode: 'default' }, 'approval change').catch(() => undefined);
+    s.smart = false;
+    s.smartFallback = false;
+    this.setEscalate(terminalId, mode === 'ask');
+  }
+
+  getBlocked(terminalId: string): BlockedAction[] {
+    return [...(this.sessions.get(terminalId)?.blocked ?? [])];
+  }
+
+  async resolveBlocked(terminalId: string, id: string, decision: 'allow' | 'keep'): Promise<boolean> {
+    const s = this.sessions.get(terminalId);
+    const b = s?.blocked?.find((x) => x.id === id);
+    if (!s || !b) return false;
+    s.blocked = s.blocked!.filter((x) => x.id !== id);
+    const known = s.blockedInputs?.has(id) ?? false;
+    const input = s.blockedInputs?.get(id);
+    s.blockedInputs?.delete(id);
+    this.postEvent(terminalId, blockedResolvedEvent(id, decision));
+    if (decision === 'allow') await this.allowOnce(terminalId, s, b, known && input !== undefined, input);
+    return true;
+  }
+
+  /**
+   * "Allow this", as a signal the model cannot write (os/approvals.ts). The words of a message never
+   * allow anything here. The daemon:
+   *   1. remembers the ONE call the person allowed (tool and exact input);
+   *   2. puts the CLI in its asking mode with a control request (`set_permission_mode default`), so the
+   *      harness's own judgement of the conversation text is out of the path and the retry arrives at the
+   *      daemon as a `can_use_tool` request;
+   *   3. tells the model, in a plain line, to run the call again;
+   *   4. answers `allow` to a request for exactly that call (see the membrane in spawn()); every other
+   *      gated call in that window waits for the person, like any approval card;
+   *   5. goes back to the smart mode when the call was answered, the turn ended, or the time ran out.
+   * Only this method arms it, and only the owner's `POST …/blocked/:id` reaches this method.
+   */
+  private async allowOnce(terminalId: string, s: Session, b: BlockedAction, known: boolean, input: unknown): Promise<void> {
+    if (s.allowOnce) clearTimeout(s.allowOnce.timer);
+    const timer = setTimeout(() => { void this.endAllowOnce(terminalId, s); }, ALLOW_ONCE_MS);
+    timer.unref?.();
+    s.allowOnce = { toolName: b.toolName, input, known, timer, skipResults: s.turnOpen ? 1 : 0 };
+    // Already asking for every tool (a model with no smart mode): nothing to switch.
+    if (!s.smartFallback) {
+      try {
+        await this.control(terminalId, { subtype: 'set_permission_mode', mode: 'default' }, 'approval');
+      } catch {
+        // The CLI did not leave its own mode: no call can be allowed for the person. Say so; allow nothing.
+        clearTimeout(timer);
+        s.allowOnce = null;
+        this.postEvent(terminalId, { type: 'system', subtype: 'dispatch_notice', level: 'warning', message: 'Dispatch could not allow that action. Ask for it again: you will be asked before it runs.' });
+        return;
+      }
+    }
+    this.sendMessage(terminalId, allowedOnceMessage(b));
+  }
+
+  /** The one allowed call was used, or its window closed: back to the smart mode. */
+  private async endAllowOnce(terminalId: string, s: Session): Promise<void> {
+    const held = s.allowOnce;
+    if (!held) return;
+    clearTimeout(held.timer);
+    s.allowOnce = null;
+    if (this.sessions.get(terminalId) !== s || !s.smart || s.smartFallback) return;
+    s.smartSwitching = true;
+    try {
+      await this.control(terminalId, { subtype: 'set_permission_mode', mode: 'auto' }, 'approval');
+    } catch {
+      // The smart mode did not come back: ask for every tool instead (the safe side), with the one plain line.
+      this.fallBackFromSmart(terminalId, s);
+    } finally {
+      s.smartSwitching = false;
+    }
+  }
+
   postNotice(terminalId: string, message: string): void {
     const s = this.sessions.get(terminalId);
     if (!s) return;
@@ -856,8 +1400,12 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
     const s = this.sessions.get(terminalId);
     if (!s) return;
     for (const c of s.controls?.values() ?? []) { clearTimeout(c.timer); c.reject(new Error('The thread stopped')); }
+    if (s.allowOnce) { clearTimeout(s.allowOnce.timer); s.allowOnce = null; }
     s.controls?.clear();
     s.pending = null;
+    s.pendingQueue = [];
+    s.subagents?.stopAll('The session ended.'); // written while the session can still emit
+    s.subagents?.dispose();
     // Remove the session first: closing readline below can finish a pending drain (see spawn()),
     // which must then find the session gone and stay silent — this is the one 'exit'.
     this.sessions.delete(terminalId);
@@ -909,6 +1457,20 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
    *  list is O(N) React reconciles and dominates chat-open latency on long threads. */
   getEventsTail(terminalId: string, n: number): unknown[] {
     return this.sessions.get(terminalId)?.ring.tail(n) ?? [];
+  }
+}
+
+function str(v: unknown): string | undefined {
+  return typeof v === 'string' && v.trim() ? v : undefined;
+}
+
+/** A Claude task status as a subagent state (task_notification `status`, `<status>` of the older block). */
+function taskState(status: unknown): SubagentState | undefined {
+  switch (status) {
+    case 'completed': return 'done';
+    case 'failed': return 'failed';
+    case 'stopped': case 'killed': return 'stopped';
+    default: return undefined;
   }
 }
 

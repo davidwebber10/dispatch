@@ -1,0 +1,6 @@
+{
+  "forceLoginMethod": "claudeai",
+  "disableClaudeAiConnectors": true,
+  "enableArtifact": false,
+  "disableArtifact": true
+}

@@ -15,7 +15,12 @@ import { createThumbnailer, thumbnailHeaders, type Thumbnailer } from '../files/
 import { defaultSecretRoots, holdsSecret, SECRET_PATH_ERROR, type SecretRoots } from '../files/secret-paths.js';
 import { platform } from '../platform/index.js';
 import * as sessionsDb from '../db/sessions.js';
-import { checkProjectFile, ProjectFileError, PROJECT_FILE_MIME } from '../plugins/files.js';
+import { PATH_REFUSALS } from '../files/path-policy.js';
+import { pathPolicyFor } from '../files/path-policy-default.js';
+import { checkProjectFile, ProjectFileError, PROJECT_FILE_MIME, sendProjectFile } from '../plugins/files.js';
+import { INBOX_PLUGIN } from './inbox.js';
+import { currentProfile } from '../os/profile.js';
+import { boxLog } from '../os/box-log.js';
 import { SNAPSHOT_MAX_BYTES, takeSnapshot, snapshotPath, removeSnapshot, removeAllSnapshots } from '../plugins/snapshots.js';
 import type { PluginRegistry } from '../plugins/registry.js';
 import { ASSIST_HARNESSES, ASSIST_CLAUDE_MODEL, ASSIST_OPENROUTER_MODEL, type AssistRunner, type AssistHarness, type AssistResult } from '../assist/run.js';
@@ -205,6 +210,17 @@ export function rangeOf(from: unknown, to: unknown, now = Date.now()): { from: s
   return { from: new Date(f).toISOString(), to: new Date(t).toISOString() };
 }
 
+/**
+ * Under the business profile the value of a `secret` Inbox drop is never read back (routes/inbox.ts,
+ * docs/headless-api.md section 11): the text is null and `redacted: true`. The developer profile is unchanged.
+ */
+function withoutSecret(pluginId: string, doc: pluginData.PluginDoc): pluginData.PluginDoc {
+  if (pluginId !== INBOX_PLUGIN || currentProfile() !== 'business') return doc;
+  const v = doc.value as Record<string, unknown> | null;
+  if (!v || typeof v !== 'object' || v.kind !== 'secret' || v.text === null || v.text === undefined) return doc;
+  return { ...doc, value: { ...v, text: null, redacted: true } };
+}
+
 /** The writer stamped on a document a thread key writes: from the key, never from the body. */
 function writerOf(req: Request): pluginData.Writer | null {
   let p;
@@ -212,6 +228,35 @@ function writerOf(req: Request): pluginData.Writer | null {
   if (p.kind !== 'thread') return null;
   const c = scopeOf(req).caller(p.terminalId);
   return { terminalId: p.terminalId, sessionId: c?.sessionId ?? '', label: c?.label ?? null };
+}
+
+/** The drop kinds of the Inbox tool (packages/plugins/previews/mcp/kinds.mjs): only these are logged by name. */
+const INBOX_KINDS = new Set(['command', 'link', 'code', 'secret', 'steps', 'diff', 'table', 'doc', 'text', 'images', 'files']);
+
+/** An Inbox drop's storage key: `preview:<id>`. */
+const INBOX_DROP_PREFIX = 'preview:';
+
+/** Who called: a thread, a plugin, the owner (any other principal), or unknown. */
+function callerKind(req: Request): string {
+  try { return principalOf(req).kind; } catch { return 'unknown'; }
+}
+
+/**
+ * One box log line per Inbox write (`plugin.data.put`), so "did the drop arrive?" is answerable from the
+ * log: the drop's id, its kind, how many files, whether it is marked seen, and which thread wrote it.
+ * Never its title, note, text or a file name.
+ */
+function logInboxPut(key: string, value: unknown, writer: pluginData.Writer | null, req: Request): void {
+  const v = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+  boxLog('plugin.data.put', {
+    plugin: INBOX_PLUGIN,
+    drop: key.slice(INBOX_DROP_PREFIX.length),
+    kind: typeof v.kind === 'string' ? (INBOX_KINDS.has(v.kind) ? v.kind : 'other') : null,
+    files: Array.isArray(v.files) ? v.files.length : 0,
+    seen: Boolean(v.seenAt),
+    by: callerKind(req),
+    ...(writer ? { thread: writer.terminalId } : {}),
+  });
 }
 
 function storageError(res: import('express').Response, e: unknown): void {
@@ -251,6 +296,8 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
   // Read on first use too: a router that serves no file never looks at the data folder.
   let roots: SecretRoots | null = limits.secretRoots ?? null;
   const secretRoots = (): SecretRoots => (roots ??= defaultSecretRoots(dataDir()));
+  // Which folders a project file may be in (files/path-policy.ts), as for every route that takes a path.
+  const filePolicy = pathPolicyFor(db);
   const knownAccount = (h: 'claude' | 'codex', id: string): boolean => (limits.hasAccount ? limits.hasAccount(h, id) : id === (limits.defaultAccount?.(h) ?? 'cli'));
 
   // The list is for the owner and for any thread key (a thread may ask what plugins exist).
@@ -331,7 +378,10 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
   router.get('/plugins/:id/data', dataRead, (req, res) => {
     if (!known(req, res)) return;
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ docs: req.query.values === '1' ? pluginData.listDocs(db, req.params.id, { values: true }) : pluginData.listDocs(db, req.params.id) });
+    const docs = req.query.values === '1' ? pluginData.listDocs(db, req.params.id, { values: true }).map((d) => withoutSecret(req.params.id, d)) : pluginData.listDocs(db, req.params.id);
+    // The Inbox list (the app's load, and each post's prune): how many drops it held. Never a title or a value.
+    if (req.params.id === INBOX_PLUGIN) boxLog('inbox.list', { count: docs.filter((d) => d.key.startsWith(INBOX_DROP_PREFIX)).length, values: req.query.values === '1', by: callerKind(req) });
+    res.json({ docs });
   });
 
   router.get('/plugins/:id/data/:key', dataRead, (req, res) => {
@@ -339,7 +389,7 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     const doc = pluginData.getDoc(db, req.params.id, req.params.key);
     if (!doc) return void res.status(404).json({ error: 'document not found' });
     res.setHeader('Cache-Control', 'no-store');
-    res.json(doc);
+    res.json(withoutSecret(req.params.id, doc));
   });
 
   // The body is `{ value }`: any JSON value, including a string or a number.
@@ -348,8 +398,10 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     const body = req.body as { value?: unknown } | undefined;
     if (!body || typeof body !== 'object' || !('value' in body)) return void res.status(400).json({ error: 'bad_body', message: 'Send { "value": ... }.' });
     try {
-      const doc = pluginData.setDoc(db, req.params.id, req.params.key, body.value, writerOf(req));
+      const writer = writerOf(req);
+      const doc = pluginData.setDoc(db, req.params.id, req.params.key, body.value, writer);
       plugins.broadcast({ type: 'plugin:data', id: req.params.id, key: req.params.key });
+      if (req.params.id === INBOX_PLUGIN && req.params.key.startsWith(INBOX_DROP_PREFIX)) logInboxPut(req.params.key, body.value, writer, req);
       res.json(doc);
     } catch (e) { storageError(res, e); }
   });
@@ -398,7 +450,11 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     if (!session) return void res.status(404).json({ error: 'session not found' });
     let ref: pluginData.PluginFile;
     try {
-      ref = pluginData.addFile(db, req.params.id, session.id, checkProjectFile(session.working_dir, body.path));
+      const checked = checkProjectFile(session.working_dir, body.path);
+      const why = filePolicy.problem(checked.path, { project: session.working_dir, use: 'read' })
+        ?? filePolicy.openedProblem(fs.statSync(checked.path), fs.realpathSync(checked.path));
+      if (why) return void res.status(403).json({ error: PATH_REFUSALS[why], code: 'path_refused', reason: why });
+      ref = pluginData.addFile(db, req.params.id, session.id, checked);
     } catch (e) {
       if (e instanceof ProjectFileError) return void res.status(e.status).json({ error: e.message });
       return void res.status(500).json({ error: e instanceof Error ? e.message : String(e) }); // an async handler: Express 4 would not catch a throw
@@ -452,6 +508,11 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     // or the data folder, or a hard link in a project to a secret file. The check is before the thumbnail, so no
     // small copy of such a file is made either. An error of the check refuses the file.
     if (await holdsSecret(file.path, secretRoots()).catch(() => true)) return void res.status(403).json({ error: SECRET_PATH_ERROR });
+    {
+      let why = filePolicy.problem(file.path, { project: session.working_dir, use: 'read' });
+      try { why ??= filePolicy.openedProblem(fs.statSync(file.path), fs.realpathSync(file.path)); } catch { /* gone: sendFile answers */ }
+      if (why) return void res.status(403).json({ error: PATH_REFUSALS[why], code: 'path_refused', reason: why });
+    }
     const mime = PROJECT_FILE_MIME[path.extname(file.path).toLowerCase()] ?? 'application/octet-stream';
     // `?thumb=<width>` (2026-11-09): a list's small copy of an image. Anything that cannot be made small
     // (not an image, a width that is not offered, a broken file, no resizer) gets the original below.
@@ -470,7 +531,8 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     // HTML runs scripts in an opaque origin; SVG and other markup get the plain sandbox (no scripts at all).
     setFileHeaders(res, mime, mime === 'text/html' ? HTML_SANDBOX_CSP : 'sandbox');
     res.type(mime);
-    res.sendFile(file.path);
+    // The agent's own file: on a box with privilege separation it is read as the agent user (plugins/files.ts).
+    await sendProjectFile(res, file.path);
   });
 
   router.delete('/plugins/:id/files/:fileId', settingsRule, (req, res) => {

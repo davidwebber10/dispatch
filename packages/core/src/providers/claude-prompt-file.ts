@@ -14,7 +14,8 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { platform } from '../platform/index.js';
-import { inheritedEnv } from '../platform/inherited-env.js';
+import { childEnv } from '../platform/inherited-env.js';
+import { publishToAgent, runDirFor } from '../privsep/paths.js';
 
 type Version = [number, number, number];
 
@@ -55,7 +56,7 @@ export function setClaudeProbeEnv(env: Record<string, string>): void {
 
 function claudeVersionOutput(): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile('claude', ['--version'], { timeout: 15_000, env: { ...inheritedEnv(), ...probeEnv } }, (err, stdout) => (err ? reject(err) : resolve(String(stdout))));
+    execFile('claude', ['--version'], { timeout: 15_000, env: childEnv(probeEnv) }, (err, stdout) => (err ? reject(err) : resolve(String(stdout))));
   });
 }
 
@@ -91,7 +92,7 @@ export function resetClaudeVersionForTests(): void {
 }
 
 function promptDir(): string {
-  return path.join(platform.dataDir(), 'prompts');
+  return runDirFor(platform.dataDir(), 'prompts');
 }
 
 /**
@@ -102,6 +103,7 @@ function promptDir(): string {
 export function writePromptFile(dir: string, text: string): string {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   fs.chmodSync(dir, 0o700);
+  publishToAgent(dir);
   const file = path.join(dir, `${createHash('sha256').update(text).digest('hex').slice(0, 32)}.md`);
   if (fs.existsSync(file)) {
     const now = new Date();
@@ -110,6 +112,7 @@ export function writePromptFile(dir: string, text: string): string {
   }
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, text, { mode: 0o600 });
+  publishToAgent(tmp);
   fs.renameSync(tmp, file);
   return file;
 }

@@ -5,6 +5,8 @@ import { execFile } from 'node:child_process';
 import { within } from '../files/confine.js';
 import { holdsSecret, isSecretPath, type SecretRoots } from '../files/secret-paths.js';
 import { upsertDotenv } from './secret-store.js';
+import { privsep } from '../privsep/config.js';
+import { agentMkdir, agentReadFile, agentRemove, agentRename, agentWriteFile } from '../privsep/agent-fs.js';
 
 /**
  * The file destination of an inbox secret (2026-11-12): the daemon writes the value into a file of the thread's
@@ -85,15 +87,43 @@ export async function writeSecretFile(opts: { root: string; requested: string; n
   if (existing && !existing.isFile()) throw new SecretFileError('the path is not a regular file', 400);
   if (existing && await holdsSecret(full, roots).catch(() => true)) throw new SecretFileError('this path holds credentials: Dispatch does not write there');
 
+  // With privilege separation the daemon is root and the project is the agent's: every read and change below
+  // goes through the agent user (privsep/agent-fs.ts), so a folder swapped for a link meanwhile leads only where
+  // the agent could already go. The checks above are the same; they no longer have to win the race alone.
+  const cfg = privsep();
+
   let content = value;
   if (name !== undefined) {
     let before = '';
     if (existing) {
       if (existing.size > EDIT_MAX_BYTES) throw new SecretFileError('the file is too large to edit (max 1 MB)', 413);
-      const fd = fs.openSync(full, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
-      try { before = fs.readFileSync(fd, 'utf8'); } finally { fs.closeSync(fd); }
+      if (cfg) {
+        const bytes = await agentReadFile(full, EDIT_MAX_BYTES, cfg);
+        if (bytes === null) throw new SecretFileError('cannot read the file to edit it', 400);
+        before = bytes.toString('utf8');
+      } else {
+        const fd = fs.openSync(full, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+        try { before = fs.readFileSync(fd, 'utf8'); } finally { fs.closeSync(fd); }
+      }
     }
     content = upsertDotenv(before, name, value); // a DotenvError names no value
+  }
+
+  if (cfg) {
+    const dir = path.dirname(full);
+    const tmp = path.join(dir, `.${path.basename(full)}.inbox-${randomBytes(6).toString('hex')}.tmp`);
+    try {
+      agentMkdir(dir, cfg);
+      agentWriteFile(tmp, content, { flag: 'wx', mode: 0o600 }, cfg);
+    } catch (e) {
+      try { agentRemove(tmp, {}, cfg); } catch { /* not made */ }
+      throw new SecretFileError(`could not write the file (${(e as NodeJS.ErrnoException).code ?? 'error'})`, 400);
+    }
+    try { agentRename(tmp, full, cfg); } catch (e) {
+      try { agentRemove(tmp, {}, cfg); } catch { /* gone */ }
+      throw new SecretFileError(`could not write the file (${(e as NodeJS.ErrnoException).code ?? 'error'})`, 400);
+    }
+    return { rel, gitIgnored: await gitIgnored(dir, path.basename(full)) };
   }
 
   // The folders on the way, made inside the project only, then checked again (a link swapped in meanwhile).

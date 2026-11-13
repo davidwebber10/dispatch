@@ -55,6 +55,7 @@ exports[`a scripted ACP agent through the ACP manager > a resume that replays hi
   [
     "event",
     {
+      "dispatch_sent": true,
       "message": {
         "content": [
           {
@@ -324,6 +325,7 @@ exports[`a scripted ACP agent through the ACP manager > two streamed turns, a de
   [
     "event",
     {
+      "dispatch_sent": true,
       "message": {
         "content": [
           {
@@ -576,6 +578,7 @@ exports[`a scripted ACP agent through the ACP manager > two streamed turns, a de
   [
     "event",
     {
+      "dispatch_sent": true,
       "message": {
         "content": [
           {
@@ -829,6 +832,7 @@ exports[`a scripted ACP agent through the ACP manager > two streamed turns, a de
   [
     "event",
     {
+      "dispatch_sent": true,
       "message": {
         "content": [
           {
@@ -1112,6 +1116,7 @@ exports[`codex-frames.fixture replayed through CodexStructuredSessionManager > t
   [
     "event",
     {
+      "dispatch_sent": true,
       "message": {
         "content": [
           {
@@ -1407,6 +1412,7 @@ exports[`fake-claude.mjs through ClaudeStructuredSessionManager > a closing ques
   [
     "event",
     {
+      "dispatch_sent": true,
       "message": {
         "content": [
           {
@@ -1485,6 +1491,7 @@ exports[`fake-claude.mjs through ClaudeStructuredSessionManager > a declared out
   [
     "event",
     {
+      "dispatch_sent": true,
       "message": {
         "content": [
           {
@@ -1538,6 +1545,7 @@ exports[`fake-claude.mjs through ClaudeStructuredSessionManager > a declared out
   [
     "event",
     {
+      "dispatch_sent": true,
       "message": {
         "content": [
           {
@@ -1592,6 +1600,7 @@ exports[`fake-claude.mjs through ClaudeStructuredSessionManager > a declared out
   [
     "event",
     {
+      "dispatch_sent": true,
       "message": {
         "content": [
           {
@@ -1670,6 +1679,7 @@ exports[`fake-claude.mjs through ClaudeStructuredSessionManager > a plain turn: 
   [
     "event",
     {
+      "dispatch_sent": true,
       "message": {
         "content": [
           {
@@ -1753,6 +1763,7 @@ exports[`fake-claude.mjs through ClaudeStructuredSessionManager > a supervised t
   [
     "event",
     {
+      "dispatch_sent": true,
       "message": {
         "content": [
           {
@@ -1847,6 +1858,7 @@ exports[`fake-claude.mjs through ClaudeStructuredSessionManager > a supervised t
   [
     "event",
     {
+      "dispatch_sent": true,
       "message": {
         "content": [
           {
@@ -1972,6 +1984,7 @@ exports[`fake-claude.mjs through ClaudeStructuredSessionManager > an auto-allowe
   [
     "event",
     {
+      "dispatch_sent": true,
       "message": {
         "content": [
           {
@@ -2048,6 +2061,7 @@ exports[`fake-claude.mjs through ClaudeStructuredSessionManager > an auto-allowe
   [
     "event",
     {
+      "dispatch_sent": true,
       "message": {
         "content": [
           {
@@ -2148,6 +2162,7 @@ exports[`fake-claude.mjs through ClaudeStructuredSessionManager > an error turn,
   [
     "event",
     {
+      "dispatch_sent": true,
       "message": {
         "content": [
           {
@@ -2181,6 +2196,7 @@ exports[`fake-claude.mjs through ClaudeStructuredSessionManager > an error turn,
   [
     "event",
     {
+      "dispatch_sent": true,
       "message": {
         "content": [
           {
@@ -2292,6 +2308,7 @@ exports[`fake-codex-app-server.mjs through CodexStructuredSessionManager > a dec
   [
     "event",
     {
+      "dispatch_sent": true,
       "message": {
         "content": [
           {
@@ -2451,6 +2468,7 @@ exports[`fake-codex-app-server.mjs through CodexStructuredSessionManager > a dec
   [
     "event",
     {
+      "dispatch_sent": true,
       "message": {
         "content": [
           {
@@ -2543,6 +2561,7 @@ exports[`fake-codex-app-server.mjs through CodexStructuredSessionManager > a res
   [
     "event",
     {
+      "dispatch_sent": true,
       "message": {
         "content": [
           {
@@ -2721,6 +2740,7 @@ exports[`fake-codex-app-server.mjs through CodexStructuredSessionManager > a str
   [
     "event",
     {
+      "dispatch_sent": true,
       "message": {
         "content": [
           {
@@ -2878,6 +2898,7 @@ exports[`fake-codex-app-server.mjs through CodexStructuredSessionManager > a str
   [
     "event",
     {
+      "dispatch_sent": true,
       "message": {
         "content": [
           {
@@ -3033,6 +3054,7 @@ exports[`fake-codex-app-server.mjs through CodexStructuredSessionManager > a sup
   [
     "event",
     {
+      "dispatch_sent": true,
       "message": {
         "content": [
           {
@@ -3257,6 +3279,7 @@ hi",
   [
     "event",
     {
+      "dispatch_sent": true,
       "message": {
         "content": [
           {
@@ -3456,6 +3479,7 @@ exports[`grok-frames.fixture replayed through the ACP manager (grok dialect) > t
   [
     "event",
     {
+      "dispatch_sent": true,
       "message": {
         "content": [
           {
@@ -3669,6 +3693,7 @@ exports[`opencode-frames.fixture replayed through the ACP manager (opencode dial
   [
     "event",
     {
+      "dispatch_sent": true,
       "message": {
         "content": [
           {

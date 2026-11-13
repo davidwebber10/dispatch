@@ -16,7 +16,7 @@ import { GATE_VIA } from '../auth/access-gate.js';
 import { createPrincipalMiddleware } from '../auth/request-principal.js';
 import { createKeyScope } from '../auth/key-scope.js';
 import { KeyRegistry } from '../auth/principals.js';
-import { configureRefusalLog, keyRoute, ownerOnlyStrict, policyKindOf, policyRouter } from '../auth/route-policy.js';
+import { configureRefusalLog, keyRoute, ownerOnlyStrict, policyHandlerOf, policyKindOf, policyRouter } from '../auth/route-policy.js';
 import { jsonCompression } from '../http/compress.js';
 import { BOOTSTRAP_PARTS, createBootstrapRouter } from './bootstrap.js';
 
@@ -181,7 +181,7 @@ describe('GET /api/bootstrap on the full app (W2-H)', () => {
 
   it('carries the owner policy tag', () => {
     const layer = (createBootstrapRouter(app) as unknown as { stack: { route?: { stack: { handle: unknown }[] } }[] }).stack.find((l) => l.route);
-    expect(policyKindOf(layer!.route!.stack[0].handle)).toBe('owner');
+    expect(policyKindOf(policyHandlerOf(layer!.route!))).toBe('owner');
   });
 });
 

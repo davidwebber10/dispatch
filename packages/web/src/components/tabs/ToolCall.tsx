@@ -3,7 +3,11 @@ import type { ConvItem } from '../../api/types';
 import { langFromPath } from '../../lib/markdown';
 import { HighlightedCode } from '../HighlightedCode';
 import { getToolView, parseToolInput } from './toolviews/registry';
+import { can } from '../../lib/profile';
 import { useToolExpanded, useToolTab, uiKeyOf } from '../../hooks/useToolUIState';
+import { askLook } from './chat/askLook';
+import { ConnectCard } from '../connections/ConnectCard';
+import { notConnectedOf } from '../../stores/osConnections';
 
 /**
  * One mono glyph per tool family (2026-08-16 pretty-chat redesign): the leading column of a
@@ -103,8 +107,13 @@ export function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?
   const err = result?.isError;
   const lines = hasOut ? out.split('\n').length : 0;
   const view = getToolView(tool.toolName, parseToolInput(tool.toolInput));
-  const headerName = view?.label?.(tool) ?? name;
-  const expandable = hasIn || hasOut;
+  // The OS look for a business person (no raw JSON): a tool name a person can read, in OS type.
+  const plainRow = askLook() && !can('tool-json');
+  const headerName = plainRow ? readableToolName(view?.label?.(tool) ?? name) : view?.label?.(tool) ?? name;
+  const rowFont = plainRow ? '400 13px var(--font-sans)' : '400 11.5px var(--font-mono)';
+  // The raw input/output expander is a developer feature (lib/profile.ts 'tool-json'); a tool with
+  // its own readable view (a diff, a file) still opens. The one-line row always shows.
+  const expandable = (hasIn || hasOut) && (can('tool-json') || !!view?.expanded);
   const effTab: 'input' | 'output' = (tab === 'input' && hasIn) ? 'input' : (hasOut ? 'output' : 'input');
   const content = effTab === 'input' ? input : out;
   const lang = effTab === 'input' ? (tool.toolName === 'Bash' ? 'bash' : 'json') : langFromPath(tool.toolFile);
@@ -139,13 +148,13 @@ export function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?
         {/* flexShrink 0: the name is the single most identifying thing on the row and is almost
             always short, so it never shrinks; the arg detail is the elastic half. maxWidth caps
             the pathological case (a very long MCP tool name). */}
-        <span style={{ minWidth: 0, maxWidth: '55%', flexShrink: 0, font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{headerName}</span>
+        <span style={{ minWidth: 0, maxWidth: '55%', flexShrink: 0, font: rowFont, color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{headerName}</span>
         {(() => {
           const arg = inputSummary(tool);
           return arg ? (
             <span
               title={tool.toolDetail ?? arg}
-              style={{ minWidth: 0, flex: '1 1 auto', font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              style={{ minWidth: 0, flex: '1 1 auto', font: rowFont, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
             >
               {arg}
             </span>
@@ -157,6 +166,8 @@ export function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?
           ? <span style={{ marginLeft: 'auto', flexShrink: 0, font: '400 11px var(--font-mono)', color: meta.color }}>{meta.text}</span>
           : <span className="chat-shimmer" style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 11 }}>running…</span>}
       </button>
+      {/* A company tool that needs the person's consent first (a company system's `not_connected`): the Connect card, inline. */}
+      {(() => { const nc = err ? notConnectedOf(out) : null; return nc ? <ConnectCard compact label={nc.label} connect={nc.connect} /> : null; })()}
       {open && expandable && (
         <div style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', background: 'var(--color-elevated)', overflow: 'hidden', margin: '4px 20px 8px' }}>
           {view ? view.expanded(tool, result) : (
@@ -194,13 +205,23 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
   );
 }
 
+/**
+ * A tool name a person can read (the OS look, business profile): an MCP tool's
+ * `mcp__server__do_thing` becomes "do thing"; anything else is unchanged.
+ */
+export function readableToolName(name: string): string {
+  if (!name.startsWith('mcp__')) return name;
+  const parts = name.split('__');
+  return parts.length >= 3 && parts[parts.length - 1] ? parts[parts.length - 1].replace(/_/g, ' ') : name;
+}
+
 /** A tool result, minimized to a one-line summary and expandable on click. */
 export function ToolResult({ item }: { item: ConvItem }) {
   // Keyed like ToolCall (tool id first): a stray result's uuid is upgraded mid-turn, which used to
   // reset an open shelf (2026-11-06).
   const [open, setOpen] = useToolExpanded(uiKeyOf(item), false);
   const text = item.text ?? '';
-  if (!text.trim()) return null;
+  if (!text.trim() || !can('tool-json')) return null;
   const lines = text.split('\n').length;
   const err = item.isError;
   const color = err ? 'var(--color-status-red)' : 'var(--color-text-secondary)';

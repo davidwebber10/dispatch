@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { publishToAgent } from '../privsep/paths.js';
 
 export interface McpServerSpec {
   name: string;
@@ -14,6 +15,21 @@ export interface McpServerSpec {
    * Codex Pretty thread config holds the literal (it goes over a pipe to the app-server).
    */
   authEnv?: boolean;
+  /**
+   * The same server over loopback HTTP (os/os-servers.ts). With `authEnv`, a harness that can send
+   * the key as `Authorization: Bearer <reference>` (Claude Code, the Codex CLI with DISPATCH_AUTH,
+   * OpenCode) or over a pipe (Codex Pretty) gets this entry and starts no process; any other harness
+   * runs `command`/`args` (the stdio bridge). Verified live 2026-11-11: Claude Code 2.1.322 expands
+   * `${VAR}` in `headers`, Codex 0.167 reads `bearer_token_env_var` and `http_headers`, OpenCode 1.19
+   * expands `{env:VAR}` in `headers`.
+   */
+  http?: { url: string };
+  /** Set on a company-system server (os/os-servers.ts): the OS system id it serves. */
+  osSystem?: string;
+  /** Set on Dispatch's own server and on the server of a plugin that ships with Dispatch (a root-owned folder). */
+  bundled?: boolean;
+  /** Set on a server the platform attaches itself (integrations/os-provider.ts, `servers` of its answer). */
+  platform?: boolean;
 }
 
 /** The variable that carries the key into a server; the Codex CLI view carries a key-file path. */
@@ -45,6 +61,17 @@ export function composeInjection(
     const authVar: AuthVar = opts.authVar ?? 'DISPATCH_AUTH';
     for (const s of specs) {
       // A reference, never the key itself, in the file that Claude reads.
+      // A loopback HTTP entry when the key travels as a variable (not a key file): no process.
+      if (s.http && s.authEnv && authVar === 'DISPATCH_AUTH') {
+        mcpServers[s.name] = { type: 'http', url: s.http.url, headers: { Authorization: 'Bearer ${DISPATCH_AUTH}' } };
+        codexArgs.push('-c', `mcp_servers.${s.name}.url=${JSON.stringify(s.http.url)}`);
+        codexArgs.push('-c', `mcp_servers.${s.name}.bearer_token_env_var="DISPATCH_AUTH"`);
+        // Codex Pretty: the thread config goes over a pipe, so it may carry the literal (as below).
+        codexThreadConfig[`mcp_servers.${s.name}`] = opts.codexAuthLiteral
+          ? { url: s.http.url, http_headers: { Authorization: `Bearer ${opts.codexAuthLiteral}` } }
+          : { command: s.command, args: s.args, ...(s.env ? { env: s.env } : {}) };
+        continue;
+      }
       const fileEnv = s.authEnv ? { ...(s.env ?? {}), [authVar]: '${' + authVar + '}' } : s.env;
       mcpServers[s.name] = { command: s.command, args: s.args, ...(fileEnv ? { env: fileEnv } : {}) };
       codexArgs.push('-c', `mcp_servers.${s.name}.command=${JSON.stringify(s.command)}`);
@@ -78,6 +105,7 @@ export function composeInjection(
     // when it creates the file, so tighten an older 0644 file too.
     fs.writeFileSync(opts.configPath, JSON.stringify({ mcpServers }, null, 2), { mode: 0o600 });
     try { fs.chmodSync(opts.configPath, 0o600); } catch { /* best effort on FS that lacks chmod */ }
+    publishToAgent(opts.configPath); // privilege separation: the CLI runs as another user
     claudeConfigPath = opts.configPath;
   }
 

@@ -3,6 +3,8 @@ import path from 'node:path';
 import { insideRealRoot } from '../files/confine.js';
 import { holdsSecret, type SecretRoots } from '../files/secret-paths.js';
 import { PROJECT_FILE_MIME } from './files.js';
+import { privsep, type PrivsepConfig } from '../privsep/config.js';
+import { agentReadFile } from '../privsep/agent-fs.js';
 
 /**
  * Snapshots of plugin files (Drops, 2026-11-11). A file a thread posts is copied into the data folder
@@ -15,6 +17,10 @@ import { PROJECT_FILE_MIME } from './files.js';
  * The copy is made only after the checks of the post (checkProjectFile) and the credential check, on the
  * OPEN file, so the bytes that are copied are the bytes that were checked. A file over the limit, or a copy
  * that fails, gets no snapshot: the project file is served as before, with its checks.
+ *
+ * On a box with privilege separation (docs/hosted-privilege-separation.md) the data folder is the
+ * daemon's state root: no workload can list or read a snapshot, and it is served only by id through an
+ * owner route. The project file is read as the agent user there, never with the daemon's rights.
  */
 export const SNAPSHOT_MAX_BYTES = 25 * 1024 * 1024;
 
@@ -40,6 +46,8 @@ export function snapshotPath(dataDir: string, pluginId: string, name: string | n
  */
 export async function takeSnapshot(opts: {
   dataDir: string; pluginId: string; fileId: string; src: string; root: string; roots: SecretRoots; maxBytes?: number;
+  /** Tests: the privilege-separation configuration (default: this process's own; null: none). */
+  privsep?: PrivsepConfig | null;
 }): Promise<string | null> {
   const max = opts.maxBytes ?? SNAPSHOT_MAX_BYTES;
   const ext = path.extname(opts.src).toLowerCase();
@@ -52,6 +60,28 @@ export async function takeSnapshot(opts: {
   if (!insideRealRoot(opts.root, real)) return null;
   let fh: fs.promises.FileHandle | null = null;
   const tmp = `${out}.${process.pid}.tmp`;
+  const cfg = opts.privsep === undefined ? privsep() : opts.privsep;
+  if (cfg) {
+    // Privilege separation: the daemon is root and the project is the agent's. The path was checked
+    // above, but a workload can swap a folder of it for a link before the open, so the daemon does NOT
+    // open it with its own rights. The bytes are read AS THE AGENT (privsep/agent-fs.ts): the kernel
+    // then applies the agent's rights to every part of the path, and the copy can hold only what the
+    // agent could read itself. The copy is written by the daemon into its own state folder.
+    try {
+      if (await holdsSecret(real, opts.roots).catch(() => true)) return null;
+      const bytes = await agentReadFile(real, max, cfg);
+      if (!bytes) return null;
+      const dir = path.dirname(out);
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      fs.chmodSync(dir, 0o700);
+      await fs.promises.writeFile(tmp, bytes, { mode: 0o600, flag: 'wx' });
+      await fs.promises.rename(tmp, out);
+      return name;
+    } catch {
+      try { fs.rmSync(tmp, { force: true }); } catch { /* nothing written */ }
+      return null;
+    }
+  }
   try {
     fh = await fs.promises.open(real, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
     const st = await fh.stat();

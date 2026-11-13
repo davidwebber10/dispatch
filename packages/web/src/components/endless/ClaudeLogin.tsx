@@ -9,7 +9,18 @@ export function isClaudeAuthError(text: string): boolean {
 /** How often the code box asks the daemon whether this login is still going. */
 const STATUS_POLL_MS = 2000;
 
-const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+/**
+ * The person's sentence for a failed call. The API client's message is technical
+ * ("POST /api/claude-auth/login/code failed: 400 — <reason>"): show the daemon's own reason, which is
+ * already a plain sentence, and a plain fallback when there is none (a lost sign-in, a reconnect).
+ */
+export function plainLoginError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  const reason = /\bfailed: \d+ — (.+)$/s.exec(raw)?.[1]?.trim();
+  if (reason && !/^no login in progress$|^login is \w+, not awaiting a code$/i.test(reason)) return reason;
+  if (reason || /Reconnecting…/.test(raw)) return 'This sign-in ended. Start it again.';
+  return raw;
+}
 
 const btn: React.CSSProperties = { flexShrink: 0, padding: '5px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', cursor: 'pointer', font: 'inherit', fontSize: 13 };
 
@@ -36,7 +47,7 @@ export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to
       setUrl(s.url);
       setPhase('code');
     } catch (err) {
-      setError(errorText(err));
+      setError(plainLoginError(err));
       setPhase('idle');
     }
   };
@@ -61,7 +72,8 @@ export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to
         if (mine && session.status === 'complete') { stopped = true; setPhase('sending'); onDone(); return; }
         if (!mine || session.status === 'error') {
           stopped = true;
-          setError('This login ended. Start it again.');
+          // Claude's own reason when the daemon has one (a timeout, a refused code), in plain words.
+          setError(mine && session.error ? session.error : 'This login ended. Start it again.');
           setUrl(null);
           setPhase('idle');
         }
@@ -86,7 +98,7 @@ export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to
       const session = (await api.claudeAuthStatus().catch(() => null))?.session;
       if (session?.status === 'complete' && (!attemptId.current || session.id === attemptId.current)) { onDone(); return; }
       // The attempt is gone (a 400 with no session to resume): start again.
-      setError(errorText(err));
+      setError(plainLoginError(err));
       setUrl(null);
       setPhase('idle');
     }

@@ -27,6 +27,12 @@ import { useUpdate } from './stores/update';
 import { applyPluginEvent } from './plugins/host';
 import { useHost } from './stores/host';
 import { useAnalyticsFeed } from './stores/analytics';
+import { useOsConnections } from './stores/osConnections';
+import { BoxRestartPill } from './components/common/BoxRestartPill';
+import { watchHostContext } from './lib/hostContext';
+import { probeBox, setBoxBackHandler } from './lib/boxRestart';
+import { reconnectStructuredSockets } from './api/structured-socket';
+import { reconnectTerminalSockets } from './api/terminal-socket';
 import { useReconnect } from './stores/reconnect';
 import { useResume } from './hooks/useResume';
 import { resumeSockets } from './lib/resumeSockets';
@@ -126,6 +132,8 @@ export default function App() {
     const sock = createEventsSocket({
       onStatus: (s) => {
         useConnection.getState().setStatus(s);
+        // Hosted: two closes with no open between them may be the router refusing the socket (503/409).
+        if (s === 'closed' && socketWasClosed) void probeBox();
         if (s === 'closed') socketWasClosed = true;
         else if (s === 'open' && socketWasClosed) {
           socketWasClosed = false;
@@ -144,14 +152,22 @@ export default function App() {
         useAgents.getState().applyEvent(e);
         useAnalyticsFeed.getState().applyEvent(e);
         useLedgerCard.getState().applyEvent(e);
+        useOsConnections.getState().applyEvent(e);
         useEndless.getState().applyEvent(e);
         useUsageLimits.getState().applyEvent(e);
         applyPluginEvent(e);
       },
     });
     sockRef.current = sock;
-    return () => { clearTimeout(laterViews); unsubSnapProjects(); unsubSnapTabs(); clearTimeout(snapTimer); sock.close(); sockRef.current = null; document.removeEventListener('visibilitychange', onVisible); navigator.serviceWorker?.removeEventListener('message', onSwMessage); };
+    // Hosted: the workspace is back on the same build after a restart (lib/boxRestart.ts). New
+    // sockets for events, chats and terminals, no page load: the events socket's reopen above
+    // reloads the state in place, and drafts, tabs and the grid stay as they are.
+    const offBack = setBoxBackHandler(() => { sock.reconnect(); reconnectStructuredSockets(); reconnectTerminalSockets(); });
+    return () => { offBack(); clearTimeout(laterViews); unsubSnapProjects(); unsubSnapTabs(); clearTimeout(snapTimer); sock.close(); sockRef.current = null; document.removeEventListener('visibilitychange', onVisible); navigator.serviceWorker?.removeEventListener('message', onSwMessage); };
   }, []);
+
+  // Hosted: a profile change from OS reloads the page once (lib/hostContext.ts). Local: nothing.
+  useEffect(() => watchHostContext(), []);
 
   useEffect(() => {
     const report = () => {
@@ -215,6 +231,7 @@ export default function App() {
     <>
       <SetupWizard />
       <AuthBanner />
+      <BoxRestartPill />
       <UpdateModal />
       <HighScoreCelebration />
       {isMobile

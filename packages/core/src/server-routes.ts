@@ -1,4 +1,4 @@
-import type { Express, Request, Response } from 'express';
+import type { Express, Request, Response, Router } from 'express';
 import type Database from 'better-sqlite3';
 import type { SessionService } from './sessions/service.js';
 import type { StatusService } from './status/service.js';
@@ -28,12 +28,14 @@ import type { Reachable } from './auth/reachable-addresses.js';
 import { COOKIE_NAME } from './auth/access-token.js';
 import { principalOf } from './auth/request-principal.js';
 import { noCredentialStatsHandler, whoamiHandler } from './auth/request-principal.js';
-import { ownerOnly, ownerOnlyStrict, publicRoute } from './auth/route-policy.js';
+import { ownerOnly, ownerOnlyStrict, policyRouter, publicRoute } from './auth/route-policy.js';
+import { mountRouter } from './http/route-registry.js';
 import { TranscriptionService } from './transcription/service.js';
 import { createSessionsRouter } from './routes/sessions.js';
 import { createTerminalsRouter } from './routes/terminals.js';
 import { createLedgerRouter } from './routes/ledger.js';
 import { createPluginsRouter } from './routes/plugins.js';
+import { createInboxRouter } from './routes/inbox.js';
 import { defaultSecretRoots } from './files/secret-paths.js';
 import type { PluginRegistry } from './plugins/registry.js';
 import type { AssistRunner } from './assist/run.js';
@@ -67,10 +69,14 @@ import { createAppearanceRouter } from './routes/appearance.js';
 import { createWatchesRouter } from './routes/watches.js';
 import { createOutboxRouter } from './routes/outbox.js';
 import { createJournalRouter } from './routes/journal.js';
+import { createSubagentsRouter } from './routes/subagents.js';
 import { createAnalyticsRouter } from './routes/analytics.js';
 import { createEndlessRouter } from './routes/endless.js';
 import { createUsageLimitsRouter } from './routes/usage-limits.js';
 import { createBootstrapRouter } from './routes/bootstrap.js';
+import { hostContextResponse, type HostContext } from './profile/host-context.js';
+import { createChatsRouter } from './routes/chats.js';
+import { signOutCodexCli } from './auth/codex-signout.js';
 
 /** Everything the `/api` routes need. `createApp` (tests) and `startServer` (daemon) both build one. */
 export interface ApiRouteDeps {
@@ -123,8 +129,18 @@ export interface ApiRouteDeps {
   watchCatchUp?: (watchId: string) => string | null;
   /** The delivery outbox (W2-C): GET /api/outbox lists its rows. */
   outbox?: import('./delivery/outbox.js').DeliveryOutbox;
+  /**
+   * The hosted-box routers (os/*: company tools, approvals, continuity), each mounted at /api. Built in
+   * daemon/build.ts from services this file does not know; absent in a bare createApp.
+   */
+  osRouters?: import('express').Router[];
   /** The message journal (W3-D): GET /api/terminals/:terminalId/journal reads its pages. */
   journal?: import('./journal/journal.js').MessageJournal;
+  /**
+   * The profile and host facts NOW (profile/host-context.ts `liveHostContext`), read per request so a
+   * profile change from OS applies without a restart. Absent (a bare createApp): developer, not hosted.
+   */
+  hostContext?: HostContext | (() => HostContext);
   usageLimits?: {
     /** The Refresh button of the usage window (2026-11-09): read every account now. */
     refresh?: () => Promise<void>;
@@ -146,40 +162,63 @@ export interface ApiRouteDeps {
  */
 export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   const d = deps;
-  app.get('/api/whoami', publicRoute, whoamiHandler);
-  app.get('/api/access/no-credential-stats', ownerOnly, noCredentialStatsHandler(d.noCredentialStats));
+  const given = d.hostContext ?? { profile: 'developer', hosted: false, osBaseUrl: null, ownerEmail: null };
+  const hostContext = (): HostContext => (typeof given === 'function' ? given() : given);
+  // Every router goes through `mount`, so the route registry knows its mount path (http/route-registry.ts):
+  // the profile table (profile/business-routes.ts) is keyed by the registered pattern of each route.
+  const mount = (prefix: string, router: Router): void => mountRouter(app, prefix, router);
+  // The routes that belong to no router of their own. A policyRouter like every other: each route starts
+  // with the profile guard.
+  const top = policyRouter();
+  top.get('/api/whoami', publicRoute, whoamiHandler);
+  // What the page needs at launch to choose its profile, theme and way back to OS. No secrets.
+  top.get('/api/host-context', ownerOnly, (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache');
+    // `capabilities`: what this build enforces. OS reads it at provisioning (box contract 2026-11-11).
+    res.json(hostContextResponse(hostContext()));
+  });
+  top.get('/api/access/no-credential-stats', ownerOnly, noCredentialStatsHandler(d.noCredentialStats));
   // The owner (a signed-in or local browser) makes a code; a thread key gets owner_only. The code
   // is the only secret that leaves the daemon: the token itself is never served. Strict (W1-B): a code signs a
   // device in as the owner, so a local call with no credential must look like the web page.
-  app.post('/api/access/pair-code', ownerOnlyStrict, (_req, res) => {
+  top.post('/api/access/pair-code', ownerOnlyStrict, (_req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     if (!d.pairCodes) return void res.status(404).json({ error: 'not_available' });
     res.json(d.pairCodes.issue());
   });
 
-  mountDeviceRoutes(app, d);
+  mountDeviceRoutes(top, d);
 
   // Owner only: the lists name this computer's network addresses. A browser on this computer only knows `localhost`.
-  app.get('/api/access/addresses', ownerOnly, (_req, res) => {
+  top.get('/api/access/addresses', ownerOnly, (_req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     (d.reachableAddresses?.() ?? Promise.resolve({ tailscale: [], lan: [] }))
       .then((r) => res.json(r))
       .catch(() => res.json({ tailscale: [], lan: [] }));
   });
 
-  app.use('/api/sessions', createSessionsRouter(d.sessionService, d.broadcaster, d.db));
-  app.use('/api', createTerminalsRouter(d.sessionService, d.terminalsBroadcaster, d.statusService));
-  if (d.journal) app.use('/api', createJournalRouter(d.journal, (id) => !!d.sessionService.getTerminal(id))); // W3-D
-  app.use('/api', createThreadSecretsRouter(d.db, { broadcast: (e) => d.terminalsBroadcaster?.broadcast(e) }));
-  app.use('/api', createLedgerRouter(d.ledgerService));
+  mount('', top);
+  for (const r of d.osRouters ?? []) mount('/api', r);
+  mount('/api', createChatsRouter(d.db)); // docs/headless-api.md
+  mount('/api/sessions', createSessionsRouter(d.sessionService, d.broadcaster, d.db));
+  mount('/api', createTerminalsRouter(d.sessionService, d.terminalsBroadcaster, d.statusService));
+  if (d.journal) mount('/api', createJournalRouter(d.journal, (id) => !!d.sessionService.getTerminal(id))); // W3-D
+  // subagents-v1: the subagents of a thread (list, one subagent's journal, stop).
+  mount('/api', createSubagentsRouter({
+    journal: d.journal,
+    thread: (id) => d.sessionService.getTerminal(id),
+    manager: (id) => d.sessionService.structuredManagerForTerminal(id),
+  }));
+  mount('/api', createThreadSecretsRouter(d.db, { broadcast: (e) => d.terminalsBroadcaster?.broadcast(e) }));
+  mount('/api', createLedgerRouter(d.ledgerService));
   // Inbox → Send a secret (2026-11-12): the owner's secrets for a thread, by a short ID. Under the Inbox plugin's path
   // (/api/plugins/previews/secrets), mounted before the plugins router.
-  app.use('/api', createInboxSecretsRouter(d.db, {
+  mount('/api', createInboxSecretsRouter(d.db, {
     dataDir: d.dataDir, secrets: d.secretsService, secretRoots: defaultSecretRoots(d.dataDir),
     broadcast: (e) => d.broadcaster.broadcast(e),
   }));
   const accountsForAssist = d.assistAccounts ?? d.accounts;
-  app.use('/api', createPluginsRouter(d.plugins, d.db, d.assistRunner ?? null, {
+  mount('/api', createPluginsRouter(d.plugins, d.db, d.assistRunner ?? null, {
     summary: d.usageLimits?.summary,
     defaultAccount: accountsForAssist ? (h) => accountsForAssist.defaultId(h) : undefined,
     hasAccount: accountsForAssist ? (h, id) => accountsForAssist.has(h, id) : undefined,
@@ -187,31 +226,41 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
     secretRoots: defaultSecretRoots(d.dataDir),
     dataDir: d.dataDir,
   }));
-  app.use('/api/events', createEventsRouter(d.statusService));
-  app.use('/api/agents', createAgentsRouter(d.agentService));
-  app.use('/api/roles', createRolesRouter(d.rolesService));
-  app.use('/api/providers', createProvidersRouter());
-  app.use('/api/servers', createServersRouter(d.db));
-  app.use('/api/secrets', createSecretsRouter(d.secretsService, d.refreshPtyEnv));
-  app.use('/api/settings/harnesses', createHarnessSettingsRouter(d.db, d.secretsService, d.refreshPtyEnv));
-  app.use('/api/settings/telemetry', createTelemetrySettingsRouter(d.db));
-  app.use('/api/settings/dictation', createDictationSettingsRouter(d.db));
-  app.use('/api/settings/coordinator', createCoordinatorSettingsRouter(d.db));
-  app.use('/api/settings/usage-limits', createUsageLimitSettingsRouter(d.db, { onChange: () => d.usageLimits?.onSettingsChange?.() }));
-  app.use('/api/transcribe', createTranscribeRouter(new TranscriptionService(d.secretsService)));
-  app.use('/api/setup', createSetupRouter(d.db, d.secretsService));
-  app.use('/api/sessions/:id/files', createFilesRouter(d.db));
-  app.use('/api/sessions/:id/git', createGitRouter(d.db));
-  app.use('/api/sessions/:id/worktrees', createWorktreesRouter(d.db)); // W3-G
-  app.use('/api/auth-requests', createAuthRouter(d.authRequestService));
-  app.use('/api/claude-auth', createClaudeAuthRouter(d.claudeLogin));
+  // The Inbox for a view outside this web client (docs/headless-api.md section 11).
+  mount('/api', createInboxRouter(d.db, { broadcast: (e) => d.plugins.broadcast(e), secretRoots: defaultSecretRoots(d.dataDir), dataDir: d.dataDir }));
+  mount('/api/events', createEventsRouter(d.statusService));
+  mount('/api/agents', createAgentsRouter(d.agentService));
+  mount('/api/roles', createRolesRouter(d.rolesService));
+  mount('/api/providers', createProvidersRouter());
+  mount('/api/servers', createServersRouter(d.db));
+  mount('/api/secrets', createSecretsRouter(d.secretsService, d.refreshPtyEnv));
+  mount('/api/settings/harnesses', createHarnessSettingsRouter(d.db, d.secretsService, d.refreshPtyEnv));
+  mount('/api/settings/telemetry', createTelemetrySettingsRouter(d.db));
+  mount('/api/settings/dictation', createDictationSettingsRouter(d.db));
+  mount('/api/settings/coordinator', createCoordinatorSettingsRouter(d.db));
+  mount('/api/settings/usage-limits', createUsageLimitSettingsRouter(d.db, { onChange: () => d.usageLimits?.onSettingsChange?.() }));
+  mount('/api/transcribe', createTranscribeRouter(new TranscriptionService(d.secretsService)));
+  mount('/api/setup', createSetupRouter(d.db, d.secretsService));
+  mount('/api/sessions/:id/files', createFilesRouter(d.db));
+  mount('/api/sessions/:id/git', createGitRouter(d.db));
+  mount('/api/sessions/:id/worktrees', createWorktreesRouter(d.db)); // W3-G
+  mount('/api/auth-requests', createAuthRouter(d.authRequestService));
+  mount('/api/claude-auth', createClaudeAuthRouter(d.claudeLogin));
   if (d.accounts) {
     const accounts = d.accounts;
     const typeOf = (provider: AccountProvider) => (provider === 'claude' ? 'claude-code' : 'codex');
-    app.use('/api/accounts', createAccountsRouter(accounts, d.claudeLogin, {
+    mount('/api/accounts', createAccountsRouter(accounts, d.claudeLogin, {
       // The CLI login's profile comes from its own token (keychain or credentials file) and is
       // only shown; an added account's is written back so the next list needs no call.
       claudeProfile: async (accountId) => {
+        // The clean login (hosted): `claude auth status` in the account's own config dir; no token is read.
+        if (d.claudeLogin.usesCleanLogin) {
+          const st = await d.claudeLogin.cliStatus({ configDir: accountId === 'cli' ? null : accounts.claudeConfigDir(accountId) });
+          if (!st?.loggedIn) return null;
+          const p = { ...(st.email ? { email: st.email } : {}), ...(st.planTier || st.subscriptionType ? { plan: st.planTier || st.subscriptionType } : {}) };
+          if (accountId !== 'cli') accounts.updateClaude(accountId, p);
+          return p;
+        }
         const token = accountId === 'cli' ? await readClaudeToken({}) : accounts.claudeToken(accountId);
         if (!token) return null;
         const p = await fetchClaudeProfile(token);
@@ -228,21 +277,29 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
         },
       },
       codexLogin: d.codexLogin ?? new CodexLoginService({ env: () => process.env, isSignedIn: (home) => fs.existsSync(path.join(home, 'auth.json')) }),
+      // codex-signout-v1: the person signs the box's own Codex login out (auth/codex-signout.ts).
+      codexSignOut: () => signOutCodexCli({
+        home: accounts.codexHomeOrCli('cli'),
+        env: () => process.env,
+        busyThread: () => (d.db.prepare(`SELECT label FROM terminals WHERE type = 'codex' AND archived_at IS NULL AND status IN ('working', 'needs_input') LIMIT 1`).get() as { label: string } | undefined)?.label ?? null,
+        stopThreads: () => d.sessionService.structuredManagerFor('codex')?.killAll(),
+        forgetUsage: () => d.usageLimits?.snapshots.forget('codex', 'cli'),
+      }),
     }));
   }
-  app.use('/api/state', createStateRouter(d.db));
-  app.use('/api/integrations', createIntegrationsRouter(d.integrationsService));
-  app.use('/api/push', createPushRouter(d.pushService));
-  app.use('/api/tools', createToolsRouter({ base: d.toolsBase, prober: d.toolsAuth }));
-  app.use('/api/update', createUpdateRouter(d.broadcaster, d.repoRoot, d.db));
-  app.use('/api/appearance', createAppearanceRouter(d.dataDir));
-  app.use('/api/watches', createWatchesRouter(d.db, d.watchCatchUp));
-  if (d.outbox) app.use('/api/outbox', createOutboxRouter(d.outbox));
-  app.use('/api/analytics', createAnalyticsRouter(d.db));
-  if (d.usageLimits) app.use('/api', createUsageLimitsRouter(d.db, d.usageLimits.snapshots, { accountFor: d.usageLimits.accountFor, refreshCodex: d.usageLimits.refreshCodex, summary: d.usageLimits.summary, refresh: d.usageLimits.refresh, useResetCredit: d.usageLimits.useResetCredit }));
-  if (d.endless) app.use('/api/endless', createEndlessRouter(d.endless));
+  mount('/api/state', createStateRouter(d.db));
+  mount('/api/integrations', createIntegrationsRouter(d.integrationsService));
+  mount('/api/push', createPushRouter(d.pushService));
+  mount('/api/tools', createToolsRouter({ base: d.toolsBase, prober: d.toolsAuth }));
+  mount('/api/update', createUpdateRouter(d.broadcaster, d.repoRoot, d.db));
+  mount('/api/appearance', createAppearanceRouter(d.dataDir));
+  mount('/api/watches', createWatchesRouter(d.db, d.watchCatchUp));
+  if (d.outbox) mount('/api/outbox', createOutboxRouter(d.outbox));
+  mount('/api/analytics', createAnalyticsRouter(d.db));
+  if (d.usageLimits) mount('/api', createUsageLimitsRouter(d.db, d.usageLimits.snapshots, { accountFor: d.usageLimits.accountFor, refreshCodex: d.usageLimits.refreshCodex, summary: d.usageLimits.summary, refresh: d.usageLimits.refresh, useResetCredit: d.usageLimits.useResetCredit }));
+  if (d.endless) mount('/api/endless', createEndlessRouter(d.endless));
   else app.use('/api/endless', ownerOnly, (_req, res) => { res.status(503).json({ error: 'Chat is unavailable' }); });
-  app.use('/api/bootstrap', createBootstrapRouter(app)); // W2-H: the launch calls in one answer, each part read through its own route
+  mount('/api/bootstrap', createBootstrapRouter(app)); // W2-H: the launch calls in one answer, each part read through its own route
 }
 
 /**
@@ -250,7 +307,7 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
  * `ownerOnly` before any handler runs. A device cookie is the owner's, so a signed-in phone can
  * list and revoke the others, and itself.
  */
-function mountDeviceRoutes(app: Express, d: ApiRouteDeps): void {
+function mountDeviceRoutes(app: Router, d: ApiRouteDeps): void {
   const devices = d.devices;
   const currentDevice = (req: Request): string | null => {
     const p = principalOf(req);

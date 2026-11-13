@@ -17,6 +17,23 @@ const CALL_TIMEOUT_MS = 15_000;
 const PRUNE_AT = 1800;
 const PRUNE_TO = 1500;
 const DISABLED = 'The Inbox plugin (id previews) is disabled in Dispatch: the owner can enable it in Settings → Plugins.';
+/**
+ * On a hosted box (DISPATCH_HOSTED=1, set by the daemon) the names a person reads say "Inbox": the tool's
+ * `title` and `annotations.title` and the server's `serverInfo.title` (MCP 2025-06-18). The ids stay
+ * (`preview`, `plugin-previews`, `dispatch-previews`): clients match on them.
+ */
+const HOSTED = process.env.DISPATCH_HOSTED === '1';
+const INBOX_TITLE = 'Put in Inbox';
+/**
+ * A thread of a business person on a hosted box (DISPATCH_BUSINESS=1, set by the daemon with DISPATCH_HOSTED):
+ * Send a secret is not part of that workspace, so `inbox_secret` is not offered (not listed, refused when
+ * called) and the `preview` description does not send the person to it. A developer box and a local install
+ * keep both.
+ */
+const BUSINESS = HOSTED && process.env.DISPATCH_BUSINESS === '1';
+const SEND_A_SECRET_HINT =
+  'Never ask the user to paste a password, token or API key into the chat: ask them to use Inbox → Send a secret ' +
+  'and give you its ID, then call `inbox_secret`.';
 
 function key() {
   if (process.env.DISPATCH_AUTH) return process.env.DISPATCH_AUTH.trim();
@@ -55,9 +72,8 @@ const TOOLS = [{
     '`secret` for a token or password (masked, removed after 24 hours; never repeat it in title or note); ' +
     '`steps` for a short procedure (`steps`: [{ text, command? }], max 30); `diff` for a unified diff; ' +
     '`table` for CSV `text` or one .csv/.json file. Without `kind`, images show as pictures, a URL as a link, ' +
-    'markdown as a document and other text as text to copy. ' +
-    'Never ask the user to paste a password, token or API key into the chat: ask them to use Inbox → Send a secret ' +
-    'and give you its ID, then call `inbox_secret`.',
+    'markdown as a document and other text as text to copy.' +
+    (BUSINESS ? '' : ' ' + SEND_A_SECRET_HINT),
   inputSchema: {
     type: 'object',
     properties: {
@@ -73,6 +89,7 @@ const TOOLS = [{
       note: { type: 'string', description: 'One line of context: what this is and why it matters.' },
     },
   },
+  ...(HOSTED ? { title: INBOX_TITLE, annotations: { title: INBOX_TITLE } } : {}),
 }, {
   name: 'inbox_secret',
   description:
@@ -108,7 +125,10 @@ const TOOLS = [{
   },
 }];
 
-const disabledIfGone = (e) => { if (e && e.status === 404 && /unknown plugin/i.test(String(e.message))) return new Error(DISABLED); return e; };
+/** The tools this process offers: without `inbox_secret` for a business person (see BUSINESS). */
+const LISTED_TOOLS = BUSINESS ? TOOLS.filter((t) => t.name !== 'inbox_secret') : TOOLS;
+
+const disabledIfGone =(e) => { if (e && e.status === 404 && /unknown plugin/i.test(String(e.message))) return new Error(DISABLED); return e; };
 
 async function preview(args) {
   const a = args && typeof args === 'object' ? args : {};
@@ -146,7 +166,16 @@ async function preview(args) {
   try { await call('PUT', `/api/plugins/${encodeURIComponent(PLUGIN)}/data/preview:${id}`, { value: doc }); }
   catch (e) { throw disabledIfGone(e); }
   void prune().catch(() => {});
-  return { ok: true, id, files: files.map((f) => f.name) };
+  return { ok: true, id, title, files: files.map((f) => f.name) };
+}
+
+/**
+ * The text the model reads after a drop: ONE JSON object (callers parse it: the OS view's Inbox card, the
+ * proof script), whose first field is a plain sentence, so the model tells the person and does not post
+ * the same thing again. Then `ok`, `id`, `title`, `files` as before.
+ */
+function sentText(result) {
+  return JSON.stringify({ message: `Sent to the person's Inbox: ${result.title}. They can open it now; do not send it again.`, ...result });
 }
 
 /**
@@ -192,10 +221,10 @@ async function inboxSecret(args) {
 
 async function callTool(name, args) {
   try {
-    if (name === 'inbox_secret') return { content: await inboxSecret(args) };
+    if (name === 'inbox_secret' && !BUSINESS) return { content: await inboxSecret(args) };
     if (name !== 'preview') return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
     const result = await preview(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return { content: [{ type: 'text', text: sentText(result) }] };
   } catch (e) {
     return { content: [{ type: 'text', text: `Error: ${e && e.message ? e.message : String(e)}` }], isError: true };
   }
@@ -206,8 +235,8 @@ async function handle(req) {
   const notification = id === undefined || id === null;
   try {
     switch (method) {
-      case 'initialize': return { jsonrpc: '2.0', id, result: { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'dispatch-previews', version: '1.0.0' } } };
-      case 'tools/list': return { jsonrpc: '2.0', id, result: { tools: TOOLS } };
+      case 'initialize': return { jsonrpc: '2.0', id, result: { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'dispatch-previews', version: '1.0.0', ...(HOSTED ? { title: 'Inbox' } : {}) } } };
+      case 'tools/list': return { jsonrpc: '2.0', id, result: { tools: LISTED_TOOLS } };
       case 'tools/call': return { jsonrpc: '2.0', id, result: await callTool(params && params.name, params && params.arguments) };
       case 'ping': return { jsonrpc: '2.0', id, result: {} };
       default:

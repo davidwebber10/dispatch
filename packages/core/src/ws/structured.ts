@@ -158,12 +158,16 @@ export function handleStructuredConnection(
   //   - A thread whose history REST owns (Codex) gets no first window from the journal, so the REST page and
   //     the journal never show one item twice. Its reconnect with a cursor is served: the items after a
   //     cursor are the journal's alone.
+  //   - `window=<n>` sets the size of the first window alone (the newest n items, at most 200). `tail` then
+  //     bounds only the ring replay of a thread the journal cannot serve. Without `window`, `tail` sets both.
   let fromJournal: unknown[] | null = null;
   if (manager.journal && query.get('journal') === '1') {
     const afterParam = query.get('after');
     const after = afterParam !== null && /^\d+$/.test(afterParam) ? Number(afterParam) : undefined;
+    const windowParam = Number(query.get('window'));
+    const firstWindow = Number.isFinite(windowParam) && windowParam > 0 ? windowParam : tailParam;
     try {
-      const replay = manager.journal.replay(id, { after, allowReset: !restOwned, ...(Number.isFinite(tailParam) && tailParam > 0 ? { limit: tailParam } : {}) });
+      const replay = manager.journal.replay(id, { after, allowReset: !restOwned, ...(Number.isFinite(firstWindow) && firstWindow > 0 ? { limit: firstWindow } : {}) });
       if (replay) {
         // The journal frame holds finished items only, and they do not move an older fold's busy flag. A thread
         // that works with no block open right now (a tool runs) would show no spinner: a message start says a
@@ -235,8 +239,11 @@ export function handleStructuredConnection(
     held.push(json);
   };
   // W3-D: a client that got the journal frame has the thread's history. History that an agent replays at a
-  // resume (ACP session/load) is marked by the journal's recorder and is not sent to it a second time.
-  const skipReplayed = fromJournal !== null;
+  // resume (ACP session/load, the Codex thread/resume backfill) is marked by the journal's recorder and is
+  // not sent to it a second time. Nor to a client whose history REST owns (a Codex thread with a transcript):
+  // it reads that history over REST, and the backfill would show every turn twice. A Codex thread with no
+  // readable transcript is not REST-owned (historyOwnedByRest), so its backfill still reaches the client.
+  const skipReplayed = fromJournal !== null || restOwned;
   const onEvent = (eid: string, event: unknown) => {
     if (eid !== id || (skipReplayed && (event as { journal_replayed?: unknown } | null)?.journal_replayed === true)) return;
     emit(JSON.stringify(event));

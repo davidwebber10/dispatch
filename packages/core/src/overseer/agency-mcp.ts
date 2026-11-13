@@ -1301,7 +1301,9 @@ export async function callTool(
       case 'watch_thread': result = await watchThread(args ?? {}); break;
       case 'unwatch_thread': result = await unwatchThread(args ?? {}); break;
       case 'list_watches': result = await listWatches(); break;
-      case 'report_status': result = await reportStatus(args ?? {}); break;
+      case 'report_status':
+        if (statusToolHidden()) throw new Error('report_status is not available in this thread.');
+        result = await reportStatus(args ?? {}); break;
       case 'ledger_add': result = await ledgerAdd(args ?? {}); break;
       case 'ledger_resolve': result = await ledgerResolve(args ?? {}); break;
       case 'ledger_note': result = await ledgerNote(args ?? {}); break;
@@ -1337,6 +1339,22 @@ function isNotification(id: JsonRpcRequest['id']): boolean {
 }
 
 /**
+ * A chat thread on a hosted box has no status tool (owner decision 2026-11-12: the status card is gone
+ * from the platform, and a status call at the end of a turn drew the answer away from the reply). The
+ * spawner sets DISPATCH_NO_STATUS_TOOL=1 (sessions/spawn-injection.ts). The thread's status then comes
+ * from the turn's own frames: its result, a permission request, a question (status/question.ts).
+ * A thread the owner started (any install) also has no status tool: the spawner sets
+ * DISPATCH_REPORT_STATUS=0 for it (owner, 2026-11-12; sessions/thread-config.ts reportsStatus).
+ */
+export const STATUS_TOOLS: readonly string[] = ['report_status'];
+export function statusToolHidden(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.DISPATCH_NO_STATUS_TOOL === '1' || env.DISPATCH_REPORT_STATUS === '0';
+}
+export function listedTools(env: NodeJS.ProcessEnv = process.env): ReadonlyArray<(typeof TOOLS)[number]> {
+  return statusToolHidden(env) ? TOOLS.filter((t) => !STATUS_TOOLS.includes(t.name)) : TOOLS;
+}
+
+/**
  * Handle one JSON-RPC message. Returns the response object to write, or null for
  * notifications (no `id`) which get no reply.
  */
@@ -1347,8 +1365,8 @@ export async function handleRequest(req: JsonRpcRequest): Promise<JsonRpcRespons
       case 'initialize':
         return { jsonrpc: '2.0', id: id ?? null, result: { protocolVersion: PROTOCOL_VERSION, capabilities: { tools: {} }, serverInfo: SERVER_INFO } };
       case 'tools/list':
-        // A thread the owner started gets no report_status (DISPATCH_REPORT_STATUS=0, see reportsStatus).
-        return { jsonrpc: '2.0', id: id ?? null, result: { tools: process.env.DISPATCH_REPORT_STATUS === '0' ? TOOLS.filter((t) => t.name !== 'report_status') : TOOLS } };
+        // No report_status for a hosted chat thread or a thread the owner started (see statusToolHidden).
+        return { jsonrpc: '2.0', id: id ?? null, result: { tools: listedTools() } };
       case 'tools/call': {
         const result = await callTool(params?.name, params?.arguments);
         return { jsonrpc: '2.0', id: id ?? null, result };

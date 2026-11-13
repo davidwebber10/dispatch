@@ -88,8 +88,8 @@ describe('a plugin reaches its own id only (W3-F)', () => {
       await json(request(app).put('/api/plugins/theirs/data/k'), { value: 'theirs' }).expect(200);
       // What a browser sends for `/api/plugins/mine/worker/../../theirs/data/k` after it resolves the dots.
       expect((await request(app).get('/api/plugins/theirs/data/k').set(bound('mine'))).status).toBe(403);
-      // An encoded id is decoded before the comparison.
-      expect((await request(app).get('/api/plugins/%74heirs/data/k').set(bound('mine'))).status).toBe(403);
+      // An id with a letter written as an escape is not a canonical path: refused before any route (http/canonical-path.ts).
+      expect((await request(app).get('/api/plugins/%74heirs/data/k').set(bound('mine'))).status).toBe(400);
     });
 
     it('a request bound to a plugin reaches that plugin\'s own routes as before', async () => {

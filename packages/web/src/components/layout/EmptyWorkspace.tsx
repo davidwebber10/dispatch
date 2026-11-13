@@ -1,4 +1,6 @@
-import { Plus } from '@phosphor-icons/react';
+import { Plus, ChatCircleDots } from '@phosphor-icons/react';
+import { usesOsLook } from '../../lib/hostContext';
+import { can } from '../../lib/profile';
 import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
 import { useUI } from '../../stores/ui';
@@ -28,13 +30,18 @@ export function EmptyWorkspace({ onSelectTab }: { onSelectTab: (id: string) => v
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, background: 'var(--color-base)' }}>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 22, padding: 40, textAlign: 'center' }}>
         <div style={{ width: 60, height: 60, borderRadius: 'var(--radius-xl)', background: 'var(--color-pane)', border: '1px solid var(--color-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 10px 30px -14px var(--color-shadow)' }}>
-          <span style={{ font: '600 24px var(--font-mono)', color: 'var(--color-accent)' }}>&gt;_</span>
+          {/* The developer tool's `>_`; a hosted workspace shows a chat glyph instead. */}
+          {usesOsLook()
+            ? <ChatCircleDots size={28} weight="bold" color="var(--color-accent)" />
+            : <span style={{ font: '600 24px var(--font-mono)', color: 'var(--color-accent)' }}>&gt;_</span>}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 7, alignItems: 'center' }}>
           <span style={{ fontSize: 17, fontWeight: 600, color: 'var(--color-text-primary)' }}>No thread selected</span>
           <span style={{ fontSize: 13, color: 'var(--color-text-secondary)', maxWidth: 340, lineHeight: 1.55 }}>
             {project ? (
-              <>Pick a thread, note, file, or web tab from <span style={{ color: 'var(--color-text-body)', fontWeight: 500 }}>{project.name}</span> in the sidebar — or start a new session below.</>
+              can('threads.browser')
+                ? <>Pick a thread, note, file, or web tab from <span style={{ color: 'var(--color-text-body)', fontWeight: 500 }}>{project.name}</span> in the sidebar — or start a new session below.</>
+                : <>Pick a thread, note or file from <span style={{ color: 'var(--color-text-body)', fontWeight: 500 }}>{project.name}</span> in the sidebar — or start a new chat below.</>
             ) : (
               <>Pick a project from the sidebar to see its threads, notes, and files.</>
             )}
@@ -59,7 +66,8 @@ export function EmptyWorkspace({ onSelectTab }: { onSelectTab: (id: string) => v
       </div>
       {project && (
         <div style={{ height: 26, flexShrink: 0, background: 'var(--color-pane)', borderTop: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 12px', font: '400 11px var(--font-mono)', color: 'var(--color-text-dim)' }}>
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{homeAbbrev(project.workingDir)}</span>
+          {/* The folder is a machine detail (lib/profile.ts 'projects.path'). */}
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{can('projects.path') ? homeAbbrev(project.workingDir) : project.name}</span>
           <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--color-border-hover)', border: '1px solid var(--color-text-faint)', boxSizing: 'border-box' }} />
             {threadCount} {threadCount === 1 ? 'thread' : 'threads'} · idle

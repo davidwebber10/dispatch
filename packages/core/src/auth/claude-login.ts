@@ -2,6 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import * as pty from 'node-pty';
 import { v4 as uuid } from 'uuid';
+import type { ClaudeCliLogin, ClaudeAuthStatus } from './claude-cli-login.js';
+import { prepareAccountConfigDir } from './claude-config-dirs.js';
 
 /**
  * Headless Claude login for surfaces that have no terminal.
@@ -151,11 +153,47 @@ export class ClaudeLoginService {
   }
 
   onChange(cb: () => void): void { this.onChangeCb = cb; }
+
+  // --- the clean login (hosted boxes; auth/claude-cli-login.ts) ------------
+  /**
+   * Set on a hosted box (or with DISPATCH_CLAUDE_LOGIN=cli): every login runs `claude auth login`,
+   * Claude Code keeps its own credential, and this service holds, reads and injects NO token. The
+   * setup-token path below is then never used. Unset: a local install, exactly as before.
+   */
+  private clean: { login: ClaudeCliLogin; ownerEmail: string | null } | null = null;
+  /** A hosted added account signed in (its own config dir). The daemon adds or updates the account. */
+  onAccountConfigDir: ((info: { id: string; label: string; configDir: string; status: ClaudeAuthStatus }) => void | Promise<void>) | null = null;
+
+  useCleanLogin(login: ClaudeCliLogin, opts: { ownerEmail?: string | null } = {}): void {
+    this.clean = { login, ownerEmail: opts.ownerEmail?.trim() || null };
+    login.onLoggedIn = async ({ configDir, tag, status }) => {
+      const t = tag as { kind: 'primary' } | { kind: 'account'; id: string; label: string } | null;
+      if (t && t.kind === 'account' && configDir) await this.onAccountConfigDir?.({ id: t.id, label: t.label, configDir, status });
+      this.onChangeCb?.();
+    };
+    // After the build: the env provider can name services that do not exist yet (found in a box run).
+    setImmediate(() => { void login.authStatus().then(() => this.onChangeCb?.()); });
+  }
+
+  get usesCleanLogin(): boolean { return this.clean !== null; }
+
+  /** `claude auth status` of the primary login (clean login only; cached briefly). */
+  async cliStatus(o: { fresh?: boolean; configDir?: string | null } = {}): Promise<ClaudeAuthStatus | null> {
+    return this.clean ? this.clean.login.authStatus(o.configDir ?? null, o) : null;
+  }
+
+  /** A thread reported an auth error: ask Claude Code again at the next read (clean login only). */
+  noteAuthFailure(): void {
+    if (!this.clean) return;
+    this.clean.login.invalidate(null);
+    void this.clean.login.authStatus(null, { fresh: true }).then(() => this.onChangeCb?.());
+  }
   /** A login started with `startForAccount` hands its token here instead of the single saved file (multi-account). The login is complete when this settles. */
   onAccountToken: ((token: string, label: string, accountId?: string) => void | Promise<void>) | null = null;
 
   // --- token storage ------------------------------------------------------
   getToken(): string | null {
+    if (this.clean) return null; // the clean login never reads a credential
     try {
       const v = fs.readFileSync(this.tokenPath, 'utf8').trim();
       return v || null;
@@ -164,11 +202,19 @@ export class ClaudeLoginService {
 
   /** Env injected into spawned CLIs. Empty when the box isn't authenticated yet. */
   getSpawnEnv(): Record<string, string> {
+    if (this.clean) return {};
     const token = this.getToken();
     return token ? { CLAUDE_CODE_OAUTH_TOKEN: token } : {};
   }
 
-  isAuthenticated(): boolean { return this.getToken() !== null; }
+  isAuthenticated(): boolean {
+    if (this.clean) {
+      // Sync callers get the cached `claude auth status`; a stale cache is refreshed behind them.
+      void this.clean.login.authStatus();
+      return this.clean.login.cachedStatus()?.loggedIn === true;
+    }
+    return this.getToken() !== null;
+  }
 
   private saveToken(token: string): void {
     fs.mkdirSync(this.dataDir, { recursive: true });
@@ -177,14 +223,20 @@ export class ClaudeLoginService {
     this.onChangeCb?.();
   }
 
-  /** Forget the stored token (sign out). */
-  signOut(): void {
+  /**
+   * Forget the stored token (sign out). On a hosted box (the clean login) `claude auth logout` runs as the
+   * agent; the promise ends when it did, so the answer can say the new state.
+   */
+  signOut(): Promise<void> {
+    if (this.clean) return this.clean.login.logout().then(() => this.onChangeCb?.());
     try { fs.rmSync(this.tokenPath, { force: true }); } catch { /* ignore */ }
     this.onChangeCb?.();
+    return Promise.resolve();
   }
 
   // --- login flow ---------------------------------------------------------
   status(): LoginSession | null {
+    if (this.clean) return this.clean.login.status();
     const session = this.live?.session ?? this.finished;
     return session ? { ...session } : null;
   }
@@ -199,6 +251,7 @@ export class ClaudeLoginService {
    * leave them submitting a code against a session that no longer existed.
    */
   async start(): Promise<LoginSession> {
+    if (this.clean) return this.clean.login.start({ email: this.clean.ownerEmail, tag: PRIMARY_TAG });
     return this.startLogin(null, null);
   }
 
@@ -206,8 +259,26 @@ export class ClaudeLoginService {
    * The same flow, but the captured token becomes a NEW account with this label (onAccountToken),
    * or, with `accountId`, replaces the token of that saved account ("Sign in again").
    */
-  async startForAccount(label: string, accountId?: string): Promise<LoginSession> {
+  async startForAccount(label: string, accountId?: string, dataDirForAccounts?: string): Promise<LoginSession> {
+    if (this.clean) {
+      // A hosted added account: its own config dir, shared parts linked to the primary (claude-config-dirs.ts).
+      const id = accountId || uuid().slice(0, 8);
+      const base = dataDirForAccounts ?? this.dataDir;
+      const configDir = prepareAccountConfigDir(base, id);
+      const tag = this.accountTag(id, label.trim() || 'Claude account');
+      return this.clean.login.start({ configDir, tag });
+    }
     return this.startLogin(label.trim() || 'Claude account', accountId || null);
+  }
+
+  /** One tag object per account id, so a reload of the same login is the same attempt (ClaudeCliLogin.start). */
+  private tags = new Map<string, { kind: 'account'; id: string; label: string }>();
+  private accountTag(id: string, label: string) {
+    const t = this.tags.get(id);
+    if (t && t.label === label) return t;
+    const n = { kind: 'account' as const, id, label };
+    this.tags.set(id, n);
+    return n;
   }
 
   /** A waiting attempt is reused only for the same destination; a token must not change owner. */
@@ -278,6 +349,7 @@ export class ClaudeLoginService {
    * has been captured (or the attempt fails).
    */
   async submitCode(code: string): Promise<LoginSession> {
+    if (this.clean) return this.clean.login.submitCode(code);
     const live = this.live;
     // Structured so the UI can offer "start again" instead of surfacing a raw 400.
     // Reachable whenever the daemon restarted while the user was away authorising.
@@ -356,6 +428,7 @@ export class ClaudeLoginService {
 
   /** Abandon any in-flight attempt. Safe to call when nothing is running. */
   cancel(): void {
+    if (this.clean) { this.clean.login.cancel(); return; }
     this.finished = null;
     if (!this.live) return;
     clearInterval(this.live.watch);
@@ -414,6 +487,8 @@ export class ClaudeLoginService {
     if (this.live === live) this.live = null;
   }
 }
+
+const PRIMARY_TAG = { kind: 'primary' as const };
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));

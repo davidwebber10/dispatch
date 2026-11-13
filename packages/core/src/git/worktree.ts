@@ -14,6 +14,7 @@ import path from 'node:path';
 import { git, gitOrNull, GitFailed } from './exec.js';
 import { realDir } from './paths.js';
 import { within } from '../files/confine.js';
+import { agentMkdir, agentWriteFile } from '../privsep/agent-fs.js';
 
 export type WorktreeErrorCode = 'not_a_repo' | 'no_commit' | 'not_a_worktree' | 'dirty' | 'in_use' | 'failed';
 
@@ -52,11 +53,11 @@ async function excludeWorktreesDir(projectDir: string, root: string): Promise<vo
   if (!common) return;
   try {
     const file = path.join(common, 'info', 'exclude');
-    await fs.promises.mkdir(path.dirname(file), { recursive: true });
+    agentMkdir(path.dirname(file));
     let cur = '';
     try { cur = await fs.promises.readFile(file, 'utf8'); } catch { /* no file yet */ }
     if (cur.split('\n').some((l) => l.trim() === EXCLUDE_LINE)) return;
-    await fs.promises.writeFile(file, `${cur}${cur && !cur.endsWith('\n') ? '\n' : ''}${EXCLUDE_LINE}\n`);
+    agentWriteFile(file, `${cur}${cur && !cur.endsWith('\n') ? '\n' : ''}${EXCLUDE_LINE}\n`);
   } catch { /* best effort: the worktree still works, the folder only shows as untracked */ }
 }
 

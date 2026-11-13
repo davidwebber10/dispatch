@@ -13,6 +13,7 @@ import { MarketplaceService } from '../plugins/marketplaces.js';
 import { PluginInstaller } from '../plugins/installer.js';
 import { SkillsService } from '../plugins/skills.js';
 import type { EventBroadcaster } from '../ws/events.js';
+import { runDirFor, scratchDirFor } from '../privsep/paths.js';
 
 /** Scheduled and role-run threads are flagged in thread events (coach spec section 4.3). */
 const automatedConfig = (config: string | null | undefined): boolean => { try { return isAutomatedThread(JSON.parse(config || '{}')); } catch { return false; } };
@@ -52,7 +53,7 @@ export interface PluginServices {
  */
 export function wirePlugins(i: PluginInputs): PluginServices {
   const { db, dataDir, broadcaster } = i;
-  const plugins = new PluginRegistry(i.pluginsDir, broadcaster, i.runningVersion, { keys: i.keys, keyDir: path.join(dataDir, 'keys'), bundledDir: i.bundledDir ?? undefined });
+  const plugins = new PluginRegistry(i.pluginsDir, broadcaster, i.runningVersion, { keys: i.keys, keyDir: runDirFor(dataDir, 'keys'), bundledDir: i.bundledDir ?? undefined });
   configurePluginFacts((id) => plugins.facts(id));
   plugins.issueKeys();
   try { migratePreviews(db); } catch (e) { console.warn('[plugins] the previews migration failed; the daemon runs without it:', e instanceof Error ? e.message : e); }
@@ -69,7 +70,7 @@ export function wirePlugins(i: PluginInputs): PluginServices {
   const pluginHooks = new PluginHooks(plugins, threadEvents, { api: i.daemonApi });
   plugins.setHookStatsProvider((id) => pluginHooks.stats(id));
   // Workers (spec section 4): one process per enabled plugin with a worker, fed on stdin.
-  const pluginWorkers = new PluginWorkers(plugins, threadEvents, { logDir: i.logDir, runDir: path.join(dataDir, 'run'), api: i.daemonApi, ...(i.timers ? {} : { tickMs: null }) });
+  const pluginWorkers = new PluginWorkers(plugins, threadEvents, { logDir: i.logDir, runDir: scratchDirFor(dataDir, 'run'), api: i.daemonApi, ...(i.timers ? {} : { tickMs: null }) });
   plugins.setWorkerStatsProvider((id) => pluginWorkers.stats(id));
   plugins.setWorkerSync(() => pluginWorkers.sync());
   return { plugins, marketplaces, installer, skills, threadEvents, pluginHooks, pluginWorkers };

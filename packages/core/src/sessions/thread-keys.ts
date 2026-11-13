@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { KeyHandle, KeyRegistry } from '../auth/principals.js';
+import { publishToAgent } from '../privsep/paths.js';
 
 /**
  * Key lifecycle per process (per-thread keys, stage 1, spec 6.2 and 6.5).
@@ -143,6 +144,7 @@ export class ThreadKeys {
     } finally {
       fs.closeSync(fd);
     }
+    publishToAgent(file); // privilege separation: the thread reads it as another user
     this.files.set(handle, file);
     return file;
   }

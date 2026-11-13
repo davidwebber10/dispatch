@@ -1,5 +1,10 @@
+import { boxCapabilities } from './capabilities.js';
+import { osBoxToken } from './box-secrets.js';
+import { currentProfile } from '../os/profile.js';
 import type Database from 'better-sqlite3';
 import { getRunningVersion } from '../update/version.js';
+import { collectIdleInfo, type IdleInfo, type PluginJobsInfo } from '../os/idle-info.js';
+import type { HeartbeatDisk, HeartbeatLimits } from './fleet-stats.js';
 
 /**
  * Publishes a small per-box state projection to OS.
@@ -30,10 +35,19 @@ export interface BoxHeartbeat {
     needsInput: number;
     error: number;
   };
-  /** Most recent activity across all threads, for the fleet view's "last active". */
+  /**
+   * The newest real activity (os/idle-info.ts): a person's message, a thread turn, an automation run.
+   * The heartbeat, the OS poll and an open page never move it. OS's idle sleep reads it.
+   */
   lastActivityAt: string | null;
+  /** Work this box starts by itself on a timer (os/idle-info.ts). OS never sleeps a box with work due. */
+  automations?: IdleInfo['automations'];
   /** Whether OS-brokered tools resolved on the last attempt (design §4.2.1). */
   toolsReachable: boolean;
+  /** What this build enforces (platform/capabilities.ts): OS refuses an older image for a business person. */
+  capabilities?: string[];
+  /** The profile the box applies now (OS's live answer, else DISPATCH_PROFILE). */
+  profile?: string;
   /**
    * Dispatch version this box is running.
    *
@@ -53,6 +67,13 @@ export interface BoxHeartbeat {
    */
   usage7d?: { inputTokens: number; outputTokens: number; turns: number };
   usageByModel7d?: Array<{ model: string; inputTokens: number; outputTokens: number; turns: number }>;
+  /** For OS fleet management (contract "Fleet management"), each optional: absent is "unknown" there. */
+  /** The rolling last 24 hours (the "turns per day" chart). */
+  usage24h?: { inputTokens: number; outputTokens: number; turns: number };
+  /** The usage gauge, compact: the worst account's weekly and session use, 0 to 100 (platform/fleet-stats.ts). */
+  usageLimits?: HeartbeatLimits;
+  /** The home's use in bytes; `state`: the state volume's, when it is another file system. */
+  disk?: HeartbeatDisk;
 }
 
 export interface HeartbeatOptions {
@@ -68,7 +89,7 @@ export interface HeartbeatOptions {
 /** Collect the projection from the terminals table. Cheap: one small scan. */
 export function collectHeartbeat(
   db: Database.Database,
-  extra: { authenticated: boolean; toolsReachable: boolean; ownerEmail?: string; boxId?: string },
+  extra: { authenticated: boolean; toolsReachable: boolean; ownerEmail?: string; boxId?: string; pluginJobs?: PluginJobsInfo },
 ): BoxHeartbeat {
   let rows: Array<{ status: string; last_activity_at: string | null }> = [];
   try {
@@ -80,11 +101,7 @@ export function collectHeartbeat(
     rows = [];
   }
   const count = (s: string) => rows.filter((r) => r.status === s).length;
-  const lastActivityAt = rows
-    .map((r) => r.last_activity_at)
-    .filter((v): v is string => Boolean(v))
-    .sort()
-    .pop() ?? null;
+  const idle = collectIdleInfo(db, extra.pluginJobs);
 
   return {
     ownerEmail: extra.ownerEmail ?? null,
@@ -97,9 +114,12 @@ export function collectHeartbeat(
       needsInput: count('needs_input'),
       error: count('error'),
     },
-    lastActivityAt,
+    lastActivityAt: idle.lastActivityAt,
+    automations: idle.automations,
     toolsReachable: extra.toolsReachable,
     version: getRunningVersion(),
+    capabilities: boxCapabilities(),
+    profile: currentProfile(),
   };
 }
 
@@ -120,11 +140,15 @@ export class HeartbeatService {
       toolsReachable: boolean;
       usage7d?: BoxHeartbeat['usage7d'];
       usageByModel7d?: BoxHeartbeat['usageByModel7d'];
+      usage24h?: BoxHeartbeat['usage24h'];
+      usageLimits?: BoxHeartbeat['usageLimits'];
+      disk?: BoxHeartbeat['disk'];
+      pluginJobs?: PluginJobsInfo;
     },
     opts: HeartbeatOptions = {},
   ) {
     this.baseUrl = (opts.baseUrl ?? process.env.OS_BASE_URL)?.replace(/\/+$/, '') || undefined;
-    this.boxToken = opts.boxToken ?? process.env.OS_BOX_TOKEN;
+    this.boxToken = opts.boxToken ?? osBoxToken();
     this.ownerEmail = opts.ownerEmail ?? process.env.DISPATCH_OWNER_EMAIL;
     this.boxId = opts.boxId ?? process.env.DISPATCH_BOX_ID;
     this.intervalMs = opts.intervalMs ?? 30_000;
@@ -140,11 +164,15 @@ export class HeartbeatService {
       ...collectHeartbeat(this.db, {
         authenticated: probe.authenticated,
         toolsReachable: probe.toolsReachable,
+        pluginJobs: probe.pluginJobs,
         ownerEmail: this.ownerEmail,
         boxId: this.boxId,
       }),
       usage7d: probe.usage7d,
       usageByModel7d: probe.usageByModel7d,
+      ...(probe.usage24h ? { usage24h: probe.usage24h } : {}),
+      ...(probe.usageLimits ? { usageLimits: probe.usageLimits } : {}),
+      ...(probe.disk ? { disk: probe.disk } : {}),
     };
   }
 
@@ -156,7 +184,8 @@ export class HeartbeatService {
     try {
       const res = await this.fetchImpl(`${this.baseUrl}/api/dispatch/heartbeat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-dispatch-box-token': this.boxToken! },
+        // The owner header, like the other box → OS calls (contract 2026-11-11). The body also carries it.
+        headers: { 'Content-Type': 'application/json', 'x-dispatch-box-token': this.boxToken!, ...(this.ownerEmail ? { 'x-dispatch-owner': this.ownerEmail } : {}) },
         body: JSON.stringify(this.current()),
         signal: controller.signal,
       });

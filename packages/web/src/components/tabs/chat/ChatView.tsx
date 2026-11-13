@@ -1,6 +1,9 @@
 import { threadViewCache } from '../../../lib/threadViewCache';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { SignedOutCard } from './SignedOutCard';
+import { ConnectClaudeCard } from '../../connections/ConnectClaudeCard';
+import { ApprovalCards } from './ApprovalCards';
+import { InterruptedCard } from './InterruptedCard';
 import { ModelSwitcher } from './ModelSwitcher';
 import { isClaudeAuthError } from '../../endless/ClaudeLogin';
 import { MessageScroller } from '@shadcn/react/message-scroller';
@@ -21,7 +24,8 @@ import { ContextIndicator } from '../../ContextIndicator';
 import { modLabel } from '../../../lib/hostkeys';
 import { openFileTab } from '../../../lib/openFileTab';
 import { Composer } from './Composer';
-import { renderTimeline, EmptyState, ReconnectingState, StickToEndOnLoad, BootstrapOlderPages, LoadEarlierButton, LoadingOlderPill, JumpButton } from './timeline';
+import { can } from '../../../lib/profile';
+import { renderTimeline, EmptyState, ReconnectingState, StickToEndOnLoad, BootstrapOlderPages, LoadEarlierButton, LoadingOlderPill, JumpButton, ThreadStartMarker } from './timeline';
 
 /**
  * ChatView — the structured (stream-json) thread surface, built on shadcn's
@@ -40,7 +44,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   // older-pages machinery stays off — no phantom "Load earlier messages" on a thread with
   // nothing earlier to load. An unresolved tab keeps the pageable default (claude-code is
   // the common case).
-  const { items, busy, model, authRequired, send, retrySend, pending, answer, replyFromCard, denyFromCard, contextTokens, contextWindow, compacting, compactResult, apiRetry, compact, hasMore, loadingOlder, loadOlder } =
+  const { items, stale, busy, model, authRequired, send, retrySend, pending, answer, replyFromCard, denyFromCard, contextTokens, contextWindow, compacting, compactResult, apiRetry, compact, hasMore, loadingOlder, loadOlder } =
     useStructuredChat(terminalId, sessionId, { pageableHistory: tab?.type !== 'grok' && tab?.type !== 'opencode' });
   const loginItem = useMemo(() => loginItemFor(tab?.type, items, !!authRequired), [tab?.type, items, authRequired]);
   // Retry after a sign-in: the last message the owner sent, again (SignedOutCard says why it is a button).
@@ -159,7 +163,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
         {/* thin status row: muted context-window fill indicator, tappable for detail */}
         <div style={{ maxWidth: 768, margin: '6px auto 0', display: 'flex', alignItems: 'center' }}>
           {/* The active model, always shown once a thread has one, and the switcher behind it. */}
-          {tab && tab.type !== 'shell' && <ModelSwitcher tab={tab} busy={turnRuns} />}
+          {tab && tab.type !== 'shell' && can('model-picker') && <ModelSwitcher tab={tab} busy={turnRuns} />}
           {/* OS-aware send hint (Control Plane parity): ⌘↵ on a Mac, Ctrl+↵ elsewhere. */}
           {!isMobile && (
             <span style={{ font: '400 10px var(--font-mono)', color: 'var(--color-text-tertiary)', marginLeft: 10 }}>{modLabel('↵')} send</span>
@@ -233,7 +237,11 @@ export function ChatView({ terminalId }: { terminalId: string }) {
             {/* Bottom padding matches the top: the last row — usually the Working… indicator —
                 used to sit 8px off the composer, which read as cramped on a phone. */}
             <MessageScroller.Content style={{ maxWidth: 768, margin: '0 auto', padding: '24px 20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {/* Both are gone while a page loads: the scroller anchors a prepend on the top element in
+                  view, and that must be a message, never a control that stays at the top (a reader at
+                  the very top would then not keep their place). */}
               <LoadEarlierButton show={hasMore && !loadingOlder} onClick={loadOlder} />
+              <ThreadStartMarker show={!hasMore && !loadingOlder && !stale && items.length > 0} />
               {/* An empty item list means "no messages yet" ONLY when the socket is open.
                   While it's still (re)connecting, the history simply hasn't replayed —
                   showing "send a message to start" over a thread that may be full of
@@ -272,6 +280,15 @@ export function ChatView({ terminalId }: { terminalId: string }) {
         )}
         </div>
       </MessageScroller.Provider>
+
+      {/* Gated tools and blocked actions waiting for the person, pinned above the composer. */}
+      <ApprovalCards terminalId={terminalId} pending={pending} refreshKey={`${items.length}:${connStatus}`} />
+      {tab && <InterruptedCard tab={tab} />}
+
+      {/* A hosted box signed out of Claude: the one guided "Connect your Claude account" step, above the composer. */}
+      {tab?.type === 'claude-code' && !authRequired && (
+        <ConnectClaudeCard />
+      )}
 
       {/* Dismissible "resume from summary?" card, above the composer (not inside it — see
           ResumeAdviceCard's doc comment for why this exists at all). */}

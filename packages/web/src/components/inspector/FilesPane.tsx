@@ -12,6 +12,7 @@ import { fuzzyFilter } from '../../lib/fuzzy';
 import { saveFilesAs, type RemoteFile } from '../../lib/saveFiles';
 import { clipboardImageSupported, copyImageToClipboard, copyText } from '../../lib/clipboard';
 import { isImage } from '../../lib/fileType';
+import { can } from '../../lib/profile';
 import { DiffReview } from './DiffReview';
 
 const INDENT = 14;
@@ -464,7 +465,7 @@ export function FilesPane({ projectId, terminalId = null, onOpenFile }: { projec
       {/* root + branch */}
       <div style={{ padding: '9px 10px', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
         <span style={{ flex: 1, minWidth: 0, font: '400 11px var(--font-mono)', color: 'var(--color-text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {project ? homeAbbrev(project.workingDir) : ''}
+          {project ? (can('projects.path') ? homeAbbrev(project.workingDir) : project.name) : ''}
         </span>
         {git.branch && (
           <span title="Current branch" style={{
@@ -505,7 +506,7 @@ export function FilesPane({ projectId, terminalId = null, onOpenFile }: { projec
         <button onClick={() => { setMode('changed'); setQuery(''); }} style={segStyle(mode === 'changed')}>
           Changed{git.count > 0 && <span style={{ color: 'var(--color-status-yellow)', marginLeft: 4 }}>{git.count}</span>}
         </button>
-        {git.branch && (
+        {git.branch && can('review.diff') && (
           <button onClick={() => setReview(true)} title="Review the uncommitted changes: see the diff, approve or discard" style={{ ...segStyle(false), display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
             <GitDiff size={12} />Review
           </button>

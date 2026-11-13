@@ -121,7 +121,7 @@ describe('GET /api/terminals/:terminalId/journal', () => {
     // Another thread, an id that is no image, an id that is no id, an unknown thread.
     await request(app).get(`/api/terminals/tA2/journal/images/${source.id}`).expect(404);
     await request(app).get(`/api/terminals/tA/journal/images/${'0'.repeat(64)}`).expect(404);
-    await request(app).get('/api/terminals/tA/journal/images/..%2F..%2Fsecret').expect(404);
+    await request(app).get('/api/terminals/tA/journal/images/..%2F..%2Fsecret').expect(400); // not a canonical path
     await request(app).get(`/api/terminals/nope/journal/images/${source.id}`).expect(404);
     // The key rules are the ones of the journal page.
     const key = (id: string) => ({ Authorization: `Bearer ${(app.locals.keys.mint({ kind: 'thread', terminalId: id }).key as string)}` });

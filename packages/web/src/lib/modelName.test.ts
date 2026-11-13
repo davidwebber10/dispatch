@@ -43,7 +43,7 @@ describe('modelFromFrame — which frames name the active model', () => {
 describe('modelOptionsFor — the switcher list per harness', () => {
   it('the catalog models (no "Default": a switch needs a concrete model)', () => {
     expect(modelOptionsFor('claude-code').map((o) => o.value)).toEqual(['fable', 'opus', 'sonnet', 'haiku']);
-    expect(modelOptionsFor('codex').map((o) => o.label)).toEqual(['GPT-6 Astra', 'GPT-5.6 Sol', 'GPT-5.6 Terra', 'GPT-5.6 Luna']);
+    expect(modelOptionsFor('codex').map((o) => o.label)).toEqual(['GPT-6 Astra', 'GPT-6.1 Sol', 'GPT-6.1 Terra', 'GPT-6 Luna']);
   });
 
   it('OpenCode comes from the per-user list; a running model the list lacks is kept on top', () => {

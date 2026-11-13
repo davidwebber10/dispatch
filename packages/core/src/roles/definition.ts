@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { clientMessage } from '../http/client-message.js';
+import { privsep } from '../privsep/config.js';
 
 export const ROLE_AGENT_TYPES = ['planner', 'implementer', 'researcher', 'reviewer', 'design-reviewer', 'code-reviewer'] as const;
 export const ROLE_AUTHORITIES = ['observe', 'stage', 'stage-deploy'] as const;
@@ -79,7 +80,7 @@ export function parseRoleMd(name: string, dir: string, raw: string): RoleDefinit
 }
 
 export function rolesRootDir(): string {
-  return process.env.DISPATCH_ROLES_DIR || path.join(os.homedir(), '.dispatch', 'roles');
+  return process.env.DISPATCH_ROLES_DIR || path.join(privsep()?.stateDir ?? path.join(os.homedir(), '.dispatch'), 'roles');
 }
 
 export function listRoles(root: string = rolesRootDir()): { roles: RoleDefinition[]; errors: { name: string; error: string }[] } {

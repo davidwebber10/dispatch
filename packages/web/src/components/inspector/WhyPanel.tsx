@@ -7,6 +7,7 @@ import type { Icon } from '@phosphor-icons/react';
 import { api } from '../../api/client';
 import type { ThreadDiagnostics } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
+import { hostCopy } from '../../lib/hostCopy';
 import { useUI } from '../../stores/ui';
 
 type Explanation = NonNullable<ThreadDiagnostics['explanation']>;
@@ -155,7 +156,7 @@ export function WhyPanel({ terminalId, sessionId, onClose }: { terminalId: strin
               {e.since && <div style={{ marginTop: 2, color: 'var(--color-text-secondary)', fontSize: 12 }}>Since {localTime(e.since, true)}</div>}
             </>
           ) : (
-            <div role="alert" style={alertBox}>The daemon gave no explanation. Update Dispatch, then restart the daemon.</div>
+            <div role="alert" style={alertBox}>{hostCopy('thread.why.none', 'The daemon gave no explanation. Update Dispatch, then restart the daemon.')}</div>
           )}
         </div>
         <button type="button" aria-label="Refresh" title="Refresh" onClick={() => void load()} disabled={loading} style={{ ...iconButton, opacity: loading ? 0.5 : 1 }}>
@@ -222,7 +223,7 @@ export function WhyPanel({ terminalId, sessionId, onClose }: { terminalId: strin
 
       <div style={caption}>Last events</div>
       {events.length === 0 ? (
-        <div style={{ color: 'var(--color-text-secondary)', fontSize: 12 }}>The daemon recorded no lifecycle event for this thread.</div>
+        <div style={{ color: 'var(--color-text-secondary)', fontSize: 12 }}>{hostCopy('thread.why.noEvents', 'The daemon recorded no lifecycle event for this thread.')}</div>
       ) : (
         <>
           <table aria-label="Last lifecycle events" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>

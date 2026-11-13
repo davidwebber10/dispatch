@@ -9,6 +9,7 @@ import type { Express } from 'express';
 import { initSchema } from '../db/schema.js';
 import { createApp } from '../server.js';
 import { buildDaemon, NoopPTYManager, type Daemon } from './build.js';
+import { inspectRoutes } from '../http/route-registry.js';
 import { SessionService } from '../sessions/service.js';
 import { StatusService } from '../status/service.js';
 import { AgentService } from '../agents/service.js';
@@ -35,18 +36,11 @@ function productionBuild(): Express {
   return d.app;
 }
 
-/** Every route of an Express app as `METHOD path`, in mount order. A router adds the pattern of its mount point. */
+/** Every route of an Express app as `METHOD pattern`, in mount order (http/route-registry.ts reads the live app). */
 function routeTable(app: Express): string[] {
-  const out: string[] = [];
-  type Layer = { route?: { path: string; methods: Record<string, boolean> }; name: string; regexp: RegExp; handle: { stack?: Layer[] } };
-  const walk = (stack: Layer[], prefix: string) => {
-    for (const l of stack) {
-      if (l.route) for (const m of Object.keys(l.route.methods)) out.push(`${m.toUpperCase()} ${prefix}${String(l.route.path)}`);
-      else if (l.handle.stack) walk(l.handle.stack, prefix + l.regexp.source);
-    }
-  };
-  walk((app as unknown as { _router: { stack: Layer[] } })._router.stack, '');
-  return out;
+  const { routes, problems } = inspectRoutes(app);
+  expect(problems).toEqual([]);
+  return routes.flatMap((r) => r.methods.map((m) => `${m} ${r.pattern}`));
 }
 
 describe('the test build and the production build', () => {

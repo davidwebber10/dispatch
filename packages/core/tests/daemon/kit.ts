@@ -38,6 +38,7 @@ export function kit(opts: Partial<BuildDaemonOptions> = {}): Kit {
   let listening: Promise<http.Server> | null = null;
   const server = () => listening ??= new Promise<http.Server>((resolve) => {
     const outer = express();
+    outer.disable('x-powered-by'); // the header under test is the daemon's own, not this wrapper's
     outer.use((req, _res, next) => { Object.defineProperty(req.socket, 'remoteAddress', { value: peer.address, configurable: true }); next(); });
     outer.use(daemon.app);
     const s = http.createServer(outer);

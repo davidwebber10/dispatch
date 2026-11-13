@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { initSchema } from '../../src/db/schema.js';
 import { createApp } from '../../src/server.js';
-import { policyKindOf, type PolicyKind } from '../../src/auth/route-policy.js';
+import { policyHandlerOf, policyKindOf, type PolicyKind } from '../../src/auth/route-policy.js';
 import type { EndlessService } from '../../src/endless/service.js';
 import { LimitSnapshots } from '../../src/limits/snapshot.js';
 
@@ -16,6 +16,10 @@ import { LimitSnapshots } from '../../src/limits/snapshot.js';
  * key rule without a matching edit here fails the second test below.
  */
 const EXPECTED_KEY_ROUTES: string[] = [
+  // The company-system servers (os/tools-proxy.ts): a thread key on loopback only.
+  'POST /api/os/mcp/:system',
+  'GET /api/os/mcp/:system',
+  'DELETE /api/os/mcp/:system',
   'POST /api/plugins/:id/assist',
   // Coach plan (2026-11-07): the assist meter and share for a plugin's own key; push; usage and analytics reads.
   'GET /api/plugins/:id/assist/usage',
@@ -57,6 +61,9 @@ const EXPECTED_KEY_ROUTES: string[] = [
   'GET /api/terminals/:terminalId/journal',
   // Final review of v4.5.0 (I2): an image that the journal keeps outside its payload; the same key rules.
   'GET /api/terminals/:terminalId/journal/images/:imageId',
+  // subagents-v1: a thread's subagents and one subagent's journal; the key rules of the journal page.
+  'GET /api/terminals/:terminalId/agents',
+  'GET /api/terminals/:terminalId/agents/:agentId/journal',
   'GET /api/terminals/:terminalId/permission',
   'POST /api/terminals/:terminalId/message',
   'POST /api/terminals/:terminalId/permission',
@@ -98,6 +105,7 @@ const EXPECTED_KEY_ROUTES: string[] = [
 
 /** Routes under `/api` that any principal may call (`publicRoute`). */
 const EXPECTED_PUBLIC_API_ROUTES: string[] = ['GET /api/whoami'];
+// (`POST /api/access/login` is public too; it exists only with the access gate, which `createApp` does not build.)
 
 interface Found { id: string; kind: PolicyKind | undefined }
 
@@ -115,7 +123,7 @@ function walk(stack: any[], prefix: string, out: Found[]): void {
   for (const layer of stack) {
     if (layer.route) {
       const p = typeof layer.route.path === 'string' ? layer.route.path : String(layer.route.path);
-      const kind = policyKindOf(layer.route.stack[0]?.handle);
+      const kind = policyKindOf(policyHandlerOf(layer.route));
       for (const method of Object.keys(layer.route.methods)) {
         out.push({ id: `${method.toUpperCase()} ${(prefix + p).replace(/(.)\/$/, '$1')}`, kind });
       }
@@ -236,9 +244,11 @@ describe('one mount list', () => {
     expect(server.match(/buildDaemon\(\{/g)).toHaveLength(2);
   });
 
-  test('the daemon files mount no /api route of their own except the login route', () => {
+  test('the daemon files mount no /api route on the app itself', () => {
     const own = ['server.ts', ...daemonFiles.map((f) => `daemon/${f}`)]
       .flatMap((f) => read(f).match(/app\.(use|get|post|put|patch|delete|all)\(\s*'\/api[^']*'/g) ?? []);
-    expect(own).toEqual(["app.post('/api/access/login'"]);
+    // None: the login route is in a policyRouter too (daemon/wire-auth.ts), like every route.
+    expect(own).toEqual([]);
+    expect(read('daemon/wire-auth.ts')).toContain("login.post('/api/access/login', publicRoute,");
   });
 });

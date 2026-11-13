@@ -86,7 +86,13 @@ export function imagesFromContent(content: unknown, sessionId?: string): ConvIte
  * notification is what CAUSES the assistant's next action; a `/compact` echo is a useful
  * "this happened here" marker); a contentless echo is dropped (null).
  */
-export function userOrNotice(text: string, source: ConvItem['source'], uuid?: string): ConvItem | null {
+/** The daemon's mark on the echo of a SENT message (core conversation/task-notification.ts SENT_MARK). */
+export const SENT_MARK = 'dispatch_sent';
+
+export function userOrNotice(text: string, source: ConvItem['source'], uuid?: string, sent = false): ConvItem | null {
+  // A message someone SENT (the daemon marks its echo `dispatch_sent`) is the sender's words, shown as
+  // written: no text shape can turn it into a notice or nothing. Only daemon and harness input is classified.
+  if (sent) return { kind: 'user', text, ...(source ? { source } : {}), ...(uuid ? { uuid } : {}) };
   const c = classifyUserText(text);
   if (c.kind === 'drop') return null;
   if (c.kind === 'notice') return { kind: 'notice', text: c.text, ...(uuid ? { uuid } : {}) };
@@ -102,6 +108,28 @@ export function errorText(event: any): string | undefined {
 }
 
 /**
+ * The items of a `system` event that the DAEMON wrote into a thread (not the CLI): a plain notice
+ * (`dispatch_notice`, e.g. "Company tools are not reachable right now"). Null: not one of these.
+ * The socket fold and the journal fold both call it, so the two render the same.
+ */
+export function daemonSystemItems(e: any): ConvItem[] | null {
+  if (!e || e.type !== 'system') return null;
+  if (e.subtype === 'dispatch_notice') {
+    return typeof e.message === 'string' && e.message ? [{ kind: 'notice', text: e.message }] : [];
+  }
+  // A blocked action and its answer: the card above the composer shows them (ApprovalCards); the
+  // timeline keeps one quiet line for the record.
+  if (e.subtype === 'permission_blocked') {
+    const b = e.block ?? {};
+    return [{ kind: 'notice', text: `Blocked by the safety check: ${typeof b.title === 'string' ? b.title.replace(/^Wants to /, '') : 'an action'}${typeof b.detail === 'string' && b.detail ? ` (${b.detail.slice(0, 120)})` : ''}` }];
+  }
+  if (e.subtype === 'permission_blocked_resolved') {
+    return [{ kind: 'notice', text: e.decision === 'allow' ? 'You allowed the blocked action.' : 'You kept the action blocked.' }];
+  }
+  return null;
+}
+
+/**
  * The timeline items of one WHOLE event (W3-D): a `user`, `assistant`, `result` or notice event as
  * the daemon's message journal keeps it. It is the fold that the chat socket applies to the same
  * event when no stream came before it (useChatSocket.ts), built with the same helpers, so an item
@@ -113,7 +141,9 @@ export function itemsFromEvent(event: unknown, sessionId: string | undefined, se
   if (!e || typeof e !== 'object') return [];
   const out: ConvItem[] = [];
   if (e.type === 'system') {
-    if (e.subtype === 'model') {
+    const own = daemonSystemItems(e);
+    if (own) out.push(...own);
+    else if (e.subtype === 'model') {
       const model = modelFromFrame(e);
       if (e.switched === true && model) out.push({ kind: 'system', systemKind: 'model', text: model });
     } else if (e.subtype === 'settings_refused') {
@@ -135,8 +165,9 @@ export function itemsFromEvent(event: unknown, sessionId: string | undefined, se
     const content = e.message.content;
     const source = e.meta?.source as ConvItem['source'] | undefined;
     const uuid = typeof e.uuid === 'string' ? e.uuid : undefined;
+    const sent = e[SENT_MARK] === true;
     if (typeof content === 'string') {
-      if (content.trim()) { const it = userOrNotice(content, source, uuid); if (it) out.push(it); }
+      if (content.trim()) { const it = userOrNotice(content, source, uuid, sent); if (it) out.push(it); }
     } else if (Array.isArray(content)) {
       for (const b of content) {
         if (!b) continue;
@@ -144,7 +175,7 @@ export function itemsFromEvent(event: unknown, sessionId: string | undefined, se
           out.push({ kind: 'tool-result', toolId: b.tool_use_id, text: flattenContent(b.content), isError: b.is_error === true, ...(uuid ? { uuid } : {}) });
           out.push(...imagesFromContent(b.content, sessionId));
         } else if (b.type === 'text' && b.text) {
-          const it = userOrNotice(b.text, source, uuid);
+          const it = userOrNotice(b.text, source, uuid, sent);
           if (it) out.push(it);
         } else if (b.type === 'image') {
           const img = imageItemFromBlock(b, sessionId);
@@ -154,6 +185,7 @@ export function itemsFromEvent(event: unknown, sessionId: string | undefined, se
     }
   } else if (e.type === 'result') {
     if (e.subtype === 'backfill') return [];
+    if (e.parent_tool_use_id != null) return []; // a subagent's turn end (subagents-v1) is not the thread's
     out.push({
       kind: 'result',
       isError: e.is_error === true,

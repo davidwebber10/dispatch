@@ -1,14 +1,25 @@
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { Terminal } from '@phosphor-icons/react';
 import { useServers, currentServer, currentLabel } from '../../stores/servers';
 import { useUpdate } from '../../stores/update';
+import { usesOsLook } from '../../lib/hostContext';
+import { useNavigation } from '../../stores/navigation';
+// The OS shell parts load on demand: a local install never downloads them (phone first-paint budget).
+const OsMobileMenu = lazy(() => import('./os').then((m) => ({ default: m.OsMobileMenu })));
 
 /**
  * The rail's logo button. Compact by necessity — it lives in the 64px icon rail —
  * so the product name, daemon version, and server list all moved into the dropdown,
  * which opens to the RIGHT of the rail rather than below.
  */
-export function BrandSwitcher() {
+export function BrandSwitcher({ variant = 'rail' }: { variant?: 'rail' | 'header' } = {}) {
+  // A hosted workspace (or the business preview) has no servers to switch: the OS app switcher instead
+  // (the desktop rail renders its own, os/OsLeftRail; this is the phone header's).
+  if (usesOsLook()) return variant === 'header' ? <Suspense fallback={null}><OsMobileMenu onSettings={() => useNavigation.getState().navigate({ view: 'settings' })} /></Suspense> : null;
+  return <LocalBrandSwitcher />;
+}
+
+function LocalBrandSwitcher() {
   const [open, setOpen] = useState(false);
   // Same source as the Settings version line: the connected daemon's running version,
   // loaded into the update store at startup (App bootstrap → GET /api/state/update).

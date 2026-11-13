@@ -95,6 +95,16 @@ export class LimitSnapshots {
     try { this.historyByProvider = JSON.parse(appState.get(db, HISTORY_KEY) ?? '{}') ?? {}; } catch { this.historyByProvider = {}; }
   }
 
+  /** Forget the figures and history of one login (a sign-out). */
+  forget(provider: string, accountId: string = CLI_ACCOUNT_ID): void {
+    const key = LimitSnapshots.key(provider, accountId);
+    if (!(key in this.byProvider) && !(key in this.historyByProvider)) return;
+    delete this.byProvider[key];
+    delete this.historyByProvider[key];
+    try { appState.set(this.db, KEY, JSON.stringify(this.byProvider)); } catch (err) { console.warn('[usage-limit] could not save the snapshot:', err); }
+    try { appState.set(this.db, HISTORY_KEY, JSON.stringify(this.historyByProvider)); } catch (err) { console.warn('[usage-limit] could not save the history:', err); }
+  }
+
   /** The provider's samples per limit, only for exactly `account`. `accountId` picks the Dispatch account (multi-account spec). */
   history(provider: string, account: string, accountId: string = CLI_ACCOUNT_ID): Record<string, Sample[]> {
     const h = this.historyByProvider[LimitSnapshots.key(provider, accountId)];

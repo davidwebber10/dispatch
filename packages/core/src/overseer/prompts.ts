@@ -318,24 +318,6 @@ function coordinatorPromptBase(harness: string): string {
   return out;
 }
 
-/** The report_status line of the peer prompt: for threads that another thread or a role started (see reportsStatus). */
-const REPORT_STATUS_LINE =
-  '- report_status({ state, summary, ask?, blocker? }) — a STATUS signal for how your turn is ' +
-  'ending, NOT a message to the human, and NOT where your content goes. Call it as the LAST ' +
-  'thing you do every turn: `done` when the work is finished, `needs_you` when you cannot ' +
-  'proceed without the human, `blocked` when you are waiting on another agent or a timer. When it ' +
-  'returns, your turn ends: call no other tool, and do not start new work or answer a question nobody ' +
-  'asked. If you have not written your reply yet, write it now. If you already wrote it, end with one ' +
-  'short closing line; never repeat the reply, and never end with an empty message (an empty one ' +
-  'makes the CLI ask you to continue). The human speaks next. Your ' +
-  'findings, answer, and any question ALWAYS go in your normal reply text — that is what the ' +
-  'human reads. A tool call\'s arguments are collapsed out of sight in the reader\'s view (in ' +
-  'the terminal they must press Ctrl+O to even see them), so anything you put ONLY inside ' +
-  'report_status — or any other tool — is effectively invisible to them. `summary` and `ask` ' +
-  'are just a short COPY for the board and alerts, never the place to say something you did not ' +
-  'also write in your reply. Skipping report_status leaves a turn you ended by asking a ' +
-  'question indistinguishable from one where you finished.\n\n';
-
 /**
  * Peer/watch context injected into every eligible thread's system prompt — every
  * claude-code/codex thread (plain, agent, or coordinator alike; see
@@ -349,12 +331,52 @@ const REPORT_STATUS_LINE =
  * list_watches — plus the etiquette that keeps full agency for N peers from
  * going wrong (rate limits, spawn depth, archive protection).
  */
+/**
+ * How report_status ends a turn: for a thread that another thread or a role started (see reportsStatus
+ * in sessions/thread-config.ts) and that is not a hosted chat thread.
+ */
+const REPORT_STATUS_RULE =
+  '- report_status({ state, summary, ask?, blocker? }) — a STATUS signal for how your turn is ' +
+    'ending, NOT a message to the human, and NOT where your content goes. Call it as the LAST ' +
+    'thing you do every turn: `done` when the work is finished, `needs_you` when you cannot ' +
+    'proceed without the human, `blocked` when you are waiting on another agent or a timer. When it ' +
+    'returns, your turn ends: call no other tool, and do not start new work or answer a question nobody ' +
+    'asked. If you have not written your reply yet, write it now. If you already wrote it, end with one ' +
+    'short closing line; never repeat the reply, and never end with an empty message (an empty one ' +
+    'makes the CLI ask you to continue). The human speaks next. Your ' +
+    'findings, answer, and any question ALWAYS go in your normal reply text — that is what the ' +
+    'human reads. A tool call\'s arguments are collapsed out of sight in the reader\'s view (in ' +
+    'the terminal they must press Ctrl+O to even see them), so anything you put ONLY inside ' +
+    'report_status — or any other tool — is effectively invisible to them. `summary` and `ask` ' +
+    'are just a short COPY for the board and alerts, never the place to say something you did not ' +
+    'also write in your reply. Skipping report_status leaves a turn you ended by asking a ' +
+    'question indistinguishable from one where you finished.\n\n';
+
+/**
+ * A chat thread on a HOSTED box gets this rule in place of REPORT_STATUS_RULE. There the person reads
+ * only the reply (not the thinking, the tool calls or a status card), so the rule puts the answer
+ * first. Such a thread has no status tool at all (overseer/agency-mcp.ts listedTools), so nothing here
+ * names one.
+ */
+export const HOSTED_REPLY_RULE =
+  'YOUR REPLY IS THE ANSWER. The person reads only your reply text and what it shows (tables, charts, ' +
+  'files). Your thinking and your tool calls are not shown as the answer. So every turn ends with a reply ' +
+  'in this order: first the direct answer in one or two plain sentences (for example: "Acme Outdoor 2026 ' +
+  'sales to date are $120,400, up 12% on the same period last year."), then any tables ' +
+  'or charts, then at most a short note on method or limits. For a record you looked up, give its key ' +
+  'fields (for an order: number, date, status, customer, total, lines, shipping). When there are rows ' +
+  '(order lines, lists, rankings), show them as a table with the `display` tools. Never reply only "see ' +
+  'above", "that is the full record" or a pointer to work the person cannot see. Compare like with like: ' +
+  'a year-to-date figure goes with the same period of the prior year, never with a full prior year.\n\n';
+
 export function buildPeerPrompt(ctx: {
   projectName: string;
   workingDir: string;
   selfLabel: string;
   selfId: string;
   peers: { label: string; type: string; status: string }[];
+  /** A chat thread on a hosted box: no status tool; the reply rule for a person who reads only the reply (HOSTED_REPLY_RULE). */
+  hosted?: boolean;
   /** False for a thread the owner started: no report_status line (see reportsStatus). Default true. */
   reportStatus?: boolean;
 }): string {
@@ -385,7 +407,7 @@ export function buildPeerPrompt(ctx: {
     'loop: polling burns tokens for no benefit, while a watch costs nothing until it fires. If the peer ' +
     'already settled during your turn, the result has firedNow and a wake text: act on it now, no message follows.\n' +
     '- unwatch_thread({ watchId }) / list_watches() — cancel or inspect your own subscriptions.\n' +
-    (ctx.reportStatus === false ? '\n' : REPORT_STATUS_LINE) +
+    (ctx.hosted ? HOSTED_REPLY_RULE : ctx.reportStatus === false ? '\n' : REPORT_STATUS_RULE) +
     'Etiquette and limits, so you fail informed rather than surprised:\n' +
     '- Don\'t ping-pong messages with a peer — messaging a thread is rate-limited per pair, per hour.\n' +
     '- If you create sub-threads of your own, that chain has a fixed depth cap.\n' +

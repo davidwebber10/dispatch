@@ -767,4 +767,18 @@ describe('TurnRunner', () => {
       await finish(t);
     });
   });
+  // Final review N8: a sub-thread's `result` (parent_tool_use_id) is never this turn's end.
+  it('a sub-thread result does not end the turn; the main result does', async () => {
+    const t = setup();
+    t.runner.send({ text: 'go', project: null, media: [] });
+    await settle();
+    let ended = false;
+    void t.runner.whenIdle().then(() => { ended = true; });
+    reply(t, 'working on it');
+    t.fake.emitEvent({ type: 'result', subtype: 'success', is_error: false, parent_tool_use_id: 'sub-1' });
+    await new Promise((r) => setTimeout(r, 120)); // past the grace (10 ms) and the wait (50 ms)
+    expect(ended).toBe(false);
+    await finish(t);
+    expect(ended).toBe(true);
+  });
 });

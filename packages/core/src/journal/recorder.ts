@@ -23,7 +23,7 @@
 //
 // A journal failure never stops a session: `commit` logs once and goes on.
 
-import { classifyUserText } from '../conversation/task-notification.js';
+import { classifyUserText, isHarnessContext, SENT_MARK } from '../conversation/task-notification.js';
 import type { JournalKind, MessageJournal } from './journal.js';
 import { createJournalReplay, type JournalReplay, type JournalReplayOptions, type JournalReplaySource } from './replay.js';
 
@@ -71,6 +71,21 @@ export interface CommitSource { onCommit?: (event: unknown) => void }
 export const REPLAYED_MARK = 'journal_replayed';
 
 function isFrame(v: unknown): v is Frame { return typeof v === 'object' && v !== null && !Array.isArray(v); }
+
+/** Set (true) on a `user` item that is harness context only, with `isMeta` (journal kind `context`). */
+export const CONTEXT_MARK = 'dispatch_context';
+
+/**
+ * The user event without the text blocks that are WHOLLY harness context (Claude Code sends a reminder
+ * as its own block next to the person's), or the same event when it has none. Text inside a block is
+ * never cut: a person's pasted block stays as written. A copy: the event the manager emits keeps its blocks.
+ */
+function withoutContextBlocks(e: Frame): Frame {
+  const content = e.message?.content;
+  if (!Array.isArray(content)) return e;
+  const blocks = content.filter((b) => !(isFrame(b) && b.type === 'text' && typeof b.text === 'string' && isHarnessContext(b.text)));
+  return blocks.length === content.length ? e : { ...e, message: { ...e.message, content: blocks } };
+}
 
 function streamFrame(event: Frame, parent: string): Frame {
   return parent ? { type: 'stream_event', event, parent_tool_use_id: parent } : { type: 'stream_event', event };
@@ -330,16 +345,33 @@ export class ThreadRecorder {
         else if (b.type === 'image') other += 1;
       }
     } else return;
+    // A message someone sent (the person, a peer, an automation) is the sender's words, shown as written:
+    // no classification can turn it into context, a notice or a tool result, whatever its blocks look like.
+    if (e[SENT_MARK] === true) { this.write('user', uuid, e, e); return; }
     if (results) {
       const native = uuid ?? (results === 1 && typeof firstResultId === 'string' ? `tr:${firstResultId}` : undefined);
       this.write('tool', native, e, e);
       return;
     }
     const classes = texts.filter((t) => t.trim()).map((t) => classifyUserText(t).kind);
-    const shown = classes.filter((k) => k !== 'drop');
-    if (!shown.length && !other) return; // nothing a client renders
-    const kind: JournalKind = shown.includes('user') || other ? 'user' : 'notice';
-    this.write(kind, uuid, e, e);
+    const shown = classes.filter((k) => k !== 'drop' && k !== 'context');
+    if (!shown.length && !other) {
+      // Harness context only (a system reminder, Codex's environment or AGENTS.md block): a `context`
+      // item, marked `isMeta` so no client folds it into a bubble. The mark is set on the event itself,
+      // before the manager emits it, so a live viewer skips it the same way.
+      if (classes.includes('context')) {
+        e.isMeta = true;
+        e[CONTEXT_MARK] = true;
+        this.write('context', uuid, e, e);
+      }
+      return; // otherwise nothing a client renders
+    }
+    // A turn input the daemon started by itself (meta.internal: the subagent results it hands to the main
+    // agent, structured/codex-manager.ts deliverAgentResults) is never the person's message.
+    const internal = isFrame(e.meta) && e.meta.internal === true;
+    const kind: JournalKind = !internal && (shown.includes('user') || other) ? 'user' : 'notice';
+    // A harness item with a reminder block next to the person's block: the reminder block is not kept.
+    this.write(kind, uuid, kind === 'user' ? withoutContextBlocks(e) : e, e);
   }
 
   private assistant(e: Frame): void {
@@ -419,6 +451,16 @@ export class ThreadRecorder {
   }
 
   private result(e: Frame): void {
+    // A subagent's turn end (a Codex sub-thread, subagents-v1) closes only that subagent's stream: the
+    // main agent and the other subagents stream on.
+    const parent = typeof e.parent_tool_use_id === 'string' && e.parent_tool_use_id ? e.parent_tool_use_id : '';
+    if (parent) {
+      this.flush(parent);
+      const stream = this.streams.get(parent);
+      if (stream) stream.open = false;
+      this.write('result', undefined, e, e);
+      return;
+    }
     this.flush(); // a turn end closes every block; their rows come before the footer
     for (const stream of this.streams.values()) stream.open = false; // and every message
     this.compacting = null;
@@ -430,7 +472,11 @@ export class ThreadRecorder {
   private system(e: Frame): void {
     if (e.subtype === 'auth_required') { this.auth = e; return; }
     if (e.subtype === 'status') { this.compacting = e.status === 'compacting' ? e : null; return; }
-    if ((e.subtype === 'model' && e.switched === true) || e.subtype === 'settings_refused' || e.subtype === 'spawn_error') {
+    // A daemon warning in the thread (an MCP server or tool the workspace did not give, a refused
+    // action) is kept: after a reload or a restart the person still sees it.
+    // A subagent's state change (subagents-v1) is kept: the agent list of a thread is read from it after a restart.
+    if ((e.subtype === 'model' && e.switched === true) || e.subtype === 'settings_refused' || e.subtype === 'spawn_error'
+      || (e.subtype === 'dispatch_notice' && e.level === 'warning') || e.subtype === 'subagent') {
       this.write('notice', undefined, e, e);
     }
   }

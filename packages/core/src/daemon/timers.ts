@@ -2,6 +2,7 @@ import { startPtyTimingLoop } from '../sessions/status.js';
 import { startAutoArchiveLoop } from '../sessions/auto-archive.js';
 import { startInterimRecapLoop } from '../sessions/interim-recap.js';
 import { startUpdateCheckLoop } from '../update/checker.js';
+import { isHostedBox } from '../os/hosted-mode.js';
 import { startTelemetryLoop } from '../telemetry/sender.js';
 import type { DaemonServices } from './build.js';
 
@@ -55,7 +56,8 @@ export function daemonTimers(s: DaemonServices, opts: { network: boolean }): Dae
     // PTY timing loop for Codex-style providers.
     { name: 'pty-timing', start: () => { const t = startPtyTimingLoop(s.db, s.ptyManager, s.broadcaster, undefined, s.statusService); return () => clearInterval(t); } },
     // Poll GitHub Releases for a newer version than what's running (immediately, then ~45 min).
-    { name: 'update-check', network: true, start: () => { const t = startUpdateCheckLoop(s.db, s.broadcaster); return () => clearInterval(t); } },
+    // A hosted box updates by image (update/hosted.ts): the GitHub release poller does not run there.
+    { name: 'update-check', network: true, start: () => { if (isHostedBox()) return () => {}; const t = startUpdateCheckLoop(s.db, s.broadcaster); return () => clearInterval(t); } },
     // Anonymous usage report: 60 s after boot, then an hourly check (Settings → About & updates switch).
     { name: 'telemetry', network: true, start: () => { const loop = startTelemetryLoop(s.db); return () => loop.stop(); } },
     {

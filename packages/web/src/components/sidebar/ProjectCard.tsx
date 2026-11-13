@@ -30,6 +30,7 @@ import { api } from '../../api/client';
 import { canReceiveAlerts } from '../../lib/push';
 import { AGENT_TYPES, THREAD_TYPES } from '../../lib/harnesses';
 import { SectionHeader, ShowMoreRow } from './sectionParts';
+import { can } from '../../lib/profile';
 import { ArchivedSection } from './ArchivedSection';
 
 /* The sidebar's search header is sticky (~52px). A row revealed by scrollIntoView would sit
@@ -429,12 +430,13 @@ export const ProjectCard = memo(function ProjectCard({ session, active, open, on
               style={{ width: 18, height: 18, flexShrink: 0, marginLeft: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 15, lineHeight: 1, borderRadius: 'var(--radius-xs)' }}>⋯</button>
           )}
         </div>
-        <div title={session.workingDir} style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>{homePath(session.workingDir)}</div>
+        {/* The folder is a machine detail: a business person never sees a path (lib/profile.ts 'projects.path'). */}
+        {can('projects.path') && <div title={session.workingDir} style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>{homePath(session.workingDir)}</div>}
       </div>
       <div style={{ display: 'grid', gridTemplateRows: isOpen ? '1fr' : '0fr', transition: 'grid-template-rows 0.12s ease' }}>
         <div style={{ overflow: 'hidden', minHeight: 0 }}>
           {/* Dispatch coordinator — desktop opens it as a tab; mobile as a full-screen overlay. */}
-          {onDispatch && (
+          {onDispatch && can('control-plane') && (
             <button
               onClick={(e) => { e.stopPropagation(); onDispatch(session.id); }}
               title={`Open ${dispatchName} coordinator`}
@@ -510,7 +512,7 @@ export const ProjectCard = memo(function ProjectCard({ session, active, open, on
               {!agents.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No automations yet</div>}
             </div>
           )}
-          {SECTIONS.slice(1).map(renderSection)}
+          {SECTIONS.slice(1).filter((sec) => sec.key !== 'web' || can('threads.browser')).map(renderSection)}
           <ArchivedSection sessionId={session.id} open={isOpen} onSelectTab={onSelectTab} />
           {isMobile && onBrowseFiles && (
             <button onClick={(e) => { e.stopPropagation(); onBrowseFiles(session.id); }}

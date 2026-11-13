@@ -68,7 +68,7 @@ describe('AppearanceSection — what moved in, what left', () => {
     const group = within(openThemes()).getByRole('radiogroup', { name: 'Theme' });
     const names = within(group).getAllByRole('radio').map((r) => r.getAttribute('aria-label'));
     expect(names).toEqual(['System', ...THEMES.filter((t) => t.kind === 'light').map((t) => t.name), ...THEMES.filter((t) => t.kind === 'dark').map((t) => t.name)]);
-    expect(names).toHaveLength(13);
+    expect(names).toHaveLength(15); // twelve themes, the POLYWOOD OS pair, and System
   });
 
   it('the Theme row comes first on the page, before the accent swatches', () => {

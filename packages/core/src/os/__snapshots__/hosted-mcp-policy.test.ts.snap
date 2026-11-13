@@ -1,0 +1,94 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`the managed policy files the image installs (generated at build) > every Claude Code file gets the POLYWOOD words of the web client, in mode replace 1`] = `
+{
+  "claude-managed-settings.developer.json": {
+    "disableArtifact": true,
+    "disableClaudeAiConnectors": true,
+    "enableArtifact": false,
+    "forceLoginMethod": "claudeai",
+    "spinnerVerbs": {
+      "mode": "replace",
+      "verbs": [
+        "Recycling",
+        "Upcycling",
+        "Molding",
+        "Milling",
+        "Weatherproofing",
+        "Assembling",
+        "Crafting",
+        "Stacking",
+        "Rocking",
+        "Lounging",
+      ],
+    },
+  },
+  "claude-managed-settings.gateway.json": {
+    "allowManagedHooksOnly": true,
+    "allowManagedPermissionRulesOnly": true,
+    "disableArtifact": true,
+    "disableClaudeAiConnectors": true,
+    "enableArtifact": false,
+    "permissions": {
+      "disableBypassPermissionsMode": "disable",
+    },
+    "spinnerVerbs": {
+      "mode": "replace",
+      "verbs": [
+        "Recycling",
+        "Upcycling",
+        "Molding",
+        "Milling",
+        "Weatherproofing",
+        "Assembling",
+        "Crafting",
+        "Stacking",
+        "Rocking",
+        "Lounging",
+      ],
+    },
+  },
+  "claude-managed-settings.json": {
+    "allowManagedHooksOnly": true,
+    "allowManagedPermissionRulesOnly": true,
+    "disableArtifact": true,
+    "disableClaudeAiConnectors": true,
+    "enableArtifact": false,
+    "forceLoginMethod": "claudeai",
+    "permissions": {
+      "disableBypassPermissionsMode": "disable",
+    },
+    "spinnerVerbs": {
+      "mode": "replace",
+      "verbs": [
+        "Recycling",
+        "Upcycling",
+        "Molding",
+        "Milling",
+        "Weatherproofing",
+        "Assembling",
+        "Crafting",
+        "Stacking",
+        "Rocking",
+        "Lounging",
+      ],
+    },
+  },
+}
+`;
+
+exports[`the managed policy files the image installs (generated at build) > the indicator default: POLYWOOD on a hosted box when nothing is chosen; a choice and a local install keep theirs 1`] = `
+{
+  "claude-code": {
+    "spinnerVerbs": {
+      "mode": "replace",
+      "verbs": [
+        "Recycling",
+      ],
+    },
+  },
+  "codex": {
+    "defaultModel": "x",
+  },
+}
+`;

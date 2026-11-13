@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
-import type { ConvItem, JournalFrame } from '../../../api/types';
+import type { ConvItem, JournalFrame, JournalItem } from '../../../api/types';
 import { api } from '../../../api/client';
 import { itemsFromEvent } from './convItems';
 
@@ -9,6 +9,14 @@ import { itemsFromEvent } from './convItems';
 /** JSONL lines fetched per older-history page via loadOlder(), mirroring ConversationView's
  *  own reverse-infinite-scroll window size (packages/web/src/components/tabs/ConversationView.tsx). */
 const OLDER_PAGE_LIMIT = 120;
+
+/**
+ * Newest first (2026-11-12). The socket's first journal window is small (structured-socket's
+ * FIRST_WINDOW), so the newest messages paint at once. Right after it, ONE journal page brings the
+ * view up to this many items: what the person reads first is already on screen, and the page lands
+ * above it, anchored (the small "Loading earlier…" pill shows meanwhile). Older pages come only on demand.
+ */
+export const FILL_TARGET = 200;
 
 /**
  * Content-fingerprint FALLBACK for dedup'ing a loadOlder() page against what's already in
@@ -126,6 +134,19 @@ export function withSeq(prev: ConvItem[], add: ConvItem[], seq: number | undefin
   return add.map((it) => (it.seq === seq ? it : { ...it, seq }));
 }
 
+/**
+ * An older journal page put above the view. A row whose `seq` the view holds already is left out (a
+ * live frame landed with it while the page was on its way, or the page overlaps the window), so an
+ * item never shows twice and nothing moves. Rows are in sequence order, oldest first, as the route
+ * gives them. Returns `prev` itself when nothing is new.
+ */
+export function prependJournalRows(prev: ConvItem[], rows: JournalItem[], sessionId: string | undefined): ConvItem[] {
+  const have = new Set<number>();
+  for (const it of prev) if (it.seq !== undefined) have.add(it.seq);
+  const fresh = rows.filter((r) => !have.has(r.seq)).flatMap((r) => itemsFromEvent(r.payload, sessionId, r.seq));
+  return fresh.length ? [...fresh, ...prev] : prev;
+}
+
 /** What the socket module gives the journal frame handler: its own stale handling and its append. */
 export interface JournalFrameContext {
   /** Remove the stale items (the view cache, or the items kept through a reconnect): the frame replaces them. */
@@ -198,6 +219,10 @@ export function useChatHistory(
   // `journalRef`: set by a journal frame that replaced the view. While `more` is true, older pages come
   // from the journal route, before `oldestSeq`; after that from the transcript route, as before W3-D.
   const journalRef = useRef({ active: false, oldestSeq: 0, more: false });
+  // The fill after the first window: asked for by the journal frame, run by an effect after the render
+  // that shows the window. `tok` is the paging token of the socket that asked; a newer one drops it.
+  const fillRef = useRef<{ tok: number; limit: number } | null>(null);
+  const [fillTick, setFillTick] = useState(0);
   // The journal sequence of the event that the socket fold handles now (see noteEvent), or undefined.
   const seqRef = useRef<number | undefined>(undefined);
   const trackerRef = useRef(new ResumeTracker());
@@ -235,6 +260,13 @@ export function useChatHistory(
       hasMoreRef.current = more; setHasMore(more);
       oldestLineRef.current = undefined;
       savedRef.current = { hasMore: more, oldestLine: undefined };
+      // Newest first: the window paints now; one page brings the view up to FILL_TARGET items. It is
+      // asked for in the effect after this render (see `fill` below), for the socket that is still current.
+      const want = FILL_TARGET - rows.length;
+      if (journalRef.current.more && rows.length > 0 && want > 0) {
+        fillRef.current = { tok: pageTokenRef.current, limit: want };
+        setFillTick((n) => n + 1);
+      }
     } else {
       ctx.keepStale();
       const more = savedRef.current.hasMore ?? pageableRef.current;
@@ -300,6 +332,43 @@ export function useChatHistory(
       });
   }, [terminalId, setItems]);
 
+  /**
+   * One journal page above the oldest sequence the view holds, prepended. An item is identified by
+   * its `seq`: one the view has already (a live frame that landed meanwhile, a page read twice) is not
+   * added again, and nothing is removed because its words equal another item's.
+   */
+  const journalPage = useCallback((limit: number) => {
+    if (!terminalId || loadingOlderRef.current) return;
+    const tok = pageTokenRef.current;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    api.getJournal(terminalId, { before: journalRef.current.oldestSeq, limit })
+      .then((page) => {
+        if (tok !== pageTokenRef.current) return; // thread switched / ws reset mid-flight — discard
+        const rows = Array.isArray(page.items) ? page.items : [];
+        const journal = journalRef.current;
+        if (rows.length) journal.oldestSeq = Math.min(journal.oldestSeq, rows[0].seq);
+        journal.more = page.hasMore === true && rows.length > 0;
+        const more = journal.more || pageableRef.current;
+        hasMoreRef.current = more; setHasMore(more);
+        savedRef.current = { ...savedRef.current, hasMore: more };
+        if (!rows.length) return;
+        setItems((prev) => prependJournalRows(prev, rows, sessionRef.current));
+      })
+      .catch(() => { /* transient — the next near-top scroll retries */ })
+      .finally(() => {
+        if (tok === pageTokenRef.current) { loadingOlderRef.current = false; setLoadingOlder(false); }
+      });
+  }, [terminalId, setItems]);
+
+  // The fill (see FILL_TARGET): after the render that shows the first window, so it never delays it.
+  useEffect(() => {
+    const fill = fillRef.current;
+    fillRef.current = null;
+    if (!fill || fill.tok !== pageTokenRef.current || !journalRef.current.more) return;
+    journalPage(fill.limit);
+  }, [fillTick, journalPage]);
+
   // Page in the next older window of REST-backed history and prepend it to `items` (see
   // the loadOlder doc comment on StructuredChat above for the shape-parity gap this
   // accepts). Reads/writes via refs (not the hasMore/loadingOlder state directly) so this
@@ -312,30 +381,7 @@ export function useChatHistory(
     // because its words equal another item's. When the journal is at its first item, the code below
     // takes over: the transcript route, for a harness that has one.
     if (journalRef.current.active && journalRef.current.more) {
-      loadingOlderRef.current = true;
-      setLoadingOlder(true);
-      api.getJournal(terminalId, { before: journalRef.current.oldestSeq, limit: OLDER_PAGE_LIMIT })
-        .then((page) => {
-          if (tok !== pageTokenRef.current) return; // thread switched / ws reset mid-flight — discard
-          const rows = Array.isArray(page.items) ? page.items : [];
-          const journal = journalRef.current;
-          if (rows.length) journal.oldestSeq = rows[0].seq;
-          journal.more = page.hasMore === true && rows.length > 0;
-          const more = journal.more || pageableRef.current;
-          hasMoreRef.current = more; setHasMore(more);
-          savedRef.current = { ...savedRef.current, hasMore: more };
-          if (!rows.length) return;
-          setItems((prev) => {
-            const have = new Set<number>();
-            for (const it of prev) if (it.seq !== undefined) have.add(it.seq);
-            const fresh = rows.filter((r) => !have.has(r.seq)).flatMap((r) => itemsFromEvent(r.payload, sessionRef.current, r.seq));
-            return fresh.length ? [...fresh, ...prev] : prev;
-          });
-        })
-        .catch(() => { /* transient — the next near-top scroll retries */ })
-        .finally(() => {
-          if (tok === pageTokenRef.current) { loadingOlderRef.current = false; setLoadingOlder(false); }
-        });
+      journalPage(OLDER_PAGE_LIMIT);
       return;
     }
     // First call only (no numeric anchor probed yet): anchor precisely on the oldest
@@ -426,7 +472,7 @@ export function useChatHistory(
     // `anchorRetry` is a dependency ON PURPOSE: bumping it re-creates this callback, which is
     // what re-fires useBootstrapOlderPages' effect after an anchorless bail (see above). The
     // body reads nothing from it.
-  }, [terminalId, anchorRetry, setItems]);
+  }, [terminalId, anchorRetry, setItems, journalPage]);
 
   return {
     hasMore, loadingOlder, loadOlder, hydrateInactive,

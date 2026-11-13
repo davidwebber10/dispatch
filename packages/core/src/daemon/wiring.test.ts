@@ -204,13 +204,15 @@ describe('the sockets (attach)', () => {
     ws!.terminate();
   });
 
-  test('a remote Host with no credential is refused with 401; a thread key is refused with 403; an unknown path is closed', async () => {
+  test('a remote Host with no credential is refused with 401; a thread key is refused with 403; a path that names no socket gets 404', async () => {
     const k = kit({ auth: 'gate' });
     const port = await k.port();
     expect((await connect(port, '/api/events', { Host: LAN_HOST })).status).toBe(401);
     const key = k.daemon.services.keys.mint({ kind: 'thread', terminalId: 't1' }).key;
     expect((await connect(port, '/api/events', { Authorization: `Bearer ${key}` })).status).toBe(403);
-    expect((await connect(port, '/api/nothing')).status).toBe(-1);
+    expect((await connect(port, '/api/nothing')).status).toBe(404);
+    // A caller the gate refuses learns nothing about which paths are sockets: the same 401 for both.
+    expect((await connect(port, '/api/nothing', { Host: LAN_HOST })).status).toBe(401);
   });
 
   test('revoking a device closes its open sockets', async () => {

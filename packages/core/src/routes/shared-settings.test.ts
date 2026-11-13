@@ -4,7 +4,7 @@ import request from 'supertest';
 import Database from 'better-sqlite3';
 import { initSchema } from '../db/schema.js';
 import { createDictationSettingsRouter, createCoordinatorSettingsRouter } from './shared-settings.js';
-import { policyKindOf } from '../auth/route-policy.js';
+import { policyHandlerOf, policyKindOf } from '../auth/route-policy.js';
 import * as appState from '../db/app-state.js';
 
 function app() {
@@ -74,7 +74,7 @@ describe('policy', () => {
       const router = r(new Database(':memory:')) as unknown as { stack: { route?: { stack: { handle: unknown }[] } }[] };
       const routes = router.stack.filter((l) => l.route);
       expect(routes.length).toBe(2);
-      for (const l of routes) expect(policyKindOf(l.route!.stack[0].handle)).toBe('owner');
+      for (const l of routes) expect(policyKindOf(policyHandlerOf(l.route!))).toBe('owner');
     }
   });
 });

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { SETTINGS_SECTIONS, settingsSection, useAllSettingsSections, useSettingsGroups } from './sections';
+import { SETTINGS_SECTIONS, settingsSection, useAllSettingsSections, useSettingsGroups, settingsGroupLabel } from './sections';
 import { useUI } from '../../stores/ui';
 import { useNavigation } from '../../stores/navigation';
 import { UpdateBanner } from '../update/UpdateBanner';
@@ -42,7 +42,7 @@ export function SettingsView() {
         <div style={{ flex: 1, overflowY: 'auto', padding: '10px 8px' }}>
           {groups.map((g, gi) => (
             <div key={g} role="group" aria-label={g}>
-              <div style={{ font: '500 9.5px var(--font-mono)', letterSpacing: '0.1em', color: 'var(--color-text-tertiary)', padding: gi === 0 ? '2px 8px 6px' : '14px 8px 6px' }}>{g}</div>
+              <div style={{ font: '500 9.5px var(--font-mono)', letterSpacing: '0.1em', color: 'var(--color-text-tertiary)', padding: gi === 0 ? '2px 8px 6px' : '14px 8px 6px' }}>{settingsGroupLabel(g)}</div>
               {sections.filter((s) => s.group === g).map((s) => {
                 const on = s.key === tab;
                 const Icon = s.icon;

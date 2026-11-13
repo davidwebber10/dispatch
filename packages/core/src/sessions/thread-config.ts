@@ -23,6 +23,8 @@ export interface TerminalConfig {
   skipPermissions?: boolean;
   /** 'supervised' shows gated tools as Needs; 'autonomous' allows them. */
   autonomy?: 'supervised' | 'autonomous';
+  /** Approval setting of a chat thread (os/approvals.ts): auto, ask or smart. Absent: today's autonomy rule. */
+  approvals?: 'auto' | 'ask' | 'smart';
   /** OpenCode: the model has no tool endpoint, so the thread runs chat-only. Pinned at first sight. */
   toolsDisabled?: boolean;
   /** The MCP servers the thread was last started with (informational). */

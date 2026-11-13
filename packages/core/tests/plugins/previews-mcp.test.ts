@@ -79,7 +79,10 @@ describe('the Previews plugin MCP server', () => {
     expect(list.result.tools.map((t: any) => t.name)).toEqual(['preview', 'inbox_secret']);
     const r = await callPreview({ paths: ['shot.png', path.join(proj, 'notes.md')], text: 'copy me', title: 'A shot', note: 'the login page' });
     expect(r.isError).toBe(false);
-    expect(r.parsed).toMatchObject({ ok: true, files: ['shot.png', 'notes.md'] });
+    expect(r.parsed).toMatchObject({ ok: true, title: 'A shot', files: ['shot.png', 'notes.md'] });
+    expect(r.raw.result.content).toHaveLength(1);
+    expect(r.parsed.message).toBe("Sent to the person's Inbox: A shot. They can open it now; do not send it again.");
+    expect(Object.keys(r.parsed)[0]).toBe('message');
     const doc = pluginData.getDoc(db, 'previews', `preview:${r.parsed.id}`);
     expect(doc?.value).toMatchObject({ id: r.parsed.id, sessionId: 'A', sessionName: 'Alpha', terminalId: 'tA', terminalLabel: 'Worker A', title: 'A shot', note: 'the login page', text: 'copy me', seenAt: null });
     const files = (doc!.value as { files: { fileId: string; name: string; mime: string; size: number }[] }).files;

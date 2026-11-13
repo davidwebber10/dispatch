@@ -163,9 +163,17 @@ describe('getConversation still refuses a thread with no transcript', () => {
 });
 
 describe('historyOwnedByRest', () => {
-  it('is true for Codex, whose items carry no uuid to dedup a ring replay against', () => {
+  it('is true for Codex with a transcript, whose items carry no uuid to dedup a ring replay against', () => {
+    writeRollout([userLine('hello'), assistantLine('hi back')]);
     const { svc, terminalId } = codexThread();
     expect(svc.historyOwnedByRest(terminalId)).toBe(true);
+  });
+
+  it('is false for a Codex thread whose transcript is missing or empty: the resume backfill is then its history', () => {
+    const { svc, terminalId } = codexThread();
+    expect(svc.historyOwnedByRest(terminalId)).toBe(false);
+    writeRollout([]);
+    expect(svc.historyOwnedByRest(terminalId)).toBe(false);
   });
 
   it('is false for Claude Code, whose uuids make the ring replay safe to overlap', () => {

@@ -26,6 +26,7 @@
  */
 
 import type { ConvItem } from './transcript.js';
+import { isHarnessContext, CONTEXT_NOTICE } from './task-notification.js';
 
 export function parseCodexRollout(text: string): ConvItem[] {
   const items: ConvItem[] = [];
@@ -75,12 +76,16 @@ function message(payload: Record<string, unknown>, ts?: string): ConvItem[] {
 
   const out: ConvItem[] = [];
   const texts: string[] = [];
+  let context = false;
   for (const raw of content) {
     if (!raw || typeof raw !== 'object') continue;
     const block = raw as Record<string, unknown>;
     // input_text on a human turn, output_text on the assistant's.
     if (block.type === 'input_text' || block.type === 'output_text') {
       const t = str(block.text);
+      // Codex puts its own context in user-role items (<environment_context>, <user_instructions>, the
+      // AGENTS.md injection, <turn_aborted>): never the person's message, so a muted line, not a bubble.
+      if (t && role === 'user' && isHarnessContext(t)) { context = true; continue; }
       if (t) texts.push(t);
     } else if (block.type === 'input_image') {
       const url = str(block.image_url) ?? str(block.url);
@@ -89,6 +94,7 @@ function message(payload: Record<string, unknown>, ts?: string): ConvItem[] {
   }
   // One item per turn, not one per block — a turn split across blocks is still one bubble.
   if (texts.length) out.unshift({ kind: role, text: texts.join('\n'), ts });
+  if (context) out.unshift({ kind: 'notice', text: CONTEXT_NOTICE, ts });
   return out;
 }
 

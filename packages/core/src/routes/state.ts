@@ -1,3 +1,4 @@
+import { hostedTarget, cachedHostedUpdate } from '../update/hosted.js';
 import fs from 'fs';
 import { reportsStatus } from '../sessions/thread-config.js';
 import path from 'path';
@@ -12,9 +13,13 @@ import { getRunningVersion, isNewerVersion } from '../update/version.js';
 import { parseStoredNotes, readLocalReleaseNote } from '../update/notes.js';
 import { revealClientFrom } from '../files/reveal.js';
 import { clientMessage } from '../http/client-message.js';
+import { PATH_REFUSALS, type PathPolicy } from '../files/path-policy.js';
+import { pathPolicyFor } from '../files/path-policy-default.js';
+import { agentMkdir } from '../privsep/agent-fs.js';
 
-export function createStateRouter(db: Database.Database): Router {
+export function createStateRouter(db: Database.Database, opts: { policy?: PathPolicy } = {}): Router {
   const router = policyRouter();
+  const policy = opts.policy ?? pathPolicyFor(db);
 
   // GET /api/state/last-directory — return last used working directory
   router.get('/last-directory', (_req, res) => {
@@ -43,6 +48,9 @@ export function createStateRouter(db: Database.Database): Router {
       let dirPath = (req.query.path as string) || '~';
       dirPath = dirPath.replace(/^~/, os.homedir());
       dirPath = path.resolve(dirPath);
+      // The person's folders only (files/path-policy.ts): never the system's own trees; on a hosted box the home and project folders.
+      const why = policy.problem(dirPath, { project: os.homedir(), use: 'read' });
+      if (why) return res.status(403).json({ error: PATH_REFUSALS[why], code: 'path_refused', reason: why });
 
       if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
         return res.status(400).json({ error: 'Not a directory' });
@@ -69,7 +77,9 @@ export function createStateRouter(db: Database.Database): Router {
       if (!dirPath) return res.status(400).json({ error: 'path required' });
       dirPath = dirPath.replace(/^~/, os.homedir());
       dirPath = path.resolve(dirPath);
-      fs.mkdirSync(dirPath, { recursive: true });
+      const why = policy.problem(dirPath, { project: os.homedir(), use: 'write' });
+      if (why) return res.status(403).json({ error: PATH_REFUSALS[why], code: 'path_refused', reason: why });
+      agentMkdir(dirPath);
       res.json({ ok: true, path: dirPath });
     } catch (err: any) {
       res.status(400).json({ error: clientMessage(err) });
@@ -110,7 +120,19 @@ export function createStateRouter(db: Database.Database): Router {
   // contains before it installs. `currentNotes` is the note for the version running
   // right now, read from this checkout — that one CAN come from disk, because the file
   // shipped with the code.
-  router.get('/update', (_req, res) => {
+  router.get('/update', async (_req, res) => {
+    // A hosted box updates by moving onto a newer IMAGE: the answer comes from OS (update/hosted.ts),
+    // never from the GitHub release poller (which does not run there). url/publishedAt are null.
+    const hosted = hostedTarget();
+    if (hosted) {
+      const currentVersion = getRunningVersion();
+      const st = await cachedHostedUpdate(hosted, currentVersion);
+      return void res.json({
+        available: st.available, version: st.available ? st.version : null, url: null, publishedAt: null,
+        currentVersion, notes: [], currentNotes: readLocalReleaseNote(currentVersion), hosted: true,
+        ...(st.error ? { error: st.error } : {}),
+      });
+    }
     const tag = appState.get(db, 'latest_release_tag');
     const url = appState.get(db, 'latest_release_url');
     const publishedAt = appState.get(db, 'latest_release_published_at');

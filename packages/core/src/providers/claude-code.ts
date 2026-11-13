@@ -100,7 +100,7 @@ export const claudeCodeProvider: SessionProvider = {
     };
   },
 
-  buildStructuredCommand({ workDir, secretsMcp, appendSystemPrompt, resumeSessionId, model, effort, disallowedTools, autoMemoryDirectory }: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string; model?: string; effort?: string; disallowedTools?: string[]; autoMemoryDirectory?: string }) {
+  buildStructuredCommand({ workDir, secretsMcp, appendSystemPrompt, resumeSessionId, model, effort, disallowedTools, autoMemoryDirectory, smartApprovals }: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string; model?: string; effort?: string; disallowedTools?: string[]; autoMemoryDirectory?: string; /** Smart approvals (os/approvals.ts): auto mode, plus the inline `ask` rules settings when there are rules. */ smartApprovals?: { settings: string | null } }) {
     // The spike-verified stream-json control protocol. Parity permissions come from
     // the StructuredSessionManager's auto-allow loop, NOT --dangerously-skip-permissions.
     const args: string[] = [
@@ -112,7 +112,9 @@ export const claudeCodeProvider: SessionProvider = {
       // content_block_start/delta/stop, …) IN ADDITION to the whole
       // assistant/user/result events, so the View can render tokens incrementally.
       '--include-partial-messages',
-      '--permission-mode', 'default',
+      // Smart approvals: Claude's own classifier decides (auto mode); the manager surfaces every
+      // can_use_tool that still arrives. Otherwise `default`, answered by the manager's membrane.
+      '--permission-mode', smartApprovals ? 'auto' : 'default',
       '--permission-prompt-tool', 'stdio',
       ...mcpArgs(secretsMcp),
       // The secrets/roster note, then the Overseer persona (coordinator / typed agent):
@@ -135,6 +137,8 @@ export const claudeCodeProvider: SessionProvider = {
     // session loads only that folder's MEMORY.md, not the project folder that the user's own
     // threads share. Inline JSON settings are additive, like the hooks file of a PTY thread.
     if (autoMemoryDirectory) args.push('--settings', autoMemorySettingsArg(autoMemoryDirectory));
+    // The smart `ask` rules (os/approvals.ts claudeSmartAskRules): additive inline settings.
+    if (smartApprovals?.settings) args.push('--settings', smartApprovals.settings);
     return { command: 'claude', args };
   },
 

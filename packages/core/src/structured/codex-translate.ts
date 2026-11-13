@@ -22,6 +22,7 @@
 import { detectCodexLimit, type UsageLimit } from '../limits/detect.js';
 import type { PendingPermission, PermissionDecision } from './manager.js';
 import { looksLikeQuestion } from '../status/question.js';
+import { refusedModelMessage } from '../providers/catalog.js';
 
 /** The ServerRequest approval methods this layer understands (spec mapping table). An
  *  `mcpServer/elicitation/request` counts only when it is an MCP TOOL-CALL approval (see
@@ -108,8 +109,12 @@ function toolInputForItem(item: any): Record<string, unknown> {
     }
     case 'mcpToolCall': return { server: item.server, tool: item.tool, arguments: item.arguments };
     case 'dynamicToolCall': return { tool: item.tool, arguments: item.arguments };
+    // Its query and action arrive only at item/completed (item/started has an empty query).
+    case 'webSearch': return { query: item.query, ...(item.action != null ? { action: item.action } : {}) };
+    case 'imageGeneration': return { ...(item.revisedPrompt != null ? { prompt: item.revisedPrompt } : {}), ...(item.inputImages != null ? { inputImages: item.inputImages } : {}) };
     default: {
-      const { id, type, ...rest } = item ?? {};
+      // The call's own fields, without what describes how it went (that is the result's).
+      const { id, type, status, result, results, error, failure, durationMs, success, contentItems, agentsStates, aggregatedOutput, exitCode, processId, savedPath, ...rest } = item ?? {};
       return rest;
     }
   }
@@ -367,12 +372,22 @@ export class CodexTranslator {
       return out;
     }
     if (NON_TOOL_ITEMS.has(item.type)) return [];
+    const started = this.itemDetails.get(item.id);
     this.itemDetails.set(item.id, item);
+    const out: TranslatedAction[] = [];
+    // Some items carry their details only at completion (webSearch: the query and the action; a
+    // fileChange's final change list): the tool_use sent at item/started showed an empty or older input.
+    // Send the call again, whole, with the same id: a view and the journal replace the input by id.
+    const input = toolInputForItem(item);
+    if (!started || JSON.stringify(toolInputForItem(started)) !== JSON.stringify(input)) {
+      out.push({ kind: 'event', event: { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: item.id, name: toolNameForItem(item), input }] } } });
+    }
     // Tool finished → emit the tool_result the reducer pairs with the tool_use above by id.
-    return [{
+    out.push({
       kind: 'event',
       event: { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: item.id, content: toolOutputForItem(item), is_error: itemIsError(item) }] } },
-    }];
+    });
+    return out;
   }
 
   private tokenUsage(params: any): TranslatedAction[] {
@@ -433,9 +448,14 @@ export class CodexTranslator {
 
   private errorNotif(params: any): TranslatedAction[] {
     const err = params?.error ?? params;
-    const message = typeof err?.message === 'string' ? err.message : (typeof params === 'string' ? params : 'Codex error');
-    const event = { kind: 'event' as const, event: { type: 'result', subtype: 'error', is_error: true, result: message } };
-    const limit = params?.willRetry === true ? null : detectCodexLimit({ message, codexErrorInfo: err?.codexErrorInfo }, Date.now());
+    const raw = typeof err?.message === 'string' ? err.message : (typeof params === 'string' ? params : 'Codex error');
+    // A model the account cannot use: Codex labels it (codexErrorInfo `modelNotFound`, seen live on codex-cli
+    // 0.167.2 with a ChatGPT sign-in). Said in plain words with what to do; Codex's own words stay in `detail`.
+    const notFound = err?.codexErrorInfo === 'modelNotFound';
+    const named = notFound ? (/'([^']{1,120})' model/.exec(raw)?.[1] ?? this.model) : undefined;
+    const message = notFound && named ? refusedModelMessage(named) : raw;
+    const event = { kind: 'event' as const, event: { type: 'result', subtype: 'error', is_error: true, result: message, ...(message !== raw ? { detail: raw } : {}) } };
+    const limit = params?.willRetry === true ? null : detectCodexLimit({ message: raw, codexErrorInfo: err?.codexErrorInfo }, Date.now());
     if (limit) {
       this.limitThisTurn = true;
       return [event, { kind: 'usage-limit', limit }];

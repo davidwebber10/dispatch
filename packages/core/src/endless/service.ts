@@ -33,6 +33,9 @@ import { redactKeys, redactKeysDeep } from '../auth/redact-keys.js';
 import { resolveProject, overseerOf, type ProjectRef } from './projects.js';
 import type { LedgerService } from '../overseer/ledger-service.js';
 import { DocsService } from '../docs/service.js';
+import { privsep } from '../privsep/config.js';
+import { publishToAgent, runDirFor } from '../privsep/paths.js';
+import { agentMkdir, agentWriteFile } from '../privsep/agent-fs.js';
 
 export class UserError extends Error {}
 
@@ -124,7 +127,9 @@ export class EndlessService {
     this.store = new EndlessStore(o.db);
     this.views = new ViewKeeper(this.store, o.limits, { defer: true });
     this.mediaDir = path.join(o.chatDir, 'media');
-    this.mcpConfigPath = path.join(o.chatDir, 'memory.mcp.json');
+    // With privilege separation the chat folder is the agent's: the config the daemon writes for the
+    // harness goes to the agent run dir (read-only for workloads) instead.
+    this.mcpConfigPath = path.join(privsep() ? runDirFor(o.chatDir, 'chat') : o.chatDir, 'memory.mcp.json');
     this.timeZone = o.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
     this.now = o.now ?? Date.now;
     this.docs = new DocsService(o.db, this.store, this.now);
@@ -189,10 +194,11 @@ export class EndlessService {
   private boot(port: number): void {
     // Loaded here, not in the constructor: a corrupt saved view then fails only the chat.
     this.views.load();
-    fs.mkdirSync(this.mediaDir, { recursive: true });
+    agentMkdir(this.mediaDir);
     const memoryMcp = fileURLToPath(new URL('./memory-mcp.js', import.meta.url));
     fs.writeFileSync(this.mcpConfigPath, JSON.stringify({ mcpServers: { memory: { command: 'node', args: [memoryMcp], env: { DISPATCH_PORT: String(port), DISPATCH_AUTH: '${DISPATCH_AUTH}' } } } }, null, 2), { mode: 0o600 });
     fs.chmodSync(this.mcpConfigPath, 0o600); // an older file keeps its mode on overwrite
+    publishToAgent(this.mcpConfigPath);
     const last = this.store.getState('turn_status');
     if (last === 'running' || last === 'waiting') this.store.setState('turn_status', 'interrupted');
     this.compactor.recover();
@@ -508,9 +514,9 @@ export class EndlessService {
     if (!ext) throw new UserError(`unsupported file type: ${f.media_type}`);
     const data = Buffer.from(String(f.data ?? ''), 'base64');
     if (data.length === 0 || data.length > MAX_FILE_BYTES) throw new UserError('a file must be between 1 byte and 20 MB');
-    fs.mkdirSync(this.mediaDir, { recursive: true });
+    agentMkdir(this.mediaDir);
     const file = path.join(this.mediaDir, `${this.now()}-${k}-${randomUUID().slice(0, 8)}-${safeFileName(f.name, ext)}`);
-    fs.writeFileSync(file, data);
+    agentWriteFile(file, data);
     return file;
   }
 
@@ -519,9 +525,9 @@ export class EndlessService {
     if (!ext) throw new UserError(`unsupported image type: ${img.media_type}`);
     const data = Buffer.from(String(img.data ?? ''), 'base64');
     if (data.length === 0 || data.length > MAX_IMAGE_BYTES) throw new UserError('an image must be between 1 byte and 10 MB');
-    fs.mkdirSync(this.mediaDir, { recursive: true });
+    agentMkdir(this.mediaDir);
     const file = path.join(this.mediaDir, `${this.now()}-${k}-${randomUUID().slice(0, 8)}.${ext}`);
-    fs.writeFileSync(file, data);
+    agentWriteFile(file, data);
     return file;
   }
 

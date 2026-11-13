@@ -9,7 +9,8 @@ const I_MIN = 300, I_MAX = 600, I_DEF = 320;
 // Dragging a handle below this width (well under the min) collapses that column.
 const S_COLLAPSE = 110, I_COLLAPSE = 150;
 
-export function Workspace({ sidebar, main, inspector }: { sidebar: ReactNode; main: ReactNode; inspector: ReactNode }) {
+/** `sidebar` null: the list lives elsewhere (the OS rail of a hosted workspace), so no left column. */
+export function Workspace({ sidebar, main, inspector }: { sidebar: ReactNode | null; main: ReactNode; inspector: ReactNode }) {
   const leftCollapsed = useUI((s) => s.leftCollapsed);
   const rightCollapsed = useUI((s) => s.rightCollapsed);
   const { width: sideW, startDrag: startLeftDrag } = useResizableWidth({
@@ -23,8 +24,8 @@ export function Workspace({ sidebar, main, inspector }: { sidebar: ReactNode; ma
 
   return (
     <div style={{ display: 'flex', flex: 1, minWidth: 0, minHeight: 0 }}>
-      <aside style={{ width: leftCollapsed ? 0 : sideW, flexShrink: 0, background: 'var(--color-pane)', borderRight: leftCollapsed ? 'none' : '1px solid var(--color-border)', overflow: leftCollapsed ? 'hidden' : 'auto' }}>{sidebar}</aside>
-      {!leftCollapsed && <DragHandle onStart={startLeftDrag} />}
+      {sidebar !== null && <aside style={{ width: leftCollapsed ? 0 : sideW, flexShrink: 0, background: 'var(--color-pane)', borderRight: leftCollapsed ? 'none' : '1px solid var(--color-border)', overflow: leftCollapsed ? 'hidden' : 'auto' }}>{sidebar}</aside>}
+      {sidebar !== null && !leftCollapsed && <DragHandle onStart={startLeftDrag} />}
       <main style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>{main}</main>
       {/* No inspector content (e.g. the Dispatch coordinator tab) → skip the pane and its
           handle entirely, so `main` reclaims the width instead of framing an empty pane. */}
