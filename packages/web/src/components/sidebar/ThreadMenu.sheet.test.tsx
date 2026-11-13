@@ -61,12 +61,26 @@ describe('the phone thread sheet', () => {
     expect(screen.getByDisplayValue('Fix the login bug')).toBeInTheDocument();
   });
 
-  it('a View group holds the caller row and Thread details, each with an icon', () => {
+  // Owner, 2026-11-13: "View Thread Details on mobile is just another list item, not a separate section".
+  it('the caller row and Thread details are the first rows of the list, with no View section', () => {
     open(tab(), { leadView: (close, row) => <button type="button" style={row} onClick={close}><svg />Switch to Pretty</button> });
-    const view = screen.getByRole('group', { name: 'View' });
-    const names = within(view).getAllByRole('button').map((b) => b.textContent);
-    expect(names).toEqual(['Switch to Pretty', 'Thread details']);
-    for (const b of within(view).getAllByRole('button')) expect(b.querySelector('svg')).not.toBeNull();
+    expect(screen.queryByRole('group', { name: 'View' })).toBeNull();
+    expect(screen.queryByText('View')).toBeNull();
+    const rows = within(screen.getByTestId('thread-menu-list')).getAllByRole('button');
+    expect(rows.slice(0, 2).map((b) => b.textContent)).toEqual(['Switch to Pretty', 'Thread details']);
+    for (const b of rows.slice(0, 2)) expect(b.querySelector('svg')).not.toBeNull();
+  });
+
+  // Owner, 2026-11-13: on the phone the sheet opens at a fixed height; the four tiles stay at the top and
+  // never go above the screen; the rows under them scroll.
+  it('the sheet has a fixed height, the tiles stay outside the scrolling list, and the list scrolls', () => {
+    open();
+    const sheet = screen.getByTestId('thread-menu-sheet');
+    expect(sheet.style.height).toMatch(/dvh/);
+    const list = screen.getByTestId('thread-menu-list');
+    expect(list.style.overflowY).toBe('auto');
+    expect(list.contains(screen.getByRole('group', { name: 'Quick actions' }))).toBe(false);
+    expect(within(list).getByRole('button', { name: 'Archive thread' })).toBeInTheDocument();
   });
 
   it('plugin rows (the caller\'s tabs and the registry\'s items) sit together under a Plugins label', () => {
@@ -89,13 +103,10 @@ describe('the phone thread sheet', () => {
     expect(screen.queryByText('Plugins')).toBeNull();
   });
 
-  it('keeps the maintenance actions behind a closed More, each explained in one line', () => {
+  // Owner, 2026-11-13: "we can just remove the More ... it should just show the options".
+  it('shows the maintenance actions directly, with no More fold, each explained in one line', () => {
     open();
-    const more = screen.getByRole('button', { name: 'More' });
-    expect(more).toHaveAttribute('aria-expanded', 'false');
-    for (const name of ['Copy thread ID', 'Reload thread', 'Reset status', 'Auto-archive…']) expect(screen.queryByRole('button', { name })).toBeNull();
-    fireEvent.click(more);
-    expect(more).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.queryByRole('button', { name: 'More' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Reset status' })).toHaveAccessibleDescription('Clear a stuck Working or Needs-you state');
     expect(screen.getByRole('button', { name: 'Reload thread' })).toHaveAccessibleDescription('Reconnect to the thread');
     expect(screen.getByRole('button', { name: 'Copy thread ID' })).toHaveAccessibleDescription(/.+/);
@@ -105,7 +116,6 @@ describe('the phone thread sheet', () => {
 
   it('ends with Archive thread in the danger color, with an icon', () => {
     open();
-    fireEvent.click(screen.getByRole('button', { name: 'More' }));
     const all = within(screen.getByRole('menu')).getAllByRole('button');
     const last = all[all.length - 1];
     expect(last).toHaveAccessibleName('Archive thread');
@@ -115,11 +125,11 @@ describe('the phone thread sheet', () => {
 });
 
 describe('the desktop thread menu uses the same groups (a fly-out, not a flat list)', () => {
-  it('shows the tiles and a closed More; every action is still reachable', () => {
+  it('shows the tiles and every action directly, with no More fold', () => {
     asPhone(false);
     open();
     expect(screen.getByRole('group', { name: 'Quick actions' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.queryByRole('button', { name: 'More' })).toBeNull();
     for (const name of ['Rename thread', 'Branch thread', 'Copy thread ID', 'Reload thread', 'Reset status', 'Auto-archive…', 'Switch account…', 'Enable alerts', 'Archive thread']) {
       expect(screen.getByRole('button', { name })).toBeInTheDocument();
     }

@@ -21,7 +21,7 @@ import { useIsMobile } from '../../hooks/useIsMobile';
 import { pluginIcon } from '../../plugins/sdk';
 import {
   PencilSimple, GitBranch, UserSwitch, Bell, BellSlash, Info, Copy, ArrowClockwise, ArrowCounterClockwise,
-  Timer, Archive, PushPinSlash, CaretDown, CaretRight, Key, Question,
+  Timer, Archive, PushPinSlash, Key, Question,
 } from '@phosphor-icons/react';
 import { can } from '../../lib/profile';
 import type { Icon } from '@phosphor-icons/react';
@@ -86,12 +86,12 @@ function FlyOut({ x, y, onClose, children }: { x: number; y: number; onClose: ()
   const ref = useRef<HTMLDivElement>(null);
   const left = Math.max(EDGE, Math.min(x, window.innerWidth - EDGE - FLYOUT_W));
   const [top, setTop] = useState(y);
-  // Measured after every render, not only on open: More grows the fly-out, and it must not grow off
-  // the bottom. setTop with an unchanged value is a no-op, so this settles.
+  // Measured after every render, not only on open: a row can appear later (a plugin loads), and the
+  // fly-out must not grow off the bottom. setTop with an unchanged value is a no-op, so this settles.
   useLayoutEffect(() => {
     const h = ref.current?.getBoundingClientRect().height ?? 0;
     const room = window.innerHeight - EDGE;
-    // Slide up only as far as needed, so the row under the pointer (More) moves as little as it can.
+    // Slide up only as far as needed, so the menu stays as close to the pointer as it can.
     setTop(Math.max(EDGE, Math.min(y, room - h)));
   });
   // Callers pass a fresh onClose each render; read it through a ref so a parent's re-render does
@@ -153,10 +153,6 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
   const menuOpen = !!at;
   // No secrets call where Doppler is hidden (lib/profile.ts): the business workspace has none.
   useEffect(() => { if (menuOpen && can('settings.secrets')) void useSecrets.getState().loadScope(); }, [menuOpen]);
-  // The phone sheet's More disclosure starts closed each time the sheet opens.
-  const [moreOpen, setMoreOpen] = useState(false);
-  const [openedFor, setOpenedFor] = useState<ThreadMenuAt | null>(at);
-  if (openedFor !== at) { setOpenedFor(at); if (moreOpen) setMoreOpen(false); }
 
   async function archive(tab: Terminal) {
     setArchiveTarget(null);
@@ -256,8 +252,7 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
     const details = isMobile && isThread(t);
     const hasView = !!leadView || details;
     const caption = { ...captionBase, ...z.caption };
-    return (
-      <>
+    const tilesNode = (
         <div role="group" aria-label="Quick actions" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: z.gap, padding: z.pad }}>
           {tiles.map((x) => (
             <button key={x.key} type="button" aria-label={x.name} aria-pressed={x.pressed} onClick={x.onClick}
@@ -267,13 +262,23 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
             </button>
           ))}
         </div>
-        {hasView && (
+    );
+    const listNode = (
+      <>
+        {/* On a phone the caller's rows and Thread details are the first rows of the list, not a section
+            (owner, 2026-11-13). The desktop keeps its View label over the caller's rows. */}
+        {hasView && (isMobile ? (
+          <>
+            {leadView?.(onClose, z.row)}
+            {details && row('details', Info, 'Thread details', pick(setDetailsTarget))}
+          </>
+        ) : (
           <div role="group" aria-label="View" style={{ display: 'flex', flexDirection: 'column' }}>
             <div aria-hidden style={caption}>View</div>
             {leadView?.(onClose, z.row)}
             {details && row('details', Info, 'Thread details', pick(setDetailsTarget))}
           </div>
-        )}
+        ))}
         {plugins.length > 0 && can('settings.plugins') && (
           <div role="group" aria-label="Plugins" style={{ display: 'flex', flexDirection: 'column' }}>
             <div aria-hidden style={caption}>Plugins</div>
@@ -282,13 +287,9 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
         )}
         {isThread(t) && (
           <>
+            {/* No More fold (owner, 2026-11-13: "it should just show the options"). */}
             {rule}
-            <button type="button" aria-expanded={moreOpen} aria-controls="thread-menu-more" onClick={() => setMoreOpen((v) => !v)}
-              style={{ ...z.row, color: 'var(--color-text-secondary)' }}>
-              {moreOpen ? <CaretDown size={z.icon} /> : <CaretRight size={z.icon} />}More
-            </button>
-            {moreOpen && (
-              <div id="thread-menu-more" style={{ display: 'flex', flexDirection: 'column' }}>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
                 {row('copy', Copy, 'Copy thread ID', pick((x) => void copyId(x)), 'Lets another thread read or message this one')}
                 {row('reload', ArrowClockwise, 'Reload thread', pick(reload), 'Reconnect to the thread')}
                 {row('reset', ArrowCounterClockwise, 'Reset status', pick((x) => void resetStatus(x)), 'Clear a stuck Working or Needs-you state')}
@@ -306,7 +307,6 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
                   </button>
                 )}
               </div>
-            )}
           </>
         )}
         {rule}
@@ -315,6 +315,7 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
           : row('archive', Archive, 'Archive thread', pick(setArchiveTarget), undefined, { color: 'var(--color-status-red)' })}
       </>
     );
+    return { tiles: tilesNode, list: listNode };
   };
 
   return (
@@ -322,11 +323,19 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
       {/* One body, two shells: on a phone the app's shared slide-up sheet, on desktop a fly-out at the click. */}
       {isMobile ? (
         <Modal open={!!at} sheet title={at?.tab.label} onClose={onClose}>
-          {at && <div role="menu" aria-label="Thread options" onKeyDown={moveFocus} style={{ display: 'flex', flexDirection: 'column', paddingBottom: 4 }}>{body(at)}</div>}
+          {/* A fixed height (owner, 2026-11-13): the sheet never reaches the top of the screen; the tiles
+              stay at the top and the rows under them scroll. 78% of the screen less the sheet's header. */}
+          {at && (() => { const b = body(at); return (
+            <div role="menu" aria-label="Thread options" data-testid="thread-menu-sheet" onKeyDown={moveFocus}
+              style={{ display: 'flex', flexDirection: 'column', height: 'calc(78dvh - 96px)', minHeight: 0 }}>
+              <div style={{ flexShrink: 0 }}>{b.tiles}</div>
+              <div data-testid="thread-menu-list" style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', display: 'flex', flexDirection: 'column', paddingBottom: 4 }}>{b.list}</div>
+            </div>
+          ); })()}
         </Modal>
-      ) : at && (
-        <FlyOut key={`${at.tab.id}:${at.x}:${at.y}`} x={at.x} y={at.y} onClose={onClose}>{body(at)}</FlyOut>
-      )}
+      ) : at && (() => { const b = body(at); return (
+        <FlyOut key={`${at.tab.id}:${at.x}:${at.y}`} x={at.x} y={at.y} onClose={onClose}>{b.tiles}{b.list}</FlyOut>
+      ); })()}
 
       <ConfirmModal
         open={!!archiveTarget}

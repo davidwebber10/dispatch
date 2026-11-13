@@ -50,12 +50,9 @@ describe('the desktop thread fly-out', () => {
     for (const b of tiles) expect(b.querySelector('svg')).not.toBeNull();
   });
 
-  it('keeps the maintenance rows behind a closed More, and ends with Archive in red', () => {
+  it('shows the maintenance rows directly (no More fold, 2026-11-13), and ends with Archive in red', () => {
     open();
-    const more = screen.getByRole('button', { name: 'More' });
-    expect(more).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.queryByRole('button', { name: 'Reset status' })).toBeNull();
-    fireEvent.click(more);
+    expect(screen.queryByRole('button', { name: 'More' })).toBeNull();
     for (const name of ['Copy thread ID', 'Reload thread', 'Reset status', 'Auto-archive…']) expect(screen.getByRole('button', { name })).toBeInTheDocument();
     const all = within(flyout()).getAllByRole('button');
     expect(all[all.length - 1]).toHaveAccessibleName('Archive thread');
@@ -87,14 +84,11 @@ describe('the desktop thread fly-out', () => {
     expect(top + 420).toBeLessThanOrEqual(768 - 8);
   });
 
-  it('stays inside the viewport when More opens and the fly-out grows', () => {
+  it('a tall fly-out opened low stays inside the viewport (every row shows at once, 2026-11-13)', () => {
     asDesktop(1024, 768);
-    let h = 248;
+    const h = 428;
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({ width: 320, height: h, top: 0, left: 0, right: 320, bottom: h, x: 0, y: 0, toJSON: () => ({}) } as DOMRect));
     open(tab(), {}, 200, 500);
-    expect(parseFloat(flyout().style.top)).toBe(500);
-    h = 428;
-    fireEvent.click(screen.getByRole('button', { name: 'More' }));
     const top = parseFloat(flyout().style.top);
     expect(top).toBeGreaterThanOrEqual(8);
     expect(top + 428).toBeLessThanOrEqual(768 - 8);
@@ -137,11 +131,11 @@ describe('the desktop thread fly-out', () => {
     expect(document.activeElement).toBe(second);
   });
 
-  it('arrow keys reach the rows that More reveals', () => {
+  it('arrow keys reach the maintenance rows', () => {
     open();
-    const more = screen.getByRole('button', { name: 'More' });
-    more.focus();
-    fireEvent.click(more);
+    const prev = screen.getByRole('button', { name: 'Copy thread ID' });
+    const rows = within(flyout()).getAllByRole('button');
+    rows[rows.indexOf(prev) - 1].focus();
     fireEvent.keyDown(flyout(), { key: 'ArrowDown' });
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Copy thread ID' }));
   });
