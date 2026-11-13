@@ -85,11 +85,11 @@ it('lists the servers the thread was launched with under Tools, and nothing when
 });
 
 // Owner, 2026-11-13: "on desktop, the right column options can mirror the right click flyout layout".
-it('with actions it shows the thread menu\'s tiles and rows in place of the old buttons', async () => {
+it('shows the thread menu\'s tiles and rows in place of the old buttons', async () => {
   const { useTabs } = await import('../../stores/tabs');
   useTabs.setState({ byProject: { p1: [{ id: 't1', sessionId: 'p1', type: 'claude-code', label: 'Fix login', status: 'idle', config: {}, createdAt: '' } as any] } } as any);
   vi.spyOn(api, 'getUsageLimits').mockResolvedValue(claude);
-  render(<DetailsPane projectId="p1" terminalId="t1" actions />);
+  render(<DetailsPane projectId="p1" terminalId="t1" />);
   const tiles = await screen.findByRole('group', { name: 'Quick actions' });
   expect(tiles).toBeInTheDocument();
   for (const name of ['Rename thread', 'Download thread', 'Copy thread ID', 'Reload thread', 'Reset status', 'Archive thread']) expect(screen.getByRole('button', { name })).toBeInTheDocument();
@@ -97,9 +97,17 @@ it('with actions it shows the thread menu\'s tiles and rows in place of the old 
   expect(screen.queryByRole('button', { name: 'Archive Thread' })).toBeNull();
 });
 
-it('without actions (the phone details sheet) it keeps its plain buttons', async () => {
+// Owner, 2026-11-13 (option 1): the phone's Thread details mirrors the menu too. Inside it, the list has no
+// "Thread details" row, so the sheet never links to itself.
+it('on a phone it shows the same actions, without a Thread details row', async () => {
+  const mm = vi.spyOn(window, 'matchMedia').mockImplementation((q: string) => ({ matches: /max-width/.test(q), media: q, onchange: null, addListener: () => {}, removeListener: () => {}, addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => false }) as any);
+  const { useTabs } = await import('../../stores/tabs');
+  useTabs.setState({ byProject: { p1: [{ id: 't1', sessionId: 'p1', type: 'claude-code', label: 'Fix login', status: 'idle', config: {}, createdAt: '' } as any] } } as any);
   vi.spyOn(api, 'getUsageLimits').mockResolvedValue(claude);
   render(<DetailsPane projectId="p1" terminalId="t1" />);
-  expect(await screen.findByRole('button', { name: 'Archive Thread' })).toBeInTheDocument();
-  expect(screen.queryByRole('group', { name: 'Quick actions' })).toBeNull();
+  expect(await screen.findByRole('group', { name: 'Quick actions' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Download thread' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Thread details' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Archive Thread' })).toBeNull();
+  mm.mockRestore();
 });

@@ -5,8 +5,7 @@ import { useActivity } from '../../stores/activity';
 import { useTabs, findTerminal } from '../../stores/tabs';
 import type { Terminal } from '../../api/types';
 import { useUsageLimits, UsageLimitsRows } from './UsageLimitsSection';
-import { useAccounts, threadAccount, accountProviderOf } from '../../stores/accounts';
-import { AccountSwitchModal } from '../common/AccountSwitchModal';
+import { useAccounts, threadAccount } from '../../stores/accounts';
 import { useActiveModel, activeModelOf } from '../../stores/activeModel';
 import { can } from '../../lib/profile';
 import { friendlyModelName } from '../../lib/modelName';
@@ -26,14 +25,12 @@ function homePath(p: string): string {
 }
 
 const label: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
-const btn: React.CSSProperties = { height: 30, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontSize: 12, cursor: 'pointer' };
 
 /**
- * `actions` (the desktop right column, owner 2026-11-13): the thread's actions are the right-click
- * menu's own tiles and rows, so the two always match. Without it (the phone's Thread details sheet,
- * opened from that menu) the pane keeps its plain buttons.
+ * The thread's facts, then its actions (owner, 2026-11-13): the right-click menu's own tiles and rows, so
+ * the desktop right column, the phone's Thread details and the menu always match.
  */
-export function DetailsPane({ projectId, terminalId, actions = false }: { projectId: string | null; terminalId: string | null; actions?: boolean }) {
+export function DetailsPane({ projectId, terminalId }: { projectId: string | null; terminalId: string | null }) {
   const machine = can('details.machine');
   const project = useProjects((s) => s.sessions.find((x) => x.id === projectId)) ?? null;
   const activity = useActivity((s) => (terminalId ? s.byTerminal[terminalId] : undefined));
@@ -47,11 +44,6 @@ export function DetailsPane({ projectId, terminalId, actions = false }: { projec
   const accountsView = useAccounts((s) => s.view);
   useEffect(() => { void useAccounts.getState().load(); }, []);
   const account = threadAccount(accountsView, tab ?? term);
-  // A business person sees "Switch Account" only when there is another account to switch to.
-  const maintenance = can('details.maintenance');
-  const provider = (tab ?? term) ? accountProviderOf((tab ?? term)!.type) : null;
-  const accountCount = provider && accountsView ? accountsView[provider].length : 0;
-  const [switching, setSwitching] = useState(false);
   // Limits belong to the account: refetch when a turn updates the thread's numbers.
   const limitsRows = useUsageLimits(terminalId, `${activity?.tokens ?? ''}|${activity?.cost ?? ''}`);
 
@@ -112,19 +104,11 @@ export function DetailsPane({ projectId, terminalId, actions = false }: { projec
       {machine && <Row label="Directory" value={homePath(project.workingDir)} mono />}
       {machine && <Row label="Provider" value={project.provider} />}
       <Row label="Status" value={project.status} />
-      {actions && terminalId && tab ? (
+      {terminalId && tab && (
         <div style={{ marginTop: 14, marginInline: -4 }}>
           <ThreadMenu at={menuAt} inline onClose={() => {}} onBranched={(b) => useTabs.getState().openTab(b.id)} />
         </div>
-      ) : (
-      <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
-        {terminalId && maintenance && <button onClick={() => { useTabs.getState().markLoading(terminalId); void api.relaunchTerminal(terminalId); }} style={btn}>Reload Thread</button>}
-        {terminalId && maintenance && <button onClick={() => { useTabs.getState().clearLoading(terminalId); void api.resetTerminalStatus(terminalId).then(() => { if (project) void useTabs.getState().loadTabs(project.id); }).catch(() => {}); }} style={btn} title="Clear a stuck working / needs-input / error status">Reset Status</button>}
-        {terminalId && account && (machine || accountCount > 1) && <button onClick={() => setSwitching(true)} style={btn}>Switch Account</button>}
-        {terminalId && <button onClick={() => void api.archiveTerminal(terminalId)} style={btn}>Archive Thread</button>}
-      </div>
       )}
-      {switching && (tab ?? term) && <AccountSwitchModal tab={(tab ?? term)!} onClose={() => setSwitching(false)} />}
     </div>
   );
 }

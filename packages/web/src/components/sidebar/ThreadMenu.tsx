@@ -260,7 +260,8 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows, inli
         .map((p) => row(`item-${p.plugin}-${p.id}`, pluginIcon(p.icon), p.label, pick((x) => p.onPick({ tab: x })), undefined, {}, p.badge ? <MenuBadgeCount badge={p.badge} ctx={{ tab: t }} /> : undefined)),
     ];
     // Desktop shows Thread details in its right-hand panel; a phone has no panel.
-    const details = isMobile && isThread(t);
+    // Not in place: that menu is inside Thread details already (the right column, the phone's details sheet).
+    const details = isMobile && isThread(t) && !inline;
     const hasView = !!leadView || details;
     const caption = { ...captionBase, ...z.caption };
     const tilesNode = (

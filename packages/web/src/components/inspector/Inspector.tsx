@@ -74,7 +74,7 @@ export function Inspector({ projectId, terminalId, onOpenFile, detailsSlot }: { 
           <PluginBoundary key={pluginTab.key} plugin={pluginTab.plugin} resetKey={status?.at}>
             <PluginTab terminalId={terminalId} sessionId={projectId} />
           </PluginBoundary>
-        ) : tab === 'details' ? (detailsSlot ?? <DetailsPane projectId={projectId} terminalId={terminalId} actions />) : <FilesPane projectId={projectId} terminalId={terminalId} onOpenFile={onOpenFile} />}
+        ) : tab === 'details' ? (detailsSlot ?? <DetailsPane projectId={projectId} terminalId={terminalId} />) : <FilesPane projectId={projectId} terminalId={terminalId} onOpenFile={onOpenFile} />}
       </div>
     </div>
   );
