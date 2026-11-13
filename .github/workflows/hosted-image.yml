@@ -100,6 +100,12 @@ jobs:
           provenance: false
           sbom: false
           tags: dispatch-box:candidate
+          # The same labels as "Push the proved image": the check after the push compares the
+          # full image config, labels included, so the two builds must write the same ones.
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
 
       # The proof needs the runtime's default seccomp filter: it is what refuses a user namespace to
       # a workload, as on the platform (run-proof.sh passes --security-opt seccomp=builtin). Ubuntu
