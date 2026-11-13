@@ -420,11 +420,26 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
     try {
       res = await call(send);
     } catch (err) {
-      if (!asked || !(err instanceof CodexRpcError)) throw err;
-      session.tierRefused = true;
-      session.serviceTierAsked = standard;
-      boxLog('thread.fast.refused', { thread: session.terminalId, tier: asked, reason: err.message }, 'warn');
-      res = await call(standard);
+      if (!send || !(err instanceof CodexRpcError)) throw err;
+      if (asked) {
+        // The fast tier was refused: once more at the standard tier (on a resume) or with no tier field.
+        session.tierRefused = true;
+        session.serviceTierAsked = standard;
+        boxLog('thread.fast.refused', { thread: session.terminalId, tier: asked, reason: err.message }, 'warn');
+        try {
+          res = await call(standard);
+        } catch (again) {
+          if (!standard || !(again instanceof CodexRpcError)) throw again;
+          session.serviceTierAsked = undefined;
+          res = await call(undefined);
+        }
+      } else {
+        // Only the standard tier was asked for (a resume with the switch off) and it was refused: once more with
+        // no tier field, so the kill switch never stops a thread from starting (review N5).
+        session.serviceTierAsked = undefined;
+        boxLog('thread.fast.refused', { thread: session.terminalId, tier: send, reason: err.message }, 'warn');
+        res = await call(undefined);
+      }
     }
     const reported = (res as { serviceTier?: unknown } | undefined)?.serviceTier;
     session.serviceTier = typeof reported === 'string' && reported ? reported : undefined;

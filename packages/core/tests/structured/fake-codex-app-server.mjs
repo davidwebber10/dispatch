@@ -166,6 +166,11 @@ rl.on('line', (line) => {
 
   if (msg.method === 'thread/resume') {
     logRequest('thread/resume', msg.params);
+    // CODEX_FAKE_REJECT_DEFAULT_TIER=1: a resume that asks for the standard tier by name is refused.
+    if (process.env.CODEX_FAKE_REJECT_DEFAULT_TIER && msg.params?.serviceTier === 'default') {
+      send({ jsonrpc: '2.0', id: msg.id, error: { code: -32600, message: 'unknown service tier: default' } });
+      return;
+    }
     // CODEX_FAKE_RESUME_HANG_ONCE=<marker file>: the first process to see a resume never answers
     // (the test then kills it mid-flight); a respawned process finds the marker and answers.
     const hangMarker = process.env.CODEX_FAKE_RESUME_HANG_ONCE;

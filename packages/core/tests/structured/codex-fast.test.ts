@@ -82,6 +82,18 @@ describe('the Codex manager on a hosted box', () => {
     expect(lines.find((l) => l.event === 'thread.model')).toMatchObject({ serviceTier: 'default', serviceTierAsked: 'default' });
   });
 
+  it('N5: a resume refused at the standard tier gets one more try with no tier field, so the thread still starts', async () => {
+    process.env.DISPATCH_CODEX_SERVICE_TIER = 'off';
+    m.spawn('t1', { command: process.execPath, args: [fake], workDir: process.cwd(), model: 'gpt-6.1-sol', resumeId: 'cx-thread-1', env: { CODEX_FAKE_LOG: logPath, CODEX_FAKE_REJECT_DEFAULT_TIER: '1' } });
+    await until(() => lines.some((l) => l.event === 'thread.model'), 'thread.model');
+    const resumes = logged('thread/resume');
+    expect(resumes).toHaveLength(2);
+    expect(resumes[0].params.serviceTier).toBe('default');
+    expect(resumes[1].params).not.toHaveProperty('serviceTier');
+    expect(lines.find((l) => l.event === 'thread.fast.refused')).toMatchObject({ tier: 'default' });
+    expect(m.getEvents('t1').some((e: any) => e.subtype === 'spawn_error')).toBe(false);
+  });
+
   it('switched on, a resume asks for priority again', async () => {
     m.spawn('t1', { command: process.execPath, args: [fake], workDir: process.cwd(), model: 'gpt-6.1-sol', resumeId: 'cx-thread-1', env: { CODEX_FAKE_LOG: logPath } });
     await until(() => lines.some((l) => l.event === 'thread.model'), 'thread.model');
