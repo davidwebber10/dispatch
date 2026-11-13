@@ -72,7 +72,9 @@ export class ThreadQuestions {
     if (!pending) return this.restoredQuestions?.answer(terminalId, requestId, opts) ?? false;
     // subagents-v1: while another request waits behind this one, an answer must name the request it
     // answers; with no id it could land on a request the person never saw.
-    if (!requestId && manager.hasWaitingPermission?.(terminalId)) return false;
+    // A subagent's request (agentId) must be named too, even alone: the request in front can change between
+    // the person reading the card and the answer arriving (review N2).
+    if (!requestId && (manager.hasWaitingPermission?.(terminalId) || (pending as { agentId?: unknown }).agentId)) return false;
     if (opts.decision === 'allow') {
       const remappedAnswers = opts.answers ? this.remapAnswersToQuestionText(pending.questions, opts.answers) : undefined;
       const updatedInput = {

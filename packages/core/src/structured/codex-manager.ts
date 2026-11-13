@@ -1078,6 +1078,11 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
     this.fire('settings-refused', session.terminalId, info);
   }
 
+  /** Another approval waits behind the one in front (the queue of sub-thread approvals): an answer must then name its request. */
+  hasWaitingPermission(terminalId: string): boolean {
+    return (this.sessions.get(terminalId)?.approvalQueue.length ?? 0) > 0;
+  }
+
   getModel(terminalId: string): string | undefined { return this.sessions.get(terminalId)?.model; }
 
   /**
