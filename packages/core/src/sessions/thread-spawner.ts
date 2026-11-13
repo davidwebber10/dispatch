@@ -22,6 +22,7 @@ import { businessMayDrive, NOT_A_CHAT } from '../profile/business-gate.js';
 import { harnessPolicyIsStrict, NOT_A_BUSINESS_IMAGE } from '../os/harness-policy.js';
 import { isHostedBox } from '../os/hosted-mode.js';
 import { boxLog } from '../os/box-log.js';
+import { hostedCodexDefaultModel } from '../structured/codex-fast.js';
 import { CLAUDE_HOSTED_MCP_ARGS, CLAUDE_HOSTED_MCP_ENV } from '../os/hosted-mcp-policy.js';
 import { resolveSpawnModel, isClaudeTierAlias } from '../overseer/spawn-model.js';
 import { COORDINATOR_DISALLOWED_TOOLS, makeCoordinatorPolicy } from '../overseer/coordinator-policy.js';
@@ -279,7 +280,7 @@ export class ThreadSpawner {
         // just structured ones — the New Thread modal offers the picker in both modes.
         // modelFor returns config.model for a plain user thread (no role/agentType).
         this.adoptTranscriptSettings(terminal, config, workDir);
-        const model = modelFor(config);
+        const model = modelFor(config) ?? (terminal.type === 'codex' ? hostedCodexDefaultModel() : undefined);
         launchModel = model;
         const effort = terminal.type === 'codex' ? this.codexEffortFor(config, model) : effortFor(config);
         // A provider that names its own session (Grok) gets a fresh uuid here, which is
@@ -494,6 +495,8 @@ export class ThreadSpawner {
       harness: terminal.type,
       config,
       opencodeDefault,
+      // A hosted box: a Codex thread with no pick runs GPT-6.1 Sol, not Codex's own default.
+      codexDefault: hostedCodexDefaultModel(),
     });
     if (resolvedModel && !config.model) {
       config.model = resolvedModel;

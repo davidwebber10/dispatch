@@ -196,6 +196,7 @@ COPY --from=build --chown=root:root /out/policy/ /opt/dispatch/policy/
 RUN install -d -m 755 /etc/claude-code /etc/codex \
     && install -m 644 /opt/dispatch/policy/claude-managed-settings.json /etc/claude-code/managed-settings.json \
     && install -m 644 /opt/dispatch/policy/codex-requirements.toml /etc/codex/requirements.toml \
+    && install -m 644 /opt/dispatch/policy/codex-config.toml /etc/codex/config.toml \
     && ln -s /run/dispatch/claude-policy /etc/claude-code/managed-settings.d \
     && chmod -R a-w /opt/dispatch/policy
 
