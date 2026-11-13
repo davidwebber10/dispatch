@@ -168,6 +168,8 @@ export const BUSINESS_ROUTES: Readonly<Record<string, BusinessRow>> = {
   // rules (auth/key-rules.ts readRule) keep it to threads its key may read.
   [`GET ${T}/conversation`]: allow(THREAD),
   [`GET ${T}/conversation/search`]: allow(),
+  // "Download thread" (2026-11-13): the same conversation as one file, so the same rule as the conversation.
+  [`GET ${T}/export`]: allow(THREAD),
   [`GET ${T}/diagnostics`]: allow(),
   [`GET ${T}/status`]: allow(),
   [`GET ${T}/resume-advice`]: allow(),
