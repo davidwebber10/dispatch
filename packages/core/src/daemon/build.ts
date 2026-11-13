@@ -61,6 +61,7 @@ import { createContinuityRouter } from '../os/continuity.js';
 import { setProfileSource, resolveProfile } from '../os/profile.js';
 import { setCompanyModelSource } from '../os/company-model.js';
 import { createModelRelayRouter } from '../os/model-relay.js';
+import { syncLoginPolicy } from '../os/login-policy.js';
 import { detectProvider } from '../setup/detect.js';
 import { IntegrationsService, type IntegrationLauncher } from '../integrations/service.js';
 import { HeartbeatService } from '../platform/heartbeat.js';
@@ -558,6 +559,22 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   // OS's tool list: which company systems get a server (os/tools-proxy.ts). Follows every change of OS's answer.
   const osToolCatalog = new OsToolCatalog({ provider: osConnections });
   if (osConnections.enabled) osToolCatalog.start();
+  // Claude Code's forced login (os/login-policy.ts): a root-owned drop-in, present unless the platform's
+  // CURRENT answer grants a company Claude model and turns the person's own login off. Fail closed: it is
+  // written at start, before the platform answers. Hosted boxes only; a daemon that is not root changes nothing.
+  if (isHostedBox(env)) {
+    const gateway = env.DISPATCH_ALLOW_MODEL_GATEWAY?.trim() === '1';
+    let lastForced: boolean | null = null;
+    let lastProblem: string | null = null;
+    const followLogin = () => {
+      const r = syncLoginPolicy(osConnections.modelAccess(), { gateway });
+      if (r.forced !== lastForced || r.problem !== lastProblem) boxLog('claude.login-policy', { forced: r.forced, ...(r.problem ? { problem: r.problem } : {}) }, r.problem ? 'warn' : 'info');
+      lastForced = r.forced;
+      lastProblem = r.problem;
+    };
+    followLogin();
+    osConnections.onChange(followLogin);
+  }
   // ONE profile for this daemon: OS's live answer (kept while OS is unreachable), else DISPATCH_PROFILE,
   // else business on a hosted box / developer locally. The gate, the sockets, the page and every spawn read it.
   const profileNow = () => resolveProfile(osConnections.snapshot().profile, env);

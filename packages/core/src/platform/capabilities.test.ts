@@ -5,7 +5,8 @@ import { createOsToolsRouter } from '../os/tools-proxy.js';
 
 describe('the advertised capabilities are true of this tree', () => {
   test('the list', () => {
-    expect([...BOX_CAPABILITIES]).toEqual(['base-path', 'os-tools-proxy', 'profile', 'headless-v1', 'idle-info', 'gate-v2', 'inbox-v1', 'live-tools-v1', 'subagents-v1', 'codex-signout-v1', 'company-claude-v1']);
+    expect([...BOX_CAPABILITIES]).toEqual(['base-path', 'os-tools-proxy', 'profile', 'headless-v1', 'idle-info', 'gate-v2', 'inbox-v1', 'live-tools-v1', 'subagents-v1', 'codex-signout-v1']);
+    // company-claude-v1 is a fact of the moment (os/login-policy.ts, login-policy.test.ts), like privsep-v1.
   });
   test('inbox-v1: the Inbox routes exist, each has a row in the business table, and the secret value is refused there', async () => {
     const { createInboxRouter } = await import('../routes/inbox.js');
