@@ -19,7 +19,7 @@ below turns it on.
 | `DISPATCH_PROFILE` | provisioner | First profile. OS's `profile` in `/api/dispatch/connections` wins, live. |
 | `DISPATCH_CLAUDE_LOGIN` | optional | `cli`: the clean Claude login on a local install too; `token`: keep setup-token even when hosted. |
 | `DISPATCH_RESUME_CHATS` | optional | `1`: resume ordinary chat threads after a restart on a local install; `0`: off when hosted. |
-| `DISPATCH_ALLOW_MODEL_GATEWAY` | optional (image) | `1`: `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_CUSTOM_HEADERS` and model variables pass through, and `forceLoginMethod` is not written. Tests and a later phase only. |
+| `DISPATCH_ALLOW_MODEL_GATEWAY` | optional (image) | `1`: `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_CUSTOM_HEADERS` and model variables pass through, and the forced-login drop-in is not written. Tests and a later phase only. |
 
 Thread setting: `config.approvals` = `auto` | `ask` | `smart` (default `smart` for a plain chat thread
 of a business person). See `packages/core/src/os/approvals.ts`.
@@ -190,6 +190,7 @@ when the thread would need the company model (`409`: start a new thread).
 | `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` | empty |
 | `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL` | the granted id (also `--model`) |
 | `CLAUDE_CODE_DISABLE_FAST_MODE`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | `1` |
+| `CLAUDE_CODE_ATTRIBUTION_HEADER` | `0` (no billing block in the system prompt: the proxy refuses it) |
 
 The thread also gets `--disallowedTools WebSearch` (the platform refuses hosted server tools). Claude
 Code's own subagents run in the same process with the same env, so they use the same model and the
@@ -209,18 +210,35 @@ The platform cannot be reached, or answers `401`: `503` "The company model canno
 Dispatch tries again by itself." Every other status and body passes through as it is. No token, key
 or body is logged.
 
-**The image policy blocks it today.** Measured on 2026-11-13 with Claude Code 2.1.322 (linux-arm64,
-the pinned binary) against a local stub: with `"forceLoginMethod": "claudeai"` in
-`/etc/claude-code/managed-settings.json`, a process with `ANTHROPIC_BASE_URL` and
-`ANTHROPIC_AUTH_TOKEN` exits 1 before any request, with "This machine's managed settings require a
-first-party login … this session is configured with a bearer token from ANTHROPIC_AUTH_TOKEN, which
-cannot be checked against that policy". The same file without `forceLoginMethod`: one request
-`POST /v1/messages?beta=true` with `Authorization: Bearer <thread key>`, no `x-api-key`, the
-pinned model, and the answer shown. An OAuth credential in `CLAUDE_CONFIG_DIR` did not win over
-the env token. `--disallowedTools WebSearch` removed the tool under
-`allowManagedPermissionRulesOnly: true`. So a box that the platform grants a company Claude model
-needs a Claude Code policy without `forceLoginMethod`; see the release notes of 4.8.0 for the
-proposed change.
+**The forced login is a drop-in the daemon lifts.** Claude Code 2.1.322 refuses a bearer token under
+`forceLoginMethod: "claudeai"`. Measured on 2026-11-13 (linux-arm64, the pinned binary, a local
+stub, the image's layout: `/etc/claude-code/managed-settings.d` a link to a root folder):
+
+| Where `forceLoginMethod` is | A process with `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` |
+| --- | --- |
+| the main file `/etc/claude-code/managed-settings.json` | exits 1 before any request: "This machine's managed settings require a first-party login … configured with a bearer token from ANTHROPIC_AUTH_TOKEN, which cannot be checked against that policy" |
+| only a drop-in `managed-settings.d/10-dispatch-login.json` | the same refusal: Claude Code reads the drop-in through the link |
+| nowhere | one `POST /v1/messages?beta=true` with `Authorization: Bearer <thread key>`, no `x-api-key`, the pinned model; the answer is shown |
+
+An OAuth credential in `CLAUDE_CONFIG_DIR` did not win over the env token, and
+`--disallowedTools WebSearch` removed the tool under `allowManagedPermissionRulesOnly: true`.
+
+So the image keeps `forceLoginMethod` OUT of its main file and in the drop-in
+`10-dispatch-login.json` (`packages/core/src/os/login-policy.ts`):
+
+- The image bakes the drop-in into `/run/dispatch/claude-policy`. A root start empties the folder and
+  writes it again (root, `644`). A start that is not root cannot write it, so it must find it there:
+  without it the entrypoint refuses to start (an empty platform volume at `/run/dispatch`).
+- The daemon (root, privilege separation) writes it at its own start, before the platform answers. It
+  removes it only while the platform's CURRENT answer grants a company Claude model
+  (`modelHarness` `claude-code`) AND `subscriptions.claude` is `false`: a company-billed person. A
+  person whose own login is allowed keeps the forced login. It writes the drop-in back as soon as
+  that stops being true. The platform away keeps its last answer, as for the profile. A daemon that is
+  not root changes nothing. Writes are atomic (a hidden name, then a rename). The box log line is
+  `claude.login-policy`.
+- `company-claude-v1` is reported only while no managed file (the main file and every `*.json` of
+  the drop-in folder) has `forceLoginMethod`. Like `privsep-v1`, it is a fact of the moment.
+- `DISPATCH_ALLOW_MODEL_GATEWAY=1` writes no login drop-in.
 
 ## The two tokens
 
@@ -325,8 +343,8 @@ the policy files are root-owned and not writable by the runtime user.
 
 **The user.** The image's default user is `dispatch` (uid 1000): the daemon, `docker exec` and any
 other command run as that user. The entrypoint needs root for nothing in the standard mode. It can be
-started as root (`user: "0"`) for ONE case, `DISPATCH_ALLOW_MODEL_GATEWAY=1` (it replaces the Claude
-Code policy file with the one that has no `forceLoginMethod`), and then runs the daemon as uid 1000
+started as root (`user: "0"`) for ONE case, `DISPATCH_ALLOW_MODEL_GATEWAY=1` (it installs the gateway
+Claude Code policy file and writes no forced-login drop-in), and then runs the daemon as uid 1000
 with `setpriv`; that needs the SETUID and SETGID capabilities and a writable `/etc/claude-code`.
 
 **Read-only root file system.** The daemon and the harnesses write under `$HOME` (the person's volume:
@@ -417,8 +435,8 @@ every user, project and command-line setting, so they also hold for a harness an
 
 | Harness | File | What it does |
 | --- | --- | --- |
-| Claude Code 2.1.322 | `/etc/claude-code/managed-settings.json` | `permissions.disableBypassPermissionsMode: "disable"`; `allowManagedHooksOnly: true`; `allowManagedPermissionRulesOnly: true`; `forceLoginMethod: "claudeai"`; `disableClaudeAiConnectors: true`; `spinnerVerbs` (the POLYWOOD set, mode `replace`, added at build from `packages/web/src/lib/spinnerWords.ts`) |
-| Claude Code 2.1.322 | `/etc/claude-code/managed-settings.d/` | a link to `/run/dispatch/claude-policy` (root, `0755`); under the business profile the daemon writes `50-dispatch-business-mcp.json` there (see "Company systems only through the platform") |
+| Claude Code 2.1.322 | `/etc/claude-code/managed-settings.json` | `permissions.disableBypassPermissionsMode: "disable"`; `allowManagedHooksOnly: true`; `allowManagedPermissionRulesOnly: true`; `disableClaudeAiConnectors: true`; `spinnerVerbs` (the POLYWOOD set, mode `replace`, added at build from `packages/web/src/lib/spinnerWords.ts`) |
+| Claude Code 2.1.322 | `/etc/claude-code/managed-settings.d/` | a link to `/run/dispatch/claude-policy` (root, `0755`); `10-dispatch-login.json` (`forceLoginMethod: "claudeai"`) is there by default, and the daemon lifts it only for a company-billed person (see "Company models"); under the business profile the daemon writes `50-dispatch-business-mcp.json` there (see "Company systems only through the platform") |
 | Codex 0.167.0 | `/etc/codex/requirements.toml` | `allowed_approval_policies = ["untrusted", "on-request"]`; `allowed_sandbox_modes = ["read-only", "workspace-write", "danger-full-access"]` (the box is the sandbox, above); `[features] apps = false`, `plugins = false` |
 | OpenCode 1.19.5 | none | It has a managed config folder (`/etc/opencode`), but an environment variable moves it, and its effect on the flag that skips permissions was not measured (that needs a model). No policy is shipped for it |
 
