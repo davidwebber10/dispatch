@@ -382,7 +382,8 @@ export class TurnRunner {
         if (!echo) { clear(); phase = 'working'; }
         this.record(ev);
         if (ev?.parent_tool_use_id == null && (ev?.type === 'assistant' || toolResult)) this.handoffPending = false;
-        if (ev?.type === 'result') {
+        // A sub-thread's `result` (parent_tool_use_id) is never this turn's end (final review N8).
+        if (ev?.type === 'result' && ev?.parent_tool_use_id == null) {
           sawResult = true;
           failure = ev.is_error ? String(ev.result || ev.subtype || 'the turn failed') : undefined;
           const u = usageOf(ev.usage);
