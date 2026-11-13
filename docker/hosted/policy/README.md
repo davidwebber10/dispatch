@@ -25,7 +25,9 @@ Claude Code (2.1.322):
 - `allowManagedPermissionRulesOnly: true`: `--allowedTools` and `permissions.allow` rules outside this
   file are ignored, so a nested `claude` cannot pre-approve its own tools. Dispatch passes no rule today;
   an `ask` rule for a company write tool must be added HERE when one is needed.
-- `forceLoginMethod: "claudeai"`: the person's own subscription login only.
+- `forceLoginMethod: "claudeai"`: the person's own subscription login only. It also stops a Claude Code
+  process that has `ANTHROPIC_AUTH_TOKEN` before any request (measured 2026-11-13), so a company-model
+  thread (docs/hosted.md, "Company models") cannot run under this file.
 
 - `disableClaudeAiConnectors: true` (every file): the connectors of the person's claude.ai account never
   load; a `true` from any source wins, so no user, project or `--settings` value turns them back on.

@@ -141,6 +141,87 @@ the app-server unloaded it (`thread/unsubscribe`, then `thread/resume` after
 `thread_unload_delay_secs`) does load the new tools with its history (measured); Dispatch does not do
 that by itself yet.
 
+## Company models (capability `company-claude-v1`)
+
+The platform may grant a person a COMPANY model for Claude Code. The platform holds the model
+credential and runs a metered proxy. The box never holds that credential. The person's own Claude
+login keeps working for every other thread.
+
+**What the platform sends.** Two optional fields in `GET /api/dispatch/connections`
+(`packages/core/src/os/company-model.ts`). When `modelAccess` is absent, nothing changes.
+
+```json
+"modelAccess": {"models": ["claude-opus-5-5"], "default": "claude-opus-5-5",
+  "subscriptionsAllowed": false, "subscriptions": {"claude": false, "codex": false},
+  "harnesses": ["claude-code"], "seatFirst": true,
+  "modelHarness": {"claude-opus-5-5": "claude-code", "gpt-6.1-sol": "codex"}},
+"modelProxy": {"anthropicBaseUrl": "<os>/api/dispatch/model/anthropic", "openaiBaseUrl": "…", "usageUrl": "…"}
+```
+
+A model is a company Claude model when it is in `models` and `modelHarness[id]` is `claude-code`
+(without `modelHarness`: an id that starts with `claude-`). `GET /api/os/connections` shows
+`modelAccess` to the page. It never shows `modelProxy`.
+
+**Which threads run on the company model.** Decided when a Claude Code thread is created
+(`POST /api/sessions/:id/terminals`) and saved as `config.modelSource`, so a resume keeps it:
+
+| The request | The thread runs on |
+| --- | --- |
+| `config.model` is a granted company Claude model (the id, any case, or without `claude-`) | the company model when the person has no usable Claude login (not signed in, or `subscriptions.claude` is `false`); with `seatFirst` and a usable login, the person's own login; without `seatFirst`, the company model |
+| `config.modelSource: "company"` | the company model (`403 "This model is not available to you."` when it is not granted) |
+| `config.modelSource: "subscription"` | the person's own login (`403` when `subscriptions.claude` is `false`) |
+| no `config.model`, and no usable Claude login | the company `default` model (else the first granted Claude model) |
+| a model the platform names but does not grant | `403 "This model is not available to you."` when it would run on the company model |
+| any other model | the person's own login, as before |
+
+A person with a company Claude model and no Claude login can create and run a Claude thread.
+`GET /api/chats` reports `modelSource` (`company`, `subscription` or `null`). A model switch of a
+company thread to another model is refused (`409`, or `403` when the target is not granted). A
+switch of a personal thread to a company model is refused when the model is not granted (`403`) or
+when the thread would need the company model (`409`: start a new thread).
+
+**The relay.** A company thread's Claude Code process gets this env (and no account
+`CLAUDE_CONFIG_DIR`):
+
+| Variable | Value |
+| --- | --- |
+| `ANTHROPIC_BASE_URL` | `http://127.0.0.1:<port><base path>/api/os-model/anthropic` |
+| `ANTHROPIC_AUTH_TOKEN` | the thread's own per-thread key (the `dtk_` key it already has as `DISPATCH_AUTH`) |
+| `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` | empty |
+| `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL` | the granted id (also `--model`) |
+| `CLAUDE_CODE_DISABLE_FAST_MODE`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | `1` |
+
+The thread also gets `--disallowedTools WebSearch` (the platform refuses hosted server tools). Claude
+Code's own subagents run in the same process with the same env, so they use the same model and the
+same relay. The box token is never in a thread's env, a file or argv.
+
+`POST /api/os-model/anthropic/v1/messages` and `…/v1/messages/count_tokens` (`os/model-relay.ts`)
+accept only a thread key, from a loopback peer, of a live Claude Code thread whose `config.model` is
+granted NOW. The JSON `model` of the body must be that model. Everything else gets `403` in the
+Anthropic error shape (`{"type":"error","error":{"type":"…","message":"…"}}`). A body over 8 MB
+gets `413`. The daemon sends the body unchanged to `{anthropicBaseUrl}/v1/messages[/count_tokens]`
+with `x-dispatch-box-token` (the OUTBOUND token), `x-dispatch-owner` and `x-dispatch-thread-id`
+(from the key). From the caller it forwards `content-type`, `accept`, `anthropic-version` and
+`anthropic-beta` only. The answer streams back chunk by chunk (status, `content-type`, `retry-after`,
+`x-dispatch-refusal`, body). A request is never sent twice. When the caller goes away, the platform
+request is aborted. Time limits: 900 s in all, 120 s for the status line, 90 s between two chunks.
+The platform cannot be reached, or answers `401`: `503` "The company model cannot be reached.
+Dispatch tries again by itself." Every other status and body passes through as it is. No token, key
+or body is logged.
+
+**The image policy blocks it today.** Measured on 2026-11-13 with Claude Code 2.1.322 (linux-arm64,
+the pinned binary) against a local stub: with `"forceLoginMethod": "claudeai"` in
+`/etc/claude-code/managed-settings.json`, a process with `ANTHROPIC_BASE_URL` and
+`ANTHROPIC_AUTH_TOKEN` exits 1 before any request, with "This machine's managed settings require a
+first-party login … this session is configured with a bearer token from ANTHROPIC_AUTH_TOKEN, which
+cannot be checked against that policy". The same file without `forceLoginMethod`: one request
+`POST /v1/messages?beta=true` with `Authorization: Bearer <thread key>`, no `x-api-key`, the
+pinned model, and the answer shown. An OAuth credential in `CLAUDE_CONFIG_DIR` did not win over
+the env token. `--disallowedTools WebSearch` removed the tool under
+`allowManagedPermissionRulesOnly: true`. So a box that the platform grants a company Claude model
+needs a Claude Code policy without `forceLoginMethod`; see the release notes of 4.8.0 for the
+proposed change.
+
 ## The two tokens
 
 `DISPATCH_BOX_TOKEN` admits requests to the daemon. `OS_BOX_TOKEN` signs the daemon's calls to the

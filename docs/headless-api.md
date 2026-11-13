@@ -33,7 +33,7 @@ stub OS, a scripted `claude`). Ids, times and paths are from that run; long valu
 
 ```json
 {"profile":"business","hosted":true,"osBaseUrl":"http://127.0.0.1:48812","ownerEmail":"person@example.com",
- "capabilities":["base-path","os-tools-proxy","profile","headless-v1","idle-info","gate-v2","inbox-v1","live-tools-v1","subagents-v1","codex-signout-v1","privsep-v1"]}
+ "capabilities":["base-path","os-tools-proxy","profile","headless-v1","idle-info","gate-v2","inbox-v1","live-tools-v1","subagents-v1","codex-signout-v1","company-claude-v1","privsep-v1"]}
 ```
 
 | Capability | Meaning |
@@ -48,6 +48,7 @@ stub OS, a scripted `claude`). Ids, times and paths are from that run; long valu
 | `live-tools-v1` | A running thread learns of a changed tool list: `POST /api/os/connections/refresh` is the platform's signal, and a system that is not connected has a `connect` tool (`docs/hosted.md`, "Live tool changes"). |
 | `subagents-v1` | A thread's subagents: lifecycle frames, routed Codex sub-threads, the routes of section 12. |
 | `codex-signout-v1` | The person signs the box's own Codex login out: `DELETE /api/accounts/codex/cli` → `{"signedIn":false}`; `409 {"error":"A Codex thread is working. Stop it or wait until it ends, then sign out."}` while a Codex thread works. Every Codex chat thread ends (it starts again, signed out, on its next message), `codex logout` runs as the agent, and that login's usage figures are forgotten. Owner only (never a thread key). Claude: `DELETE /api/claude-auth` → `{"authenticated":false}` once `claude auth logout` ran. |
+| `company-claude-v1` | A Claude Code thread may run on a company model the platform grants (`modelAccess` in the broker answer). `POST …/terminals` takes `config.modelSource` (`company` or `subscription`); a model that is not granted gets `403 {"error":"This model is not available to you."}`. `GET /api/chats` reports `modelSource`. The thread's Messages traffic goes through the daemon's loopback relay with its own key (`docs/hosted.md`, "Company models"). |
 | `privsep-v1` | Only when THIS START proved privilege separation (`docs/hosted-privilege-separation.md`): absent on a box that runs as one user. Require it for a business person. |
 
 `automations-safe` is NOT advertised: a business person may not start automations (section 9).
@@ -61,7 +62,7 @@ role, runner or agent type. Newest activity first.
 ```json
 {"chats":[{"id":"4831e4ef-aba8-4725-89e5-3f036413e53a","title":"there","projectId":"c9ff2a05-8e9c-440f-ad68-f28db2123ccd",
   "projectName":"Chats","harness":"claude-code","status":"needs_input",
-  "lastActivityAt":"2026-11-12T04:27:56.941Z","createdAt":"2026-11-12T04:23:51.119Z","model":null}]}
+  "lastActivityAt":"2026-11-12T04:27:56.941Z","createdAt":"2026-11-12T04:23:51.119Z","model":null,"modelSource":null}]}
 ```
 
 `status` is one of `working`, `needs_input`, `error`, `idle` (every other internal value, such as
@@ -92,6 +93,11 @@ POST /api/sessions {"name":"Chats"}                         -> 201
 For a business person the daemon forces `transport: "structured"` and `approvals: "smart"`. Optional
 `config.model` picks a model. `label` is the title; the daemon names an untitled thread from its first
 message (`title` in `/api/chats`, `label` on the thread).
+
+With `company-claude-v1`: a Claude Code thread may run on a company model. Optional
+`config.modelSource` is `company` or `subscription`; the daemon saves the source it decided in
+`config.modelSource` (`docs/hosted.md`, "Company models"). A company model that is not granted gets
+`403 {"error":"This model is not available to you."}`.
 
 ## 4. Send, stop, rename, archive
 
