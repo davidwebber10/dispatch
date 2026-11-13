@@ -1,0 +1,207 @@
+# The hosted box image (docker/hosted/Dockerfile, target `runtime`), built in CI so that no release image
+# comes from a laptop. See docs/hosted.md, "Releasing the hosted image".
+#
+#   1. Build for linux/arm64 on a native ARM runner. Nothing is cached between runs: every release
+#      is built from the pinned bases and locks alone.
+#   2. Run the privilege-separation proof (docker/hosted/privsep-proof/run-proof.sh) against THAT
+#      image. Any failed check or any attack that is not stopped fails the job; the log is an artifact.
+#   3. Only then push to ghcr.io/<owner>/dispatch-box:<version>, with BuildKit provenance and SBOM,
+#      and sign a provenance attestation for the pushed digest (actions/attest-build-provenance).
+#      The push step checks that the pushed image is the image that was proved (same config digest).
+#
+# A push happens only on a version tag: the tag push itself, or a manual run on a tag ref with
+# `push` ticked. A manual run on a branch builds and proves, and pushes nothing.
+# There is no pull_request trigger: this workflow never runs code from a fork.
+name: hosted-image
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      push:
+        description: 'Push and attest the image (only honored on a tag ref, e.g. --ref v4.7.0)'
+        type: boolean
+        default: false
+
+# Nothing at the top level; the job asks for what it needs.
+permissions: {}
+
+concurrency:
+  group: hosted-image-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/dispatch-box
+
+jobs:
+  image:
+    # Never in a fork (a fork has its own repository name).
+    if: github.repository == 'davidwebber10/dispatch'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    permissions:
+      contents: read      # checkout
+      packages: write     # push to GHCR (the push steps only run on a tag)
+      id-token: write     # sign the attestation (Sigstore, keyless)
+      attestations: write # store the attestation on this repository
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Decide the version and whether to push
+        id: meta
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          PUSH_INPUT: ${{ inputs.push }}
+        run: |
+          set -euo pipefail
+          PUSH=false
+          if [ "$REF_TYPE" = tag ]; then
+            VERSION="${REF_NAME#v}"
+            if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+              echo "::error::tag $REF_NAME is not v<major>.<minor>.<patch>[-label]"; exit 1
+            fi
+            # The tag must sit on the commit whose package.json carries the same release.
+            PKG="$(node -p 'require("./packages/core/package.json").version')"
+            if [ "${VERSION%%-*}" != "${PKG%%-*}" ]; then
+              echo "::error::tag $REF_NAME does not match packages/core/package.json ($PKG)"; exit 1
+            fi
+            if [ "$EVENT" = push ] || [ "$PUSH_INPUT" = true ]; then PUSH=true; fi
+          else
+            VERSION="0.0.0-ci.${GITHUB_SHA::12}"
+            [ "$PUSH_INPUT" = true ] && echo "::warning::push is only honored on a tag ref; this run builds and proves only"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "push=$PUSH" >> "$GITHUB_OUTPUT"
+          # The commit time, so both builds below write the same image config (created/history times).
+          echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+          echo "version $VERSION, push $PUSH"
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build the candidate (loaded locally, not pushed)
+        id: candidate
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/hosted/Dockerfile
+          target: runtime
+          platforms: linux/arm64
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+          tags: dispatch-box:candidate
+
+      # The proof needs the runtime's default seccomp filter: it is what refuses a user namespace to
+      # a workload, as on the platform (run-proof.sh passes --security-opt seccomp=builtin). Ubuntu
+      # 24.04 also restricts user namespaces through AppArmor; that is switched off here so the proof
+      # measures the seccomp filter, not a host setting the platform does not have (its section D2
+      # expects a box WITHOUT the filter to be able to make a user namespace).
+      - name: Prepare the host for the proof
+        run: |
+          set -euo pipefail
+          docker info --format '{{json .SecurityOptions}}' | tee /dev/stderr | grep -q 'name=seccomp' \
+            || { echo "::error::the Docker daemon has no seccomp support"; exit 1; }
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+
+      - name: Privilege-separation proof
+        env:
+          PROOF_OUT: ${{ runner.temp }}/proof/attacks
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/proof"
+          docker/hosted/privsep-proof/run-proof.sh --image dispatch-box:candidate 2>&1 | tee "$RUNNER_TEMP/proof/proof.log"
+          status=${PIPESTATUS[0]}
+          {
+            echo '### Privilege-separation proof'
+            echo '```'
+            sed -n '/################ summary/,$p' "$RUNNER_TEMP/proof/proof.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      - name: Upload the proof log
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: privsep-proof-${{ steps.meta.outputs.version }}
+          path: ${{ runner.temp }}/proof/
+          if-no-files-found: warn
+
+      - name: Log in to GHCR
+        if: steps.meta.outputs.push == 'true'
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The same build again, now pushed with provenance and SBOM. Every step comes from the builder's
+      # cache of the build above, so the image is the one that was proved; the next step checks that.
+      - name: Push the proved image
+        id: push
+        if: steps.meta.outputs.push == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/hosted/Dockerfile
+          target: runtime
+          platforms: linux/arm64
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: ${{ env.IMAGE }}:${{ steps.meta.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+
+      # Store-agnostic: pull the pushed digest and compare its layers (uncompressed digests) and its
+      # runtime configuration with the image the proof ran on.
+      - name: Check the pushed image is the proved image
+        if: steps.meta.outputs.push == 'true'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          docker pull --platform linux/arm64 "$IMAGE@$DIGEST" >/dev/null
+          fmt='{{json .RootFS.Layers}} {{json .Config}}'
+          proved="$(docker image inspect dispatch-box:candidate --format "$fmt" | sha256sum)"
+          pushed="$(docker image inspect "$IMAGE@$DIGEST" --format "$fmt" | sha256sum)"
+          echo "proved $proved"
+          echo "pushed $pushed"
+          [ "$proved" = "$pushed" ] || { echo "::error::the pushed image is not the image the proof ran on"; exit 1; }
+
+      - name: Attest build provenance
+        if: steps.meta.outputs.push == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Print the digest
+        if: steps.meta.outputs.push == 'true'
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          echo "image   $IMAGE:$VERSION"
+          echo "digest  $DIGEST"
+          {
+            echo '### Released image'
+            echo "- image: \`$IMAGE:$VERSION\`"
+            echo "- digest: \`$DIGEST\`"
+            echo "- verify: \`gh attestation verify oci://$IMAGE@$DIGEST --repo $GITHUB_REPOSITORY --signer-workflow $GITHUB_REPOSITORY/.github/workflows/hosted-image.yml --source-ref $GITHUB_REF\`"
+          } >> "$GITHUB_STEP_SUMMARY"

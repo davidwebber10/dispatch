@@ -22,7 +22,7 @@ const tools = () => [
   { name: 'os_list_connections', system: 'os', description: 'List', inputSchema: obj },
 ];
 
-http.createServer((req, res) => {
+const handler = (req, res) => {
   let body = '';
   req.on('data', (d) => { body += d; });
   req.on('end', () => {
@@ -52,4 +52,9 @@ http.createServer((req, res) => {
       else res.end(JSON.stringify({ jsonrpc: '2.0', id: j.id ?? null, result: {} }));
     } else res.end('{}');
   });
-}).listen(port, '127.0.0.1', () => console.log(`platform stub on ${port}`));
+};
+// Loopback always (the proof's own calls). STUB_EXTRA_HOST adds one more address: on Linux the box reaches
+// the host through the Docker bridge's gateway, not through loopback as on Docker Desktop.
+for (const host of ['127.0.0.1', process.env.STUB_EXTRA_HOST].filter(Boolean)) {
+  http.createServer(handler).listen(port, host, () => console.log(`platform stub on ${host}:${port}`));
+}
