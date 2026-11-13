@@ -1,5 +1,10 @@
 {
   "forceLoginMethod": "claudeai",
+  "permissions": {
+    "deny": [
+      "WebSearch"
+    ]
+  },
   "disableClaudeAiConnectors": true,
   "enableArtifact": false,
   "disableArtifact": true

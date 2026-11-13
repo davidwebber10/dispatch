@@ -7,6 +7,11 @@ exports[`the managed policy files the image installs (generated at build) > ever
     "disableClaudeAiConnectors": true,
     "enableArtifact": false,
     "forceLoginMethod": "claudeai",
+    "permissions": {
+      "deny": [
+        "WebSearch",
+      ],
+    },
     "spinnerVerbs": {
       "mode": "replace",
       "verbs": [
@@ -30,6 +35,9 @@ exports[`the managed policy files the image installs (generated at build) > ever
     "disableClaudeAiConnectors": true,
     "enableArtifact": false,
     "permissions": {
+      "deny": [
+        "WebSearch",
+      ],
       "disableBypassPermissionsMode": "disable",
     },
     "spinnerVerbs": {
@@ -56,6 +64,9 @@ exports[`the managed policy files the image installs (generated at build) > ever
     "enableArtifact": false,
     "forceLoginMethod": "claudeai",
     "permissions": {
+      "deny": [
+        "WebSearch",
+      ],
       "disableBypassPermissionsMode": "disable",
     },
     "spinnerVerbs": {

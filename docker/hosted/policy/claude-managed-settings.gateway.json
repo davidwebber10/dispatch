@@ -1,6 +1,9 @@
 {
   "permissions": {
-    "disableBypassPermissionsMode": "disable"
+    "disableBypassPermissionsMode": "disable",
+    "deny": [
+      "WebSearch"
+    ]
   },
   "allowManagedHooksOnly": true,
   "allowManagedPermissionRulesOnly": true,
