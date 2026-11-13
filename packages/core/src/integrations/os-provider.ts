@@ -1,6 +1,7 @@
 import type { McpServerSpec } from '../mcp/injection.js';
 import { boxLog } from '../os/box-log.js';
 import { osBoxToken } from '../platform/box-secrets.js';
+import { parseModelAccess, parseModelProxy, type ModelAccess, type ModelProxy } from '../os/company-model.js';
 
 /**
  * Tools brokered by OS.
@@ -41,6 +42,9 @@ export interface OsConnectionsResponse {
   profile?: string;
   osPublicUrl?: string | null;
   osTools?: { url?: string } | null;
+  /** Company models (os/company-model.ts). Absent: today's behaviour. */
+  modelAccess?: unknown;
+  modelProxy?: unknown;
 }
 
 /** What the box last learned from OS, including whether the answer is trustworthy. */
@@ -56,6 +60,10 @@ export interface OsConnectionsState {
   osPublicUrl: string | null;
   /** OS's MCP endpoint. Null: OS gives this person no company tools. */
   osTools: { url: string } | null;
+  /** The company models the person may use (os/company-model.ts). Null: absent, nothing changes. */
+  modelAccess: ModelAccess | null;
+  /** The platform's model proxy. Null: absent. Never handed to a thread. */
+  modelProxy: ModelProxy | null;
   /**
    * Distinguishes "OS says you have no tools" from "OS could not be reached".
    * Collapsing these is how an outage becomes an agent that silently can't do
@@ -77,13 +85,15 @@ export interface OsConnectionsPublic {
   osPublicUrl: string | null;
   osToolsEnabled: boolean;
   needsConsent: OsConsent[];
+  /** The models the platform grants, and through which harness (no addresses, no tokens). Null: absent. */
+  modelAccess: ModelAccess | null;
   /** Names of the MCP servers OS attached directly (not the company-system servers of os/os-servers.ts). */
   servers: string[];
 }
 
 const EMPTY: OsConnectionsState = {
   servers: [], env: {}, systemPrompt: null, needsConsent: [], entitled: null, profile: null,
-  osPublicUrl: null, osTools: null, reachable: true, error: null, fetchedAt: null,
+  osPublicUrl: null, osTools: null, modelAccess: null, modelProxy: null, reachable: true, error: null, fetchedAt: null,
 };
 
 export interface OsConnectionsOptions {
@@ -167,6 +177,7 @@ export class OsConnectionsProvider {
     return {
       hosted: this.enabled, reachable: s.reachable, error: s.error, fetchedAt: s.fetchedAt, entitled: s.entitled,
       profile: s.profile, osPublicUrl: s.osPublicUrl, osToolsEnabled: !!s.osTools, needsConsent: s.needsConsent,
+      modelAccess: s.modelAccess,
       servers: s.servers.map((x) => x.name),
     };
   }
@@ -206,6 +217,16 @@ export class OsConnectionsProvider {
     return this.enabled ? this.state.osTools?.url ?? null : null;
   }
 
+  /** The company models now (os/company-model.ts). Null: not hosted, or the platform sent none. */
+  modelAccess(): ModelAccess | null {
+    return this.enabled ? this.state.modelAccess : null;
+  }
+
+  /** The platform's model proxy now. Null: not hosted, or none. */
+  modelProxy(): ModelProxy | null {
+    return this.enabled ? this.state.modelProxy : null;
+  }
+
   private isStale(): boolean {
     if (!this.state.fetchedAt) return true;
     return Date.now() - Date.parse(this.state.fetchedAt) > this.ttlMs;
@@ -243,6 +264,8 @@ export class OsConnectionsProvider {
           profile: profile ?? this.state.profile,
           osPublicUrl: httpUrl(body?.osPublicUrl) ?? this.state.osPublicUrl,
           osTools: toolsUrl ? { url: toolsUrl } : null,
+          modelAccess: parseModelAccess(body?.modelAccess),
+          modelProxy: parseModelProxy(body?.modelProxy),
           reachable: true,
           error: null,
           fetchedAt: new Date().toISOString(),
@@ -309,7 +332,7 @@ export class OsConnectionsProvider {
   private logResult(status?: number): void {
     const st = this.state;
     const fields = st.reachable
-      ? { reachable: true, servers: st.servers.length, needsConsent: st.needsConsent.length, entitled: st.entitled?.length ?? null, profile: st.profile, osTools: !!st.osTools }
+      ? { reachable: true, servers: st.servers.length, needsConsent: st.needsConsent.length, entitled: st.entitled?.length ?? null, profile: st.profile, osTools: !!st.osTools, companyModels: st.modelAccess?.models.length ?? null }
       : { reachable: false, ...(status ? { status } : {}), error: st.error ?? 'unknown', servers: st.servers.length };
     const key = JSON.stringify(fields);
     if (key === this.lastLogged) return;
@@ -323,6 +346,8 @@ export class OsConnectionsProvider {
     const changed = prev.reachable !== next.reachable || prev.profile !== next.profile || JSON.stringify(prev.entitled) !== JSON.stringify(next.entitled)
       || (prev.osTools?.url ?? null) !== (next.osTools?.url ?? null)
       || JSON.stringify(prev.needsConsent) !== JSON.stringify(next.needsConsent)
+      || JSON.stringify(prev.modelAccess) !== JSON.stringify(next.modelAccess)
+      || JSON.stringify(prev.modelProxy) !== JSON.stringify(next.modelProxy)
       || prev.systemPrompt !== next.systemPrompt
       || JSON.stringify(prev.servers) !== JSON.stringify(next.servers)
       || JSON.stringify(prev.env) !== JSON.stringify(next.env);

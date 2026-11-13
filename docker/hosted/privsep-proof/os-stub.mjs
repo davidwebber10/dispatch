@@ -10,6 +10,8 @@ const port = Number(process.argv[2] || 3922);
 const logFile = process.argv[3] || '/dev/null';
 const outbound = process.env.STUB_OUTBOUND_TOKEN || '';
 let profile = process.env.STUB_PROFILE || 'developer';
+// `/__ctl?company=1`: the platform grants a company Claude model and turns the person's own Claude login off.
+let company = false;
 const connected = new Set();
 const log = (o) => fs.appendFileSync(logFile, JSON.stringify({ t: new Date().toISOString(), ...o }) + '\n');
 const obj = { type: 'object', properties: {} };
@@ -32,6 +34,7 @@ const handler = (req, res) => {
       if (u.searchParams.get('profile')) profile = u.searchParams.get('profile');
       if (u.searchParams.get('connect')) connected.add(u.searchParams.get('connect'));
       if (u.searchParams.get('disconnect')) connected.delete(u.searchParams.get('disconnect'));
+      if (u.searchParams.get('company')) company = u.searchParams.get('company') === '1';
       res.end(JSON.stringify({ profile, connected: [...connected] }));
       return;
     }
@@ -42,7 +45,11 @@ const handler = (req, res) => {
     res.setHeader('content-type', 'application/json');
     if (!tokenOk) { res.statusCode = 401; res.end(JSON.stringify({ detail: 'unauthorized' })); return; }
     if (u.pathname === '/api/dispatch/connections') {
-      res.end(JSON.stringify({ servers: [], env: {}, needsConsent: [], entitled: ['crm', 'erp'], profile, osPublicUrl: `http://127.0.0.1:${port}`, osTools: { url: `http://host.docker.internal:${port}/api/dispatch/mcp` } }));
+      res.end(JSON.stringify({ servers: [], env: {}, needsConsent: [], entitled: ['crm', 'erp'], profile, osPublicUrl: `http://127.0.0.1:${port}`, osTools: { url: `http://host.docker.internal:${port}/api/dispatch/mcp` },
+        ...(company ? {
+          modelAccess: { models: ['claude-opus-5-5'], default: 'claude-opus-5-5', subscriptionsAllowed: false, subscriptions: { claude: false, codex: false }, harnesses: ['claude-code'], seatFirst: true, modelHarness: { 'claude-opus-5-5': 'claude-code' } },
+          modelProxy: { anthropicBaseUrl: `http://host.docker.internal:${port}/api/dispatch/model/anthropic`, openaiBaseUrl: null, usageUrl: null },
+        } : {}) }));
     } else if (u.pathname === '/api/dispatch/mcp' && j) {
       const only = typeof req.headers['x-dispatch-systems'] === 'string' ? req.headers['x-dispatch-systems'].split(',').map((s) => s.trim()).filter(Boolean) : null;
       if (j.method === 'initialize') res.end(JSON.stringify({ jsonrpc: '2.0', id: j.id, result: { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'stub', version: '1' } } }));

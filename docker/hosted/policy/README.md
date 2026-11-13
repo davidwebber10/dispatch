@@ -9,6 +9,7 @@ agent starts by itself from a shell. Every key below was checked against the pin
 | --- | --- | --- |
 | `claude-managed-settings.json` | `/etc/claude-code/managed-settings.json` | the standard image |
 | `claude-managed-settings.gateway.json` | the same path, when `DISPATCH_ALLOW_MODEL_GATEWAY=1` and the container starts as root | the standard image |
+| `claude-login-dropin.json` | `/run/dispatch/claude-policy/10-dispatch-login.json` (baked in; written again by a root start) | the standard image |
 | `claude-managed-settings.developer.json` | the same path | the developer image (`--target runtime-dev`) |
 | `codex-requirements.toml` | `/etc/codex/requirements.toml` | the standard image |
 | `codex-requirements.developer.toml` | `/etc/codex/requirements.toml` | the developer image |
@@ -25,7 +26,11 @@ Claude Code (2.1.322):
 - `allowManagedPermissionRulesOnly: true`: `--allowedTools` and `permissions.allow` rules outside this
   file are ignored, so a nested `claude` cannot pre-approve its own tools. Dispatch passes no rule today;
   an `ask` rule for a company write tool must be added HERE when one is needed.
-- `forceLoginMethod: "claudeai"`: the person's own subscription login only.
+- `forceLoginMethod: "claudeai"`: the person's own subscription login only. NOT in the standard file:
+  it is `claude-login-dropin.json`, installed as `/run/dispatch/claude-policy/10-dispatch-login.json`
+  (the folder `/etc/claude-code/managed-settings.d` links to). Claude Code reads it there (measured
+  2026-11-13). It stops a process with `ANTHROPIC_AUTH_TOKEN` before any request, so the daemon lifts
+  it only for a company-billed person (docs/hosted.md, "Company models"). The developer file keeps it.
 
 - `disableClaudeAiConnectors: true` (every file): the connectors of the person's claude.ai account never
   load; a `true` from any source wins, so no user, project or `--settings` value turns them back on.

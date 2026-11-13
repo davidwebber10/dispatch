@@ -31,8 +31,14 @@
 //                   stays `working` while one runs; GET …/agents, GET …/agents/:agentId/journal, POST
 //                   …/agents/:agentId/stop and …/agents/stop-all (routes/subagents.ts); a finished Codex
 //                   subagent's result starts a main turn when the main agent is idle.
+//   company-claude-v1 (a fact of THIS MOMENT, like privsep-v1 below; reported by boxCapabilities) a Claude Code thread may run on a company model the platform grants (`modelAccess` /
+//                   `modelProxy` of the broker answer, os/company-model.ts): its Messages traffic goes to the
+//                   loopback relay POST /api/os-model/anthropic/v1/messages[/count_tokens] (os/model-relay.ts)
+//                   with its own per-thread key, and the daemon forwards it with the box token. The person's
+//                   own Claude login keeps working for every other thread.
 // Served by GET /api/host-context (OS reads it at provisioning) and sent on every heartbeat.
 import { privsepProven } from '../privsep/selfcheck.js';
+import { companyClaudePermitted } from '../os/login-policy.js';
 
 export const BOX_CAPABILITIES = ['base-path', 'os-tools-proxy', 'profile', 'headless-v1', 'idle-info', 'gate-v2', 'inbox-v1', 'live-tools-v1', 'subagents-v1', 'codex-signout-v1'] as const;
 export type BoxCapability = (typeof BOX_CAPABILITIES)[number];
@@ -45,7 +51,18 @@ export type BoxCapability = (typeof BOX_CAPABILITIES)[number];
  */
 export const PRIVSEP_CAPABILITY = 'privsep-v1';
 
-/** What this daemon reports now: the build's list, plus `privsep-v1` when this start proved it. */
-export function boxCapabilities(): string[] {
-  return privsepProven() ? [...BOX_CAPABILITIES, PRIVSEP_CAPABILITY] : [...BOX_CAPABILITIES];
+/**
+ * `company-claude-v1`: a Claude Code thread can run on a company model (os/company-model.ts). Reported
+ * only while no managed Claude Code file forces the person's own login (os/login-policy.ts): under
+ * `forceLoginMethod` Claude Code refuses the relay's token before any request.
+ */
+export const COMPANY_CLAUDE_CAPABILITY = 'company-claude-v1';
+
+/** What this daemon reports now: the build's list, `company-claude-v1` while the policy permits it, `privsep-v1` when this start proved it. */
+export function boxCapabilities(env: NodeJS.ProcessEnv = process.env): string[] {
+  return [
+    ...BOX_CAPABILITIES,
+    ...(companyClaudePermitted(env) ? [COMPANY_CLAUDE_CAPABILITY] : []),
+    ...(privsepProven() ? [PRIVSEP_CAPABILITY] : []),
+  ];
 }

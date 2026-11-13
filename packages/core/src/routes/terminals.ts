@@ -17,6 +17,7 @@ import { daemonPathPolicy } from '../files/path-policy-default.js';
 import { expandHome } from '../sessions/project-dir.js';
 import { createIdempotencyCache } from '../http/idempotency.js';
 import type { StallState } from '../runtime/stall-watchdog.js';
+import { companyModels, decideClaudeSource } from '../os/company-model.js';
 import { explainThread, threadStatusOf, toDeliveryInfo, type DeliveryInfo } from '../status/explain.js';
 
 /**
@@ -65,7 +66,21 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   router.post('/sessions/:id/terminals', keyRoute({ thread: createBodyRule('thread'), chat: createBodyRule('chat') }), requireOwnerProof, async (req, res) => {
     try {
       // A `skipPermissions` field in the body is ignored: it was stored and never read. Agents run with approvals off by design.
-      const { type, label, workingDir, externalId, config, queued, task } = req.body;
+      const { type, label, workingDir, externalId, queued, task } = req.body;
+      let { config } = req.body;
+      // Company models (os/company-model.ts): which login a new Claude Code thread runs on. Without the
+      // platform's modelAccess nothing changes; a company model it does not grant is refused.
+      if (type === 'claude-code' && !(config && config.signIn)) {
+        const cfg: Record<string, unknown> = config && typeof config === 'object' && !Array.isArray(config) ? { ...config } : {};
+        const src = companyModels();
+        const access = src.access();
+        const signedIn = access ? await src.personalClaudeSignedIn(cfg) : false;
+        const decision = decideClaudeSource(access, cfg, signedIn);
+        if (!decision.ok) return res.status(decision.status).json({ error: decision.message });
+        if (decision.strip) delete cfg.modelSource;
+        if (decision.patch) Object.assign(cfg, decision.patch);
+        if (decision.patch || decision.strip) config = cfg;
+      }
       // Pin the tool-support verdict for a picked OpenCode model HERE, where awaiting a
       // catalog is possible — the synchronous spawn path can only read caches. A model with
       // no tool-capable endpoint then spawns chat-only instead of failing its first turn

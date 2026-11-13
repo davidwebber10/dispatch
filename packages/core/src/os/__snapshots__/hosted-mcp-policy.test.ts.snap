@@ -54,7 +54,6 @@ exports[`the managed policy files the image installs (generated at build) > ever
     "disableArtifact": true,
     "disableClaudeAiConnectors": true,
     "enableArtifact": false,
-    "forceLoginMethod": "claudeai",
     "permissions": {
       "disableBypassPermissionsMode": "disable",
     },
