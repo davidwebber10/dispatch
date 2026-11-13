@@ -70,6 +70,15 @@ export function ProviderRing({ ring, size }: { ring: ChipRing; size: number }) {
   );
 }
 
+/** The rail's ring slots (2026-11-13): one size for every account, so a moving highlight shifts nothing. */
+const RAIL_SLOT = 40;
+const RAIL_GAP = 4;
+const RAIL_PAD = 6;
+/** True when the device asks for less motion: the highlight then jumps instead of sliding. */
+function reducedMotion(): boolean {
+  try { return typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
+}
+
 /**
  * The header usage chip (#127, rings since 2026-11-06). Hidden until a provider reports. One ring
  * per tool with its mark in the middle: `rail` stacks them in the desktop icon rail and opens a
@@ -101,9 +110,9 @@ export function UsageChip({ variant, only, hideAll, current }: {
   const tone = chipTone(rings, summary.warnPercent);
   const color = TONE_COLOR[tone];
   const isCurrent = (r: ChipRing) => !!current && r.provider === current.provider && (r.accountId ?? 'cli') === current.accountId;
-  // The same order as the Usage flyout (2026-11-09): the open thread's account first, then the rest as listed.
-  if (variant === 'rail' && current) rings.sort((a, b) => Number(isCurrent(b)) - Number(isCurrent(a)));
+  // One fixed order, the same as the flyout (owner, 2026-11-13): switching threads moves only the highlight.
   const mine = rings.find(isCurrent);
+  const currentIdx = rings.findIndex(isCurrent);
   const title = `Usage. ${mine ? `This thread uses ${mine.name}. ` : ''}${rings.map((r) => r.title).join('. ')}`;
 
   if (variant === 'phone') {
@@ -123,14 +132,20 @@ export function UsageChip({ variant, only, hideAll, current }: {
   return (
     <div ref={wrap} style={{ position: 'relative' }}>
       <button type="button" data-testid="usage-chip" data-tone={tone} aria-label={title} title={title} aria-expanded={open} onClick={() => setOpen((o) => !o)}
-        style={{ width: 52, padding: '6px 0', borderRadius: 'var(--radius-md)', border: '1px solid transparent', background: open ? 'var(--color-elevated)' : 'transparent', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-        {rings.map((r) => isCurrent(r) ? (
-          <span key={`${r.provider}|${r.accountId}`} data-testid="usage-ring-current"
-            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, width: 46, padding: '5px 0 4px', borderRadius: 'var(--radius-md)', border: '1px solid color-mix(in srgb, var(--color-accent) 55%, transparent)', background: 'color-mix(in srgb, var(--color-accent) 10%, transparent)' }}>
+        style={{ position: 'relative', width: 52, padding: `${RAIL_PAD}px 0`, borderRadius: 'var(--radius-md)', border: '1px solid transparent', background: open ? 'var(--color-elevated)' : 'transparent', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: RAIL_GAP }}>
+        {/* One highlight behind the open thread's ring. It slides to the next account when the thread
+            changes (owner, 2026-11-13); every slot has the same size, so no ring moves. */}
+        {currentIdx >= 0 && (
+          <span data-testid="usage-ring-highlight" aria-hidden
+            style={{ position: 'absolute', top: RAIL_PAD, left: '50%', width: 46, height: RAIL_SLOT, marginLeft: -23, boxSizing: 'border-box', borderRadius: 'var(--radius-md)', border: '1px solid color-mix(in srgb, var(--color-accent) 55%, transparent)', background: 'color-mix(in srgb, var(--color-accent) 10%, transparent)', pointerEvents: 'none',
+              transform: `translateY(${currentIdx * (RAIL_SLOT + RAIL_GAP)}px)`, transition: reducedMotion() ? 'none' : 'transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1)' }} />
+        )}
+        {rings.map((r) => (
+          <span key={`${r.provider}|${r.accountId}`} data-rail-slot data-testid={isCurrent(r) ? 'usage-ring-current' : undefined}
+            style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 46, height: RAIL_SLOT, flexShrink: 0 }}>
             <ProviderRing ring={r} size={30} />
-            <span style={{ font: '600 7px var(--font-mono)', lineHeight: 1.15, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--color-accent)', textAlign: 'center' }}>{'This '}<br />thread</span>
           </span>
-        ) : <ProviderRing key={`${r.provider}|${r.accountId}`} ring={r} size={30} />)}
+        ))}
       </button>
       {open && (
         // Fixed to the window, not the chip (2026-11-09): with four accounts the flyout grew past the top edge.

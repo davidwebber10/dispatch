@@ -271,7 +271,7 @@ function RefreshRow({ summary, now }: { summary: UsageSummary; now: number }) {
   );
 }
 
-/** `current` (opened from a thread, 2026-11-07): that thread's account is marked with a "This thread" tab and listed first. */
+/** `current` (opened from a thread, 2026-11-07): that thread's account is marked with a "This thread" tab, in its own place. */
 export function UsageRings({ summary, now, current, dense }: { summary: UsageSummary | null; now: number; current?: { provider: string; accountId: string } | null; dense?: boolean }) {
   const accounts = useAccounts((s) => s.view);
   // Each time the sheet opens: the accounts, with what each Claude sign-in can do for the figures (W1-H).
@@ -299,7 +299,8 @@ export function UsageRings({ summary, now, current, dense }: { summary: UsageSum
       main: { type: 'none', label: 'no limit', left: 100, tone: 'green', reset: null, estimate: null, estimateTitle: null },
       rows: [], asOf: '', stale: false, paused: false, credits: 0, creditList: [], useUrl: null, spend: null, creditBalance: null,
     } as RingModel));
-  const rings = [...models, ...missing].sort((a, b) => Number(isCurrent(b)) - Number(isCurrent(a)));
+  // One fixed order (owner, 2026-11-13): the open thread's account is marked by its tab, never moved to the top.
+  const rings = [...models, ...missing];
   if (!summary || (rings.length === 0 && summary.paused.length === 0)) return <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)', padding: '8px 0' }}>No figures reported yet</div>;
   return (
     <div data-testid="usage-rings" style={{ display: 'flex', flexDirection: 'column', gap: dense ? 10 : 16 }}>

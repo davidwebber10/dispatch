@@ -110,7 +110,8 @@ describe('UsageChip', () => {
     expect(screen.getAllByTestId('usage-ring')).toHaveLength(3);
   });
 
-  it('the details from a thread mark that thread\'s account "This account" and list it first; the rest stay (2026-11-07)', () => {
+  // A fixed order (owner, 2026-11-13): the open thread's account is marked, never moved to the top.
+  it('the details from a thread mark that thread\'s account "This thread" and keep the listed order', () => {
     const W = { seven_day: { usedPercent: 30, resetsAt: Date.now() + 72 * H } };
     useUsageLimits.setState({ summary: summary(10, { providers: [
       { provider: 'claude-code', accountId: 'cli', label: 'Ultra 1', asOf: Date.now(), windows: W },
@@ -120,11 +121,12 @@ describe('UsageChip', () => {
     fireEvent.click(screen.getByTestId('usage-chip'));
     const cards = screen.getAllByRole('region');
     expect(cards).toHaveLength(2);
-    expect(cards[0].getAttribute('data-current')).toBe('true');
+    expect(cards[0].textContent).toContain('Ultra 1');
+    expect(cards[0].querySelector('[data-testid="usage-current-tab"]')).toBeNull();
     // A tab on the card's top-right border (2026-11-09), green with dark text.
-    expect(cards[0].querySelector('[data-testid="usage-current-tab"]')).toHaveTextContent('This thread');
-    expect(cards[0].textContent).toContain('Team');
-    expect(cards[1].querySelector('[data-testid="usage-current-tab"]')).toBeNull();
+    expect(cards[1].getAttribute('data-current')).toBe('true');
+    expect(cards[1].querySelector('[data-testid="usage-current-tab"]')).toHaveTextContent('This thread');
+    expect(cards[1].textContent).toContain('Team');
   });
 
   it('the per-device setting puts the percent used in the ring instead of the logo (2026-11-07)', () => {
@@ -155,14 +157,13 @@ describe('rail: the open thread\'s account (2026-11-09)', () => {
     { provider: 'claude-code', accountId: 'home', label: 'Home', asOf: Date.now() - 60_000, windows: { five_hour: { usedPercent: 30, resetsAt: Date.now() + H } } },
   ] as never });
 
-  it('marks the ring of the current thread\'s account with THIS THREAD, and only that ring', () => {
+  it('marks the ring of the current thread\'s account, and only that ring', () => {
     useUsageLimits.setState({ summary: two() });
     render(<UsageChip variant="rail" current={{ provider: 'claude-code', accountId: 'home' }} />);
     expect(screen.getAllByTestId('usage-ring')).toHaveLength(2); // every account still shows
     const marks = screen.getAllByTestId('usage-ring-current');
     expect(marks).toHaveLength(1);
     expect(marks[0].querySelector('[data-testid="usage-ring"]')!.getAttribute('data-account')).toBe('home');
-    expect(marks[0]).toHaveTextContent('This thread');
     expect(screen.getByTestId('usage-chip').getAttribute('aria-label')).toContain('This thread uses Claude · Home');
   });
 
@@ -176,19 +177,38 @@ describe('rail: the open thread\'s account (2026-11-09)', () => {
     expect(card.textContent).not.toMatch(/This account|\bThis\b(?! thread)/);
   });
 
-  it('the rail lists the rings in the flyout\'s order: the open thread\'s account first', () => {
+  // Owner, 2026-11-13: "it always puts active on top, this is confusing. can we have a static order, and
+  // then the highlighted account just changes ... an animation where the highlight slides to the account".
+  it('the rail and the flyout keep one fixed order, whatever the open thread', () => {
     useUsageLimits.setState({ summary: two() });
-    render(<UsageChip variant="rail" current={{ provider: 'claude-code', accountId: 'home' }} />);
+    const { rerender } = render(<UsageChip variant="rail" current={{ provider: 'claude-code', accountId: 'home' }} />);
     const order = () => screen.getAllByTestId('usage-ring').map((r) => r.getAttribute('data-account'));
-    expect(order()).toEqual(['home', 'work']);
+    expect(order()).toEqual(['work', 'home']);
+    rerender(<UsageChip variant="rail" current={{ provider: 'claude-code', accountId: 'work' }} />);
+    expect(order()).toEqual(['work', 'home']);
     fireEvent.click(screen.getByTestId('usage-chip'));
     const cards = screen.getByRole('dialog', { name: 'Usage limits' }).querySelectorAll('section[aria-label]');
-    expect([...cards].map((c) => c.getAttribute('aria-label'))).toEqual(['Claude · Home', 'Claude · Work']);
+    expect([...cards].map((c) => c.getAttribute('aria-label'))).toEqual(['Claude · Work', 'Claude · Home']);
+  });
+
+  it('one highlight sits behind the current ring and moves to the next account; every slot has the same size', () => {
+    useUsageLimits.setState({ summary: two() });
+    const { rerender } = render(<UsageChip variant="rail" current={{ provider: 'claude-code', accountId: 'work' }} />);
+    const hl = () => screen.getByTestId('usage-ring-highlight');
+    const first = hl().style.transform;
+    rerender(<UsageChip variant="rail" current={{ provider: 'claude-code', accountId: 'home' }} />);
+    expect(screen.getAllByTestId('usage-ring-highlight')).toHaveLength(1); // the same box, moved
+    expect(hl().style.transform).not.toBe(first);
+    expect(hl().style.transition).toMatch(/transform/);
+    const slots = [...document.querySelectorAll<HTMLElement>('[data-rail-slot]')].map((s) => s.style.height);
+    expect(slots).toHaveLength(2);
+    expect(new Set(slots).size).toBe(1); // nothing below shifts when the highlight moves
   });
 
   it('no open thread: no mark', () => {
     useUsageLimits.setState({ summary: two() });
     render(<UsageChip variant="rail" current={null} />);
     expect(screen.queryByTestId('usage-ring-current')).toBeNull();
+    expect(screen.queryByTestId('usage-ring-highlight')).toBeNull();
   });
 });
