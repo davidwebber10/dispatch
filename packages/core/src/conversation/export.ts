@@ -31,6 +31,21 @@ const oneLine = (s: string): string => s.replace(/\s+/g, ' ').trim();
 const cut = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 const day = (iso: string | null): string | null => (iso && !Number.isNaN(Date.parse(iso)) ? iso.slice(0, 10) : null);
 
+/**
+ * A message's own headings move down two levels (`#` → `###`, `##` → `####`, at most `######`), so the
+ * only `##` lines are the You and Assistant sections a reader splits on. Lines inside a code fence stay.
+ */
+export function demoteHeadings(text: string): string {
+  let fence: string | null = null;
+  return text.split('\n').map((line) => {
+    const f = /^\s*(```|~~~)/.exec(line);
+    if (f) { fence = fence === null ? f[1] : (fence === f[1] ? null : fence); return line; }
+    if (fence !== null) return line;
+    const h = /^(#{1,6})(\s)/.exec(line);
+    return h ? `${'#'.repeat(Math.min(6, h[1].length + 2))}${line.slice(h[1].length)}` : line;
+  }).join('\n');
+}
+
 /** One tool call as one line: `→ Bash: npm test`. No output, never more than about 160 characters of input. */
 export function toolLine(it: ConvItem): string {
   const name = it.toolName || 'Tool';
@@ -79,7 +94,7 @@ export function renderThreadMarkdown(meta: ExportMeta, items: ConvItem[], opts: 
       const text = (it.text ?? '').trim();
       if (!text) continue;
       start('user');
-      parts.push(`\n${text}\n`);
+      parts.push(`\n${demoteHeadings(text)}\n`);
       open = 'user';
     } else if (it.kind === 'image' && (it as { imageFromUser?: boolean }).imageFromUser) {
       if (open !== 'user') start('user');
@@ -88,7 +103,7 @@ export function renderThreadMarkdown(meta: ExportMeta, items: ConvItem[], opts: 
       const text = (it.text ?? '').trim();
       if (!text) continue;
       start('assistant');
-      parts.push(`\n${text}\n`);
+      parts.push(`\n${demoteHeadings(text)}\n`);
     } else if (it.kind === 'tool') {
       start('assistant');
       parts.push(`\n${toolLine(it)}\n`);

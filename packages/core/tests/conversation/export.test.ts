@@ -44,7 +44,15 @@ describe('renderThreadMarkdown', () => {
     expect(md).toContain('[image]');
   });
 
-  it('says so when the thread has no messages', () => {
+  it('moves the headings inside a message down two levels, so only the sections are ## (not in code)', () => {
+    const out = renderThreadMarkdown(META, [{ kind: 'assistant', text: '# Plan\n## Mossad\ntext\n```\n# a comment\n```' }]);
+    expect(out).toContain('### Plan');
+    expect(out).toContain('#### Mossad');
+    expect(out).toContain('```\n# a comment\n```');
+    expect(out.match(/^## /gm)).toEqual(['## ']); // the one Assistant section
+  });
+
+    it('says so when the thread has no messages', () => {
     expect(renderThreadMarkdown(META, [])).toContain('No messages yet.');
   });
 
