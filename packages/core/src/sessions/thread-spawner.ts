@@ -43,6 +43,7 @@ import { reportsStatus, ThreadConfigStore, type ConfigPatch } from './thread-con
 import type { SessionWiring } from './session-wiring.js';
 import { AGENCY_MCP_SERVER, type SpawnInjection } from './spawn-injection.js';
 import { grokHomeDir } from '../providers/grok-home.js';
+import { COMPANY_DISALLOWED_TOOLS, companyClaudeEnv, isCompanyClaudeThread } from '../os/company-model.js';
 import { opencodeHomesDir } from '../providers/opencode-config.js';
 
 type IStructuredManager = import('../structured/manager.js').IStructuredManager;
@@ -57,6 +58,35 @@ export function disallowedToolsFor(config: Record<string, any>): string[] | unde
   if (config.role === 'coordinator') return [...COORDINATOR_DISALLOWED_TOOLS];
   if (typeof config.roleAuthority === 'string') return [...ROLE_DISALLOWED_TOOLS];
   return undefined;
+}
+
+/** The sentence of a company-model thread that cannot reach the relay (no key registry, no address). */
+export const COMPANY_MODEL_NO_RELAY = 'This thread runs on the company model, and this daemon cannot give it the way there. Restart the workspace.';
+
+/**
+ * The env of one Claude Code process: the account overlay (the thread's own login), or, for a thread on
+ * the company model (os/company-model.ts), the relay env instead of any login. A company thread never
+ * gets an account's CLAUDE_CONFIG_DIR, and its key reaches it twice: DISPATCH_AUTH (the daemon's tools)
+ * and ANTHROPIC_AUTH_TOKEN (the relay). The two are the same per-thread key. Throws for a company
+ * thread with no key or no daemon address: it must never fall back to the person's own login.
+ */
+export function claudeLoginEnv(
+  type: string,
+  config: Record<string, any>,
+  accountEnv: Record<string, string>,
+  relay: { daemonApi: string | null; key: string | null },
+): Record<string, string> {
+  if (!isCompanyClaudeThread(type, config)) return accountEnv;
+  if (!relay.daemonApi || !relay.key) throw new Error(COMPANY_MODEL_NO_RELAY);
+  const rest = { ...accountEnv };
+  delete rest.CLAUDE_CONFIG_DIR;
+  return { ...rest, ...companyClaudeEnv(relay.daemonApi, relay.key, config.model) };
+}
+
+/** A company-model Claude thread may not use the tools the platform refuses (hosted web search). */
+export function companyDisallowedTools(type: string, config: Record<string, any>, base: string[] | undefined): string[] | undefined {
+  if (!isCompanyClaudeThread(type, config)) return base;
+  return [...new Set([...(base ?? []), ...COMPANY_DISALLOWED_TOOLS])];
 }
 
 /**
@@ -280,7 +310,8 @@ export class ThreadSpawner {
         // just structured ones — the New Thread modal offers the picker in both modes.
         // modelFor returns config.model for a plain user thread (no role/agentType).
         this.adoptTranscriptSettings(terminal, config, workDir);
-        const model = modelFor(config) ?? (terminal.type === 'codex' ? hostedCodexDefaultModel() : undefined);
+        // A company-model thread runs exactly its granted model (os/company-model.ts).
+        const model = isCompanyClaudeThread(terminal.type, config) ? config.model as string : modelFor(config) ?? (terminal.type === 'codex' ? hostedCodexDefaultModel() : undefined);
         launchModel = model;
         const effort = terminal.type === 'codex' ? this.codexEffortFor(config, model) : effortFor(config);
         // A provider that names its own session (Grok) gets a fresh uuid here, which is
@@ -295,14 +326,18 @@ export class ThreadSpawner {
             : provider.buildNewCommand({ workDir, secretsMcp, statusHooks, model, effort, sessionId: assignedSessionId });
       }
       command = cmd.command;
-      args = hostedClaudeArgs(terminal.type, cmd.args);
+      // A company-model thread: no web search (the CLI's options come first, so the list ends at the next option).
+      const company = companyDisallowedTools(terminal.type, config, undefined);
+      args = hostedClaudeArgs(terminal.type, company ? ['--disallowedTools', ...company, ...cmd.args] : cmd.args);
     }
 
     // GROK_HOME is how Grok's hooks and MCP servers reach the thread — argv cannot carry
     // them for the top-level command. Everything but `plugins` links back to the real home.
     // The account overlay first, so a thread's own Claude token or Codex home rides every launch
     // (new, resume, relaunch), and the per-process keys below can never be shadowed by it.
-    const spawnEnv: Record<string, string> = { ...(this.wiring.accountEnv?.(terminal.type, config) ?? {}), ...hostedClaudeEnv(terminal.type), [TERMINAL_ID_ENV_VAR]: terminalId };
+    const loginEnv = terminal.type === 'shell' ? (this.wiring.accountEnv?.(terminal.type, config) ?? {})
+      : claudeLoginEnv(terminal.type, config, this.wiring.accountEnv?.(terminal.type, config) ?? {}, { daemonApi: this.wiring.daemonApi, key: sk && !sk.keyFile ? sk.key : null });
+    const spawnEnv: Record<string, string> = { ...loginEnv, ...hostedClaudeEnv(terminal.type), [TERMINAL_ID_ENV_VAR]: terminalId };
     if (grokHomeDir) spawnEnv.GROK_HOME = grokHomeDir;
     // The key travels in the environment of this one process, never in argv and never in the shared
     // default env. The Codex CLI view writes its environment to a snapshot file, so it gets the path
@@ -491,13 +526,16 @@ export class ThreadSpawner {
     const opencodeSettingDefault = readHarnessSettings(this.db).opencode?.defaultModel;
     const opencodeDefault =
       opencodeSettingDefault && !isClaudeTierAlias(opencodeSettingDefault) ? opencodeSettingDefault : OPENCODE_DEFAULT_MODEL;
-    const resolvedModel = resolveSpawnModel({
+    let resolvedModel = resolveSpawnModel({
       harness: terminal.type,
       config,
       opencodeDefault,
       // A hosted box: a Codex thread with no pick runs GPT-6.1 Sol, not Codex's own default.
       codexDefault: hostedCodexDefaultModel(),
     });
+    // A company-model thread runs exactly its granted model, whatever a default says.
+    const companyModel = isCompanyClaudeThread(terminal.type, config) ? config.model as string : null;
+    if (companyModel) resolvedModel = companyModel;
     if (resolvedModel && !config.model) {
       config.model = resolvedModel;
       this.configStore.patch(terminal.id, { model: resolvedModel });
@@ -521,7 +559,7 @@ export class ThreadSpawner {
       // toolset is the enforcement; the policy deny remains as a backstop.
       // A Claude overseer loads only its own memory folder (overseer memory scope spec, Unit 1).
       const autoMemoryDirectory = this.overseerMemoryFor(terminal, config, workDir, coordinatorFolders);
-      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: persona, resumeSessionId, model: resolvedModel, effort: terminal.type === 'claude-code' ? effortFor(config) : undefined, grokPluginDir, disallowedTools: disallowedToolsFor(config), autoMemoryDirectory, ...(smartForCommand ? { smartApprovals: { settings: claudeSmartSettings(claudeSmartAskRules()) } } : {}) });
+      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: persona, resumeSessionId, model: resolvedModel, effort: terminal.type === 'claude-code' ? effortFor(config) : undefined, grokPluginDir, disallowedTools: companyDisallowedTools(terminal.type, config, disallowedToolsFor(config)), autoMemoryDirectory, ...(smartForCommand ? { smartApprovals: { settings: claudeSmartSettings(claudeSmartAskRules()) } } : {}) });
       if (!built) throw new Error('structured transport not supported for this provider');
       sc = built;
     }
@@ -676,14 +714,15 @@ export class ThreadSpawner {
       // thread always runs on the CLI login; an added Codex account is for CLI-mode threads.
       env: terminal.type === 'codex'
         ? {}
-        : { ...(this.wiring.accountEnv?.(terminal.type, config) ?? {}), ...hostedClaudeEnv(terminal.type), [TERMINAL_ID_ENV_VAR]: terminal.id, ...(sk ? { DISPATCH_AUTH: sk.key } : {}), ...(opencodeEnv ?? {}) },
+        : { ...claudeLoginEnv(terminal.type, config, this.wiring.accountEnv?.(terminal.type, config) ?? {}, { daemonApi: this.wiring.daemonApi, key: sk?.key ?? null }), ...hostedClaudeEnv(terminal.type), [TERMINAL_ID_ENV_VAR]: terminal.id, ...(sk ? { DISPATCH_AUTH: sk.key } : {}), ...(opencodeEnv ?? {}) },
       // A hosted Claude Code thread: the box logs the servers its init frame names and warns about any
       // it did not pass (os/hosted-mcp-policy.ts).
       ...(isHostedBox() && terminal.type === 'claude-code' ? { mcpExpected: specs.map((s) => s.name) } : {}),
+      ...(companyModel ? { modelSource: 'company' as const } : {}),
     });
     // `model`: what the harness was asked to run; null = its own default. The model it reports back is the
     // `thread.model` line (structured/manager.ts, structured/codex-manager.ts).
-    boxLog('thread.start', { thread: terminal.id, harness: terminal.type, transport: 'structured', resume: !!resumeSessionId, model: resolvedModel ?? null });
+    boxLog('thread.start', { thread: terminal.id, harness: terminal.type, transport: 'structured', resume: !!resumeSessionId, model: resolvedModel ?? null, ...(companyModel ? { modelSource: 'company' } : {}) });
     if (sk) this.wiring.threadKeys?.bindStructured(terminal.id, sk.handle);
     terminalsDb.updatePid(this.db, terminal.id, pid);
   }
