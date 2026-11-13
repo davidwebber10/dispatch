@@ -13,6 +13,7 @@ import { SectionHeader } from '../sidebar/sectionParts';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { ThreadRow } from '../sidebar/ProjectCard';
 import { ThreadMenu, type ThreadMenuAt } from '../sidebar/ThreadMenu';
+import { ConfirmModal } from '../common/ConfirmModal';
 import { ArchivedThreadsList } from './ArchivedThreadsList';
 import { isAgentStarted, startedByOf, startedByText } from '../../lib/startedBy';
 import { useMinuteTick } from '../../lib/autoArchive';
@@ -273,7 +274,10 @@ export function AllThreadsView({ onOpenThread, query = '', onQueryChange }: { on
   }, []);
   const openRef = useRef(onOpenThread); openRef.current = onOpenThread;
   const openRow = useCallback((t: Terminal) => openRef.current(t.sessionId, t.id), []);
-  const archiveRow = useCallback((t: Terminal) => { void archive(t); }, [archive]);
+  // A swipe asks first (owner, 2026-11-13: "swipe to archive on mobile should confirm"), the same
+  // "Archive thread?" dialog as a project's thread list.
+  const [archiveTarget, setArchiveTarget] = useState<Terminal | null>(null);
+  const archiveRow = useCallback((t: Terminal) => { setArchiveTarget(t); }, []);
   const contextRow = useCallback((t: Terminal, x: number, y: number) => setMenu({ tab: t, x, y }), []);
 
   // Active ⇄ Archived (2026-11-05): archived threads were only reachable inside each project.
@@ -373,6 +377,15 @@ export function AllThreadsView({ onOpenThread, query = '', onQueryChange }: { on
         </>}
       </div>
       <ThreadMenu at={menu} onClose={() => setMenu(null)} onBranched={(b) => onOpenThread(b.sessionId, b.id)} />
+      <ConfirmModal
+        open={!!archiveTarget}
+        title="Archive thread?"
+        message={archiveTarget ? `“${archiveTarget.label}” will be archived. You can restore it later from the archive.` : ''}
+        confirmLabel="Archive"
+        danger
+        onConfirm={() => { const target = archiveTarget; setArchiveTarget(null); if (target) void archive(target); }}
+        onCancel={() => setArchiveTarget(null)}
+      />
     </div>
   );
 }
