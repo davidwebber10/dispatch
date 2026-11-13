@@ -46,6 +46,7 @@ const SPAWN_SITES = [
   'auth/claude-cli-login.ts',
   'auth/claude-login.ts',
   'auth/codex-login.ts',
+  'auth/codex-signout.ts',
   'auth/tailscale-access.ts',
   'docs/git.ts',
   'files/thumbnail.ts',
