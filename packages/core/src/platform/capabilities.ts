@@ -31,10 +31,15 @@
 //                   stays `working` while one runs; GET …/agents, GET …/agents/:agentId/journal, POST
 //                   …/agents/:agentId/stop and …/agents/stop-all (routes/subagents.ts); a finished Codex
 //                   subagent's result starts a main turn when the main agent is idle.
+//   company-claude-v1 a Claude Code thread may run on a company model the platform grants (`modelAccess` /
+//                   `modelProxy` of the broker answer, os/company-model.ts): its Messages traffic goes to the
+//                   loopback relay POST /api/os-model/anthropic/v1/messages[/count_tokens] (os/model-relay.ts)
+//                   with its own per-thread key, and the daemon forwards it with the box token. The person's
+//                   own Claude login keeps working for every other thread.
 // Served by GET /api/host-context (OS reads it at provisioning) and sent on every heartbeat.
 import { privsepProven } from '../privsep/selfcheck.js';
 
-export const BOX_CAPABILITIES = ['base-path', 'os-tools-proxy', 'profile', 'headless-v1', 'idle-info', 'gate-v2', 'inbox-v1', 'live-tools-v1', 'subagents-v1', 'codex-signout-v1'] as const;
+export const BOX_CAPABILITIES = ['base-path', 'os-tools-proxy', 'profile', 'headless-v1', 'idle-info', 'gate-v2', 'inbox-v1', 'live-tools-v1', 'subagents-v1', 'codex-signout-v1', 'company-claude-v1'] as const;
 export type BoxCapability = (typeof BOX_CAPABILITIES)[number];
 
 /**
