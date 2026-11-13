@@ -7,6 +7,7 @@ import { chipifyHtml, type LedgerChips } from '../lib/ledgerRefs';
 import { findDocPaths, docName } from '../lib/docPaths';
 import { isLocalImageSrc, remoteImageHost } from '../lib/remoteImage';
 import { classifyLink, type LinkAction } from '../lib/docLinks';
+import { useNavigation } from '../stores/navigation';
 import { useThreadDocs } from './threadDocs';
 import { ImageLightbox, useViewerHost } from './ChatImage';
 
@@ -347,6 +348,8 @@ export const Markdown = React.memo(function Markdown({ source, ledger, docs: own
     const act = docs.link(href);
     if (act.kind === 'doc') docs.onOpen(act.path, null);
     else if (act.kind === 'web') window.open(href, '_blank', 'noopener,noreferrer');
+    // A thread's address opens that thread in the app (2026-11-13), on the desktop and the phone.
+    else if (act.kind === 'thread') useNavigation.getState().navigate({ view: 'workspace', projectId: act.projectId, threadId: act.threadId });
     return true;
   };
   const onAuxClick = (e: React.MouseEvent<HTMLDivElement>) => { if (e.button === 1) routeLink(e); };
