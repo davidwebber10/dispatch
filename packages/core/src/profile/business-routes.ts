@@ -131,6 +131,9 @@ export const BUSINESS_ROUTES: Readonly<Record<string, BusinessRow>> = {
   'GET /api/os/connections': allow(),
   'POST /api/os/connections/refresh': allow(),
   'GET /api/os/tools': allow(),
+  // ── company models (os/model-relay.ts): a company-model thread's own Messages traffic ──────────
+  'POST /api/os-model/anthropic/v1/messages': allow(THREAD),
+  'POST /api/os-model/anthropic/v1/messages/count_tokens': allow(THREAD),
   [`GET ${T}/approvals`]: allow(),
   [`POST ${T}/approvals`]: check('thread.approvals', both(smartOnly, drivable)),
   [`POST ${T}/blocked/:blockId`]: onChat(),

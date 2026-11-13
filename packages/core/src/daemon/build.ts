@@ -59,6 +59,9 @@ import { wireStopOnAuthFailure } from '../os/auth-stop.js';
 import { createApprovalsRouter } from '../os/approvals-routes.js';
 import { createContinuityRouter } from '../os/continuity.js';
 import { setProfileSource, resolveProfile } from '../os/profile.js';
+import { setCompanyModelSource } from '../os/company-model.js';
+import { createModelRelayRouter } from '../os/model-relay.js';
+import { detectProvider } from '../setup/detect.js';
 import { IntegrationsService, type IntegrationLauncher } from '../integrations/service.js';
 import { HeartbeatService } from '../platform/heartbeat.js';
 import { bestEffort, compactLimits, diskUse } from '../platform/fleet-stats.js';
@@ -559,6 +562,24 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   // else business on a hosted box / developer locally. The gate, the sockets, the page and every spawn read it.
   const profileNow = () => resolveProfile(osConnections.snapshot().profile, env);
   setProfileSource(profileNow);
+  // Company models (os/company-model.ts): what the platform grants now, and whether the person has a
+  // Claude login of their own a thread could use (the account the thread names, else the default).
+  setCompanyModelSource({
+    access: () => osConnections.modelAccess(),
+    proxy: () => osConnections.modelProxy(),
+    personalClaudeSignedIn: async (config) => {
+      const wanted = typeof config.accountId === 'string' && config.accountId ? config.accountId : accounts.defaultId('claude');
+      const id = accounts.has('claude', wanted) ? wanted : accounts.defaultId('claude');
+      if (id !== 'cli') {
+        const dir = accounts.claudeConfigDir(id);
+        if (dir) return (await claudeLogin.cliStatus({ configDir: dir }).catch(() => null))?.loggedIn === true;
+        return accounts.claudeToken(id) !== null;
+      }
+      if (claudeLogin.usesCleanLogin) return (await claudeLogin.cliStatus().catch(() => null))?.loggedIn === true;
+      if (claudeLogin.isAuthenticated()) return true;
+      return (await detectProvider('claude').catch(() => null))?.signedIn === true;
+    },
+  });
   profileRef = profileNow;
   const hostContext = () => liveHostContext(bootHostContext, { profile: profileNow(), osPublicUrl: osConnections.snapshot().osPublicUrl });
   // The business profile's table and what its guard may ask (profile/business-gate.ts). The guard is the
@@ -670,6 +691,19 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
       catalog: osToolCatalog,
       onUnreachable: (terminalId, message) => {
         sessionService.structuredManagerForTerminal(terminalId)?.postEvent?.(terminalId, { type: 'system', subtype: 'dispatch_notice', level: 'warning', message });
+      },
+    }),
+    // Company models (os/model-relay.ts): a company-model Claude thread's Messages traffic, to the platform's proxy.
+    createModelRelayRouter({
+      access: () => osConnections.modelAccess(),
+      proxy: () => osConnections.modelProxy(),
+      boxHeaders: () => osConnections.boxHeaders(),
+      thread: (id) => {
+        const row = terminalsDb.getById(db, id);
+        if (!row || row.archived_at) return null;
+        let config: Record<string, unknown> = {};
+        try { const parsed = JSON.parse(row.config || '{}'); if (parsed && typeof parsed === 'object') config = parsed; } catch { /* an unreadable config is an empty one */ }
+        return { type: row.type, config };
       },
     }),
     createApprovalsRouter(db, sessionService),
