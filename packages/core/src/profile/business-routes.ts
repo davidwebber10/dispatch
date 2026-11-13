@@ -173,6 +173,11 @@ export const BUSINESS_ROUTES: Readonly<Record<string, BusinessRow>> = {
   [`GET ${T}/resume-advice`]: allow(),
   [`GET ${T}/journal`]: allow(),
   [`GET ${T}/journal/images/:imageId`]: allow(),
+  // subagents-v1: a thread's subagents (read like the journal; a stop only takes power away).
+  [`GET ${T}/agents`]: allow(),
+  [`GET ${T}/agents/:agentId/journal`]: allow(),
+  [`POST ${T}/agents/:agentId/stop`]: allow(),
+  [`POST ${T}/agents/stop-all`]: allow(),
   [`POST ${T}/message`]: onChat(),
   [`GET ${T}/permission`]: allow(),
   [`POST ${T}/permission`]: onChat(),

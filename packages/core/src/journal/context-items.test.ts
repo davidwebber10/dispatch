@@ -13,6 +13,7 @@ import { userPromptText } from '../sessions/thread-namer.js';
 import { ownerText } from '../plugins/thread-events.js';
 import { hasRenderableEvents } from '../ws/structured.js';
 import { backfillItem } from '../structured/codex-manager.js';
+import { subagentResultText } from '../structured/shared/subagents.js';
 
 // ── recorded shapes ─────────────────────────────────────────────────────────────────────────────
 const CODEX_ENV = '<environment_context>\n  <cwd>/home/agent/work/project</cwd>\n  <approval_policy>on-request</approval_policy>\n  <sandbox_mode>workspace-write</sandbox_mode>\n  <network_access>restricted</network_access>\n  <shell>bash</shell>\n</environment_context>';
@@ -161,5 +162,33 @@ describe('the transcript views: a context item is a muted notice, never dropped,
   it('case 7: a rollout user item that is only a block is a notice, not nothing', () => {
     const items = parseCodexRollout([line('user', '<user_instructions>Do the thing quietly.</user_instructions>'), line('assistant', 'Done.')].join('\n'));
     expect(items.map((i) => [i.kind, i.text])).toEqual([['notice', CONTEXT_NOTICE], ['assistant', 'Done.']]);
+  });
+});
+
+describe('merge of subagents-v1: the internal delivery input stays hidden as internal; a sent message always shows', () => {
+  const delivery = (text: string) => ({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] }, meta: { source: 'dispatch', internal: true, subagents: ['a1'] } }) as Record<string, any>;
+  const result = subagentResultText({ id: 'a1', title: 'Check the tests', state: 'done', text: 'All 12 tests pass.' });
+
+  it('the daemon\'s subagent-result input (meta.internal) is a notice, never a user item', () => {
+    const { ring, rows } = setup();
+    ring.push(delivery(result));
+    expect(rows().map((r) => r.kind)).toEqual(['notice']);
+    // Even with text that would read as a person's words, an internal input is not the person.
+    ring.push(delivery('Please continue.'));
+    expect(rows().map((r) => r.kind)).toEqual(['notice', 'notice']);
+  });
+
+  it('a person who sends the same <task-notification> text (or any block) sees it as their message', () => {
+    const { ring, rows } = setup();
+    ring.push(sent(result, 'user'));
+    ring.push(sent(CLAUDE_REMINDER, 'user'));
+    expect(rows().map((r) => r.kind)).toEqual(['user', 'user']);
+    expect(storedText(rows()[0])).toBe(result);
+  });
+
+  it('a sent message cannot borrow the internal mark: SENT wins', () => {
+    const { ring, rows } = setup();
+    ring.push({ ...sent('Do this now.', 'user'), meta: { source: 'dispatch', internal: true } });
+    expect(rows().map((r) => r.kind)).toEqual(['user']);
   });
 });

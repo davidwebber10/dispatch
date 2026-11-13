@@ -366,7 +366,10 @@ export class ThreadRecorder {
       }
       return; // otherwise nothing a client renders
     }
-    const kind: JournalKind = shown.includes('user') || other ? 'user' : 'notice';
+    // A turn input the daemon started by itself (meta.internal: the subagent results it hands to the main
+    // agent, structured/codex-manager.ts deliverAgentResults) is never the person's message.
+    const internal = isFrame(e.meta) && e.meta.internal === true;
+    const kind: JournalKind = !internal && (shown.includes('user') || other) ? 'user' : 'notice';
     // A harness item with a reminder block next to the person's block: the reminder block is not kept.
     this.write(kind, uuid, kind === 'user' ? withoutContextBlocks(e) : e, e);
   }
@@ -448,6 +451,16 @@ export class ThreadRecorder {
   }
 
   private result(e: Frame): void {
+    // A subagent's turn end (a Codex sub-thread, subagents-v1) closes only that subagent's stream: the
+    // main agent and the other subagents stream on.
+    const parent = typeof e.parent_tool_use_id === 'string' && e.parent_tool_use_id ? e.parent_tool_use_id : '';
+    if (parent) {
+      this.flush(parent);
+      const stream = this.streams.get(parent);
+      if (stream) stream.open = false;
+      this.write('result', undefined, e, e);
+      return;
+    }
     this.flush(); // a turn end closes every block; their rows come before the footer
     for (const stream of this.streams.values()) stream.open = false; // and every message
     this.compacting = null;
@@ -461,8 +474,9 @@ export class ThreadRecorder {
     if (e.subtype === 'status') { this.compacting = e.status === 'compacting' ? e : null; return; }
     // A daemon warning in the thread (an MCP server or tool the workspace did not give, a refused
     // action) is kept: after a reload or a restart the person still sees it.
+    // A subagent's state change (subagents-v1) is kept: the agent list of a thread is read from it after a restart.
     if ((e.subtype === 'model' && e.switched === true) || e.subtype === 'settings_refused' || e.subtype === 'spawn_error'
-      || (e.subtype === 'dispatch_notice' && e.level === 'warning')) {
+      || (e.subtype === 'dispatch_notice' && e.level === 'warning') || e.subtype === 'subagent') {
       this.write('notice', undefined, e, e);
     }
   }

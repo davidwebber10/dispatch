@@ -1,0 +1,7 @@
+{"_note":"subagents-v1 review proof case a1 (synthetic frames)."}
+{"method": "item/completed", "params": {"threadId": "$MAIN", "turnId": "turn-fake-1", "item": {"type": "subAgentActivity", "id": "ia1", "model": "gpt-fake", "reasoningEffort": "low", "kind": "started", "agentThreadId": "sub-X", "agentPath": "/root/thread_a_private_review"}}}
+{"method": "item/completed", "params": {"threadId": "$MAIN", "turnId": "turn-fake-1", "item": {"type": "agentMessage", "id": "m1", "text": "Started.", "phase": "final_answer", "memoryCitation": null}}}
+{"method": "turn/completed", "params": {"threadId": "$MAIN", "turn": {"id": "turn-fake-1", "items": [], "itemsView": "notLoaded", "status": "completed", "durationMs": 3}}}
+{"wait": 30}
+{"method": "turn/started", "params": {"threadId": "sub-X", "turn": {"id": "tx1", "items": [], "itemsView": "notLoaded", "status": "inProgress"}}}
+{"method": "item/completed", "params": {"threadId": "sub-X", "turnId": "tx1", "item": {"type": "agentMessage", "id": "sx1", "text": "PRIVATE TEXT OF THREAD A", "phase": "commentary", "memoryCitation": null}}}

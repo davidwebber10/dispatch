@@ -178,6 +178,7 @@ export function itemsFromEvent(event: unknown, sessionId: string | undefined, se
     }
   } else if (e.type === 'result') {
     if (e.subtype === 'backfill') return [];
+    if (e.parent_tool_use_id != null) return []; // a subagent's turn end (subagents-v1) is not the thread's
     out.push({
       kind: 'result',
       isError: e.is_error === true,

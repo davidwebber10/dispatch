@@ -6,6 +6,7 @@ import { SYNTHETIC_MODEL } from '../analytics/frames.js';
 import { resolveTranscriptPath, claudeProjectsRoot } from './transcript-path.js';
 import { encodeClaudeProjectDir } from '../platform/encode.js';
 import { readTail, readRange } from './tail-read.js';
+import { agentReadFile } from '../privsep/agent-fs.js';
 
 // Re-exported so callers can resolve a terminal's transcript without reaching
 // past sessions/ into the transcript-path module directly.
@@ -131,6 +132,84 @@ export function readSessionBackfill(workDir: string, sessionId: string, limit = 
       const events = collectBackfill(text);
       if (!truncatedHead || events.length >= limit || bytes >= MAX_BACKFILL_BYTES) return capBackfill(events, limit);
     }
+  } catch {
+    return [];
+  }
+}
+
+/** The largest subagent transcript the agent journal route reads (a larger one gives no history). */
+export const MAX_SIDECHAIN_BYTES = 8 * 1024 * 1024;
+/** The largest `agent-*.meta.json` that is read. */
+export const MAX_SIDECHAIN_META_BYTES = 64 * 1024;
+/** The most meta files searched for one call id. */
+export const MAX_SIDECHAIN_METAS = 500;
+
+/** A real folder (not a link) that is inside `root`. */
+function realFolderInside(dir: string, root: string): boolean {
+  try {
+    if (!fs.lstatSync(dir).isDirectory()) return false;
+    const real = fs.realpathSync(dir);
+    const realRoot = fs.realpathSync(root);
+    return real === realRoot || real.startsWith(realRoot + path.sep);
+  } catch { return false; }
+}
+
+/**
+ * The steps of ONE subagent from its own transcript (subagents-v1, the agent journal route). Claude
+ * Code writes a subagent's lines to `<project>/<session>/subagents/agent-<agentId>.jsonl` (every line
+ * `isSidechain: true`) with `agent-<agentId>.meta.json` naming the Agent call (`toolUseId`). The
+ * main-thread readers above keep skipping these lines: a subagent's words are never the thread's
+ * messages. Here they come back as stream events tagged `parent_tool_use_id: <agentCallId>`, the way
+ * the live stream tags them. `nativeId` (Claude's own agent id) finds the file at once; without it the
+ * meta files are searched for the call id (at most MAX_SIDECHAIN_METAS). Newest `limit` events; []
+ * when nothing is found. Never throws.
+ *
+ * The folder belongs to the agent (under privilege separation, another user than the daemon): the
+ * session folder and the `subagents` folder must be real folders inside the transcript store, and
+ * each file is read AS THE AGENT with `agentReadFile` (no link at the last part, a regular file only,
+ * a size limit, a non-blocking open: a FIFO cannot stop the daemon).
+ */
+export async function readSidechainEvents(workDir: string, sessionId: string, agentCallId: string, nativeId?: string, limit = 2000): Promise<unknown[]> {
+  try {
+    const file = resolveTranscriptPath(workDir, sessionId);
+    if (!file || !/^[A-Za-z0-9_-]+$/.test(sessionId)) return [];
+    const root = claudeProjectsRoot();
+    const sessionDir = path.join(path.dirname(file), sessionId);
+    const dir = path.join(sessionDir, 'subagents');
+    if (!realFolderInside(sessionDir, root) || !realFolderInside(dir, root)) return [];
+    let agentFile: string | undefined;
+    if (nativeId && /^[A-Za-z0-9_-]+$/.test(nativeId)) {
+      const direct = path.join(dir, `agent-${nativeId}.jsonl`);
+      try { if (fs.lstatSync(direct).isFile()) agentFile = direct; } catch { /* not there */ }
+    }
+    if (!agentFile) {
+      const metas = fs.readdirSync(dir).filter((n) => /^agent-[A-Za-z0-9_-]+\.meta\.json$/.test(n)).slice(0, MAX_SIDECHAIN_METAS);
+      for (const name of metas) {
+        const bytes = await agentReadFile(path.join(dir, name), MAX_SIDECHAIN_META_BYTES);
+        if (!bytes) continue;
+        try {
+          const meta = JSON.parse(bytes.toString('utf-8'));
+          if (meta?.toolUseId === agentCallId) { agentFile = path.join(dir, name.replace(/\.meta\.json$/, '.jsonl')); break; }
+        } catch { /* a meta file being written: skip it */ }
+      }
+    }
+    if (!agentFile) return [];
+    const bytes = await agentReadFile(agentFile, MAX_SIDECHAIN_BYTES);
+    if (!bytes) return [];
+    const out: unknown[] = [];
+    for (const line of bytes.toString('utf-8').split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let o: any;
+      try { o = JSON.parse(trimmed); } catch { continue; }
+      if (!o || (o.type !== 'user' && o.type !== 'assistant') || o.isMeta) continue;
+      const msg = o.message;
+      if (!msg || typeof msg !== 'object') continue;
+      const c = msg.content;
+      if (!(typeof c === 'string' ? c.trim() : Array.isArray(c) && c.length)) continue;
+      out.push({ type: o.type, message: msg, parent_tool_use_id: agentCallId, ...(typeof o.uuid === 'string' ? { uuid: o.uuid } : {}) });
+    }
+    return out.length > limit ? out.slice(out.length - limit) : out;
   } catch {
     return [];
   }

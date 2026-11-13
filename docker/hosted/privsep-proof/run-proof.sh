@@ -110,7 +110,7 @@ if start_box "$NAME" "$IMAGE" "$VH" "$VS"; then fok "the box starts and answers 
 CTX="$(api GET /api/host-context)"
 echo "$CTX" | grep -q '"privsep-v1"' && fok "the start-up self-check passed: privsep-v1 is reported" || fbad "privsep-v1 is reported" "$(docker logs "$NAME" 2>&1 | grep privsep.proof | tail -1 | cut -c1-200)"
 CAPS="$(echo "$CTX" | jget capabilities)"
-MISSING=""; for c in base-path profile os-tools-proxy headless-v1 idle-info gate-v2 privsep-v1 inbox-v1 live-tools-v1; do echo "$CAPS" | grep -q "\"$c\"" || MISSING="$MISSING $c"; done
+MISSING=""; for c in base-path profile os-tools-proxy headless-v1 idle-info gate-v2 privsep-v1 inbox-v1 live-tools-v1 subagents-v1; do echo "$CAPS" | grep -q "\"$c\"" || MISSING="$MISSING $c"; done
 [ -z "$MISSING" ] && fok "the capability list is complete" "$CAPS" || fbad "the capability list is complete" "missing:$MISSING in $CAPS"
 docker logs "$NAME" 2>&1 | grep -q 'privilege separation is ON' && fok "the entrypoint chose the two-user layout (state volume present)" || fbad "the entrypoint chose the two-user layout"
 docker logs "$NAME" 2>&1 | grep -q 'box tokens: split' && fok "two different tokens: each has one job (split mode)" || fbad "two different tokens: split mode" "$(docker logs "$NAME" 2>&1 | grep 'box tokens' | tail -1)"

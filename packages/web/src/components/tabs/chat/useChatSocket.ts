@@ -653,6 +653,9 @@ export function useChatSocket(args: {
           return;
         }
 
+        // A subagent's turn end (a Codex sub-thread, subagents-v1) is not the thread's: no footer, and the
+        // thread's own approval card stays.
+        if (type === 'result' && event.parent_tool_use_id != null) return;
         if (type === 'result') {
           flushNow(); // land any buffered trailing tokens before the footer
           // A turn that worked proves the login works again: the signed-out card goes.

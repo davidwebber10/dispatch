@@ -70,6 +70,9 @@ export class ThreadQuestions {
     const pending = manager.getPending(terminalId);
     // W2-C: no live question, but one saved before a restart: the answer starts the thread again as a message that quotes it.
     if (!pending) return this.restoredQuestions?.answer(terminalId, requestId, opts) ?? false;
+    // subagents-v1: while another request waits behind this one, an answer must name the request it
+    // answers; with no id it could land on a request the person never saw.
+    if (!requestId && manager.hasWaitingPermission?.(terminalId)) return false;
     if (opts.decision === 'allow') {
       const remappedAnswers = opts.answers ? this.remapAnswersToQuestionText(pending.questions, opts.answers) : undefined;
       const updatedInput = {

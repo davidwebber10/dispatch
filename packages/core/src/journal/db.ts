@@ -54,7 +54,19 @@ export interface JournalStatements {
   deleteImage: Database.Statement;
   deleteImagesUpTo: Database.Statement;
   deleteImages: Database.Statement;
+  agentNewest: Database.Statement;
+  agentBefore: Database.Statement;
+  agentAfter: Database.Statement;
+  agentFrames: Database.Statement;
 }
+
+/**
+ * The rows of one subagent (subagents-v1): its frames (`parent_tool_use_id` = its id) and its
+ * lifecycle frames (`system/subagent` with `id` = its id). A payload that is not valid JSON (none
+ * should be) never matches.
+ */
+const AGENT_ROW = `CASE WHEN json_valid(payload) THEN (json_extract(payload, '$.parent_tool_use_id') = @agent
+  OR (json_extract(payload, '$.subtype') = 'subagent' AND json_extract(payload, '$.type') = 'system' AND json_extract(payload, '$.id') = @agent)) ELSE 0 END`;
 
 export function prepareJournal(db: Database.Database): JournalStatements {
   return {
@@ -98,5 +110,10 @@ export function prepareJournal(db: Database.Database): JournalStatements {
     deleteImage: db.prepare('DELETE FROM thread_journal_images WHERE terminal_id = ? AND id = ?'),
     deleteImagesUpTo: db.prepare('DELETE FROM thread_journal_images WHERE terminal_id = ? AND last_seq <= ?'),
     deleteImages: db.prepare('DELETE FROM thread_journal_images WHERE terminal_id = ?'),
+    agentNewest: db.prepare(`SELECT * FROM thread_journal WHERE terminal_id = @terminal_id AND seq > @floor AND ${AGENT_ROW} ORDER BY seq DESC LIMIT @limit`),
+    agentBefore: db.prepare(`SELECT * FROM thread_journal WHERE terminal_id = @terminal_id AND seq > @floor AND seq < @before AND ${AGENT_ROW} ORDER BY seq DESC LIMIT @limit`),
+    agentAfter: db.prepare(`SELECT * FROM thread_journal WHERE terminal_id = @terminal_id AND seq > @floor AND seq > @after AND ${AGENT_ROW} ORDER BY seq ASC LIMIT @limit`),
+    // The lifecycle frames of every subagent of a thread, oldest first (the agent list after a restart).
+    agentFrames: db.prepare(`SELECT * FROM thread_journal WHERE terminal_id = ? AND seq > ? AND kind = 'notice' AND payload LIKE '%"subtype":"subagent"%' ORDER BY seq ASC`),
   };
 }
