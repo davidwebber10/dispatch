@@ -130,6 +130,7 @@ describe('the env of a company thread', () => {
     }
     expect(env.CLAUDE_CODE_DISABLE_FAST_MODE).toBe('1');
     expect(env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1');
+    expect(env.CLAUDE_CODE_ATTRIBUTION_HEADER).toBe('0');
     expect(Object.values(env).join(' ')).not.toMatch(/box/i);
   });
   test('claudeLoginEnv: the account overlay for every other thread; the relay (no CLAUDE_CONFIG_DIR) for a company thread', () => {

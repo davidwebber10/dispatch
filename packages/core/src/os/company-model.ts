@@ -237,6 +237,8 @@ export function companyClaudeEnv(daemonApi: string, key: string, model: string):
     CLAUDE_CODE_SUBAGENT_MODEL: model,
     CLAUDE_CODE_DISABLE_FAST_MODE: '1',
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+    // No billing attribution block in the system prompt: the platform's proxy (and the API) refuses it.
+    CLAUDE_CODE_ATTRIBUTION_HEADER: '0',
   };
 }
 
