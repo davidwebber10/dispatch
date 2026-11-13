@@ -6,7 +6,7 @@ import { SYNTHETIC_MODEL } from '../analytics/frames.js';
 import { resolveTranscriptPath, claudeProjectsRoot } from './transcript-path.js';
 import { encodeClaudeProjectDir } from '../platform/encode.js';
 import { readTail, readRange } from './tail-read.js';
-import { agentReadFile } from '../privsep/agent-fs.js';
+import { agentFindMeta, agentReadFile } from '../privsep/agent-fs.js';
 
 // Re-exported so callers can resolve a terminal's transcript without reaching
 // past sessions/ into the transcript-path module directly.
@@ -184,14 +184,9 @@ export async function readSidechainEvents(workDir: string, sessionId: string, ag
     }
     if (!agentFile) {
       const metas = fs.readdirSync(dir).filter((n) => /^agent-[A-Za-z0-9_-]+\.meta\.json$/.test(n)).slice(0, MAX_SIDECHAIN_METAS);
-      for (const name of metas) {
-        const bytes = await agentReadFile(path.join(dir, name), MAX_SIDECHAIN_META_BYTES);
-        if (!bytes) continue;
-        try {
-          const meta = JSON.parse(bytes.toString('utf-8'));
-          if (meta?.toolUseId === agentCallId) { agentFile = path.join(dir, name.replace(/\.meta\.json$/, '.jsonl')); break; }
-        } catch { /* a meta file being written: skip it */ }
-      }
+      // One agent process for the whole search (final review N3), not one per file.
+      const hit = await agentFindMeta(dir, metas, MAX_SIDECHAIN_META_BYTES, agentCallId);
+      if (hit) agentFile = path.join(dir, hit.replace(/\.meta\.json$/, '.jsonl'));
     }
     if (!agentFile) return [];
     const bytes = await agentReadFile(agentFile, MAX_SIDECHAIN_BYTES);

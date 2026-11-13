@@ -14,6 +14,7 @@
 // Without privilege separation each function is the plain `fs` call it replaces.
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import path from 'node:path';
 import { privsep, type PrivsepConfig } from './config.js';
 
 /**
@@ -165,6 +166,66 @@ export function agentReadFile(file: string, maxBytes: number, cfg: PrivsepConfig
     const events = child as unknown as NodeJS.EventEmitter;
     events.on('error', () => finish(null));
     events.on('close', (code: number | null) => finish(code === 0 && total <= maxBytes ? Buffer.concat(chunks) : null));
+  });
+}
+
+/**
+ * The meta-file search of the subagent history (sessions/cc-sessions.ts), in ONE agent process: each
+ * name in `dir` is opened as the agent (no link at the last part, a regular file only, at most `max`
+ * bytes, a non-blocking open), parsed, and the first whose `toolUseId` is `want` is printed. One process
+ * for the whole search, not one per file (final review N3).
+ */
+const AGENT_FIND_META_SCRIPT = `
+const fs = require('fs');
+const path = require('path');
+const [dir, namesJson, maxText, want] = process.argv.slice(1);
+const max = Number(maxText);
+let names = [];
+try { names = JSON.parse(namesJson); } catch { process.exit(1); }
+for (const name of names) {
+  let fd = -1;
+  try {
+    fd = fs.openSync(path.join(dir, name), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const st = fs.fstatSync(fd);
+    if (!st.isFile() || st.size > max) continue;
+    const buf = Buffer.alloc(st.size);
+    let off = 0;
+    while (off < st.size) { const n = fs.readSync(fd, buf, off, st.size - off, off); if (n <= 0) break; off += n; }
+    const meta = JSON.parse(buf.subarray(0, off).toString('utf-8'));
+    if (meta && meta.toolUseId === want) { process.stdout.write(name); process.exit(0); }
+  } catch { /* not readable, not JSON: the next one */ } finally { if (fd >= 0) try { fs.closeSync(fd); } catch {} }
+}
+process.exit(0);
+`;
+
+/** The name (one of `names`, all inside `dir`) of the first meta file whose `toolUseId` is `want`, read as the agent; null when none. */
+export async function agentFindMeta(dir: string, names: string[], maxBytes: number, want: string, cfg: PrivsepConfig | null = privsep()): Promise<string | null> {
+  if (!names.length) return null;
+  if (!cfg) {
+    for (const name of names) {
+      let fh: fs.promises.FileHandle | null = null;
+      try {
+        fh = await fs.promises.open(path.join(dir, name), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+        const st = await fh.stat();
+        if (!st.isFile() || st.size > maxBytes) continue;
+        const meta = JSON.parse((await fh.readFile()).toString('utf-8'));
+        if (meta?.toolUseId === want) return name;
+      } catch { /* the next one */ } finally { await fh?.close().catch(() => {}); }
+    }
+    return null;
+  }
+  return new Promise((resolve) => {
+    let out = '';
+    let done = false;
+    const finish = (v: string | null) => { if (!done) { done = true; resolve(v); } };
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(process.execPath, ['-e', AGENT_FIND_META_SCRIPT, dir, JSON.stringify(names), String(maxBytes), want], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 120_000 });
+    } catch { return finish(null); }
+    child.stdout?.on('data', (d: Buffer) => { out += d.toString('utf-8'); if (out.length > 4096) { try { child.kill('SIGKILL'); } catch { /* gone */ } finish(null); } });
+    const events = child as unknown as NodeJS.EventEmitter;
+    events.on('error', () => finish(null));
+    events.on('close', (code: number | null) => finish(code === 0 && names.includes(out) ? out : null));
   });
 }
 
