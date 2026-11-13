@@ -557,6 +557,13 @@ export const api = {
   disablePlugin: (id: string) => req<PluginRow>(`/api/plugins/${encodeURIComponent(id)}/disable`, { method: 'POST' }),
   reloadPlugin: (id: string) => req<PluginRow>(`/api/plugins/${encodeURIComponent(id)}/reload`, { method: 'POST' }),
   removePlugin: (id: string, opts: { keepData?: boolean } = {}) => req<void>(`/api/plugins/${encodeURIComponent(id)}${opts.keepData ? '?keepData=1' : ''}`, { method: 'DELETE' }),
+  /** "Download thread" (2026-11-13): the whole conversation as `<label>-<date>.md`, built by the daemon. */
+  exportThread: async (terminalId: string): Promise<void> => {
+    const res = await fetch(apiPath(`/api/terminals/${encodeURIComponent(terminalId)}/export`), { cache: 'no-store' });
+    if (!res.ok) throw new ApiError(`Export failed: ${res.status}`, res.status);
+    const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '')?.[1] ?? 'thread.md';
+    saveBlob(await res.blob(), name);
+  },
   /** Download a plugin's documents, settings and file references as `<id>-data-<date>.json`. */
   exportPluginData: async (id: string): Promise<void> => {
     const res = await fetch(apiPath(`/api/plugins/${encodeURIComponent(id)}/export`), { cache: 'no-store' });

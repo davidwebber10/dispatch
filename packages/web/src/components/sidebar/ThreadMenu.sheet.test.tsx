@@ -135,3 +135,33 @@ describe('the desktop thread menu uses the same groups (a fly-out, not a flat li
     }
   });
 });
+
+// Owner, 2026-11-13: "a Download Thread button: the whole conversation as a file for any other model".
+describe('Download thread', () => {
+  it('is a row for an AI thread, with an icon and one line, and not for a shell', async () => {
+    const { api } = await import('../../api/client');
+    const exp = vi.spyOn(api, 'exportThread').mockResolvedValue(undefined);
+    open();
+    const row = screen.getByRole('button', { name: 'Download thread' });
+    expect(row.querySelector('svg')).not.toBeNull();
+    expect(row).toHaveAccessibleDescription('The whole conversation as a Markdown file');
+    fireEvent.click(row);
+    expect(exp).toHaveBeenCalledWith('t1');
+    exp.mockRestore();
+  });
+
+  it('a shell thread has no Download row', () => {
+    open(tab({ type: 'shell' }));
+    expect(screen.queryByRole('button', { name: 'Download thread' })).toBeNull();
+  });
+
+  it('a failed download says so', async () => {
+    const { api } = await import('../../api/client');
+    const { useHint } = await import('../../stores/hint');
+    const exp = vi.spyOn(api, 'exportThread').mockRejectedValue(new Error('500'));
+    open();
+    fireEvent.click(screen.getByRole('button', { name: 'Download thread' }));
+    await vi.waitFor(() => expect(useHint.getState().msg).toBe('Could not download the thread'));
+    exp.mockRestore();
+  });
+});

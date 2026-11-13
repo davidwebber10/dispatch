@@ -9,6 +9,10 @@ import { TAB_ONLY_TYPES, THREAD_TYPES } from '../providers/agent-types.js';
 import type { EventBroadcaster } from '../ws/events.js';
 import type { StatusService } from '../status/service.js';
 import { redactKeysDeep } from '../auth/redact-keys.js';
+import { collectAllItems, exportFileName, renderThreadMarkdown } from '../conversation/export.js';
+
+/** The tool name in a thread export's header. */
+const EXPORT_TOOL_NAME: Record<string, string> = { 'claude-code': 'Claude Code', codex: 'Codex', grok: 'Grok', opencode: 'OpenCode' };
 import { modelSupportsTools } from '../settings/model-capabilities.js';
 import { clientMessage } from '../http/client-message.js';
 import path from 'node:path';
@@ -162,6 +166,38 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     } catch (err) {
       console.error(`[conversation] page of ${req.params.terminalId} failed:`, err);
       res.status(500).json({ error: 'Could not read the conversation' });
+    }
+  });
+
+  // GET /api/terminals/:terminalId/export — "Download thread" (owner, 2026-11-13): the whole conversation as
+  // one Markdown file, oldest first, tool calls as one line each, to paste into another model. The owner
+  // only: the file holds every message. Keys are hidden the same way as in a conversation page.
+  router.get('/terminals/:terminalId/export', ownerOnlyStrict, async (req, res) => {
+    const terminal = sessionService.getTerminal(req.params.terminalId);
+    if (!terminal) return res.status(404).json({ error: 'Terminal not found' });
+    try {
+      const items = await collectAllItems((o) => sessionService.getConversation(terminal.id, o));
+      const session = sessionService.get(terminal.sessionId);
+      const config = (terminal.config ?? {}) as { model?: unknown };
+      const exportedAt = new Date().toISOString();
+      const md = renderThreadMarkdown({
+        label: terminal.label,
+        project: session?.name ?? null,
+        tool: EXPORT_TOOL_NAME[terminal.type] ?? terminal.type,
+        model: typeof config.model === 'string' && config.model ? config.model : null,
+        folder: terminal.workingDir || session?.workingDir || null,
+        startedAt: terminal.createdAt ?? null,
+        lastActivityAt: terminal.lastActivityAt ?? null,
+        exportedAt,
+      }, redactKeysDeep(items));
+      const name = exportFileName(terminal.label, exportedAt);
+      res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${name}"; filename*=UTF-8''${encodeURIComponent(name)}`);
+      res.setHeader('Cache-Control', 'no-store');
+      res.send(md);
+    } catch (err) {
+      console.error(`[export] export of ${req.params.terminalId} failed:`, err instanceof Error ? err.message : 'error');
+      res.status(500).json({ error: 'Could not export the thread' });
     }
   });
 

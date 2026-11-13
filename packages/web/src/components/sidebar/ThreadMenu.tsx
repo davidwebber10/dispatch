@@ -21,7 +21,7 @@ import { useIsMobile } from '../../hooks/useIsMobile';
 import { pluginIcon } from '../../plugins/sdk';
 import {
   PencilSimple, GitBranch, UserSwitch, Bell, BellSlash, Info, Copy, ArrowClockwise, ArrowCounterClockwise,
-  Timer, Archive, PushPinSlash, Key, Question,
+  Timer, Archive, PushPinSlash, Key, Question, DownloadSimple,
 } from '@phosphor-icons/react';
 import { can } from '../../lib/profile';
 import type { Icon } from '@phosphor-icons/react';
@@ -82,6 +82,9 @@ function moveFocus(e: React.KeyboardEvent<HTMLElement>) {
 /** The desktop shell: a fly-out at the click, kept inside the viewport (it slides up, or in,
  *  when there is no room below or to the right), with its own scroll. Escape or a click outside
  *  closes it. */
+/** The thread types with a conversation to download (a shell has none). */
+const EXPORTABLE = ['claude-code', 'codex', 'grok', 'opencode'];
+
 function FlyOut({ x, y, onClose, children }: { x: number; y: number; onClose: () => void; children: React.ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   const left = Math.max(EDGE, Math.min(x, window.innerWidth - EDGE - FLYOUT_W));
@@ -177,6 +180,12 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
   function reload(tab: Terminal) {
     useTabs.getState().markLoading(tab.id);
     void api.relaunchTerminal(tab.id).catch(() => { /* surfaced via connection state */ });
+  }
+
+  /** "Download thread" (owner, 2026-11-13): the whole conversation as one file, to paste into another model. */
+  async function downloadThread(tab: Terminal) {
+    useHint.getState().show('Downloading thread…');
+    try { await api.exportThread(tab.id); } catch { useHint.getState().show('Could not download the thread'); }
   }
 
   /** The id another thread can take straight into read_thread or message_thread (2026-11-06). */
@@ -290,6 +299,7 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
             {/* No More fold (owner, 2026-11-13: "it should just show the options"). */}
             {rule}
               <div style={{ display: 'flex', flexDirection: 'column' }}>
+                {EXPORTABLE.includes(t.type) && row('download', DownloadSimple, 'Download thread', pick((x) => void downloadThread(x)), 'The whole conversation as a Markdown file')}
                 {row('copy', Copy, 'Copy thread ID', pick((x) => void copyId(x)), 'Lets another thread read or message this one')}
                 {row('reload', ArrowClockwise, 'Reload thread', pick(reload), 'Reconnect to the thread')}
                 {row('reset', ArrowCounterClockwise, 'Reset status', pick((x) => void resetStatus(x)), 'Clear a stuck Working or Needs-you state')}
