@@ -136,8 +136,10 @@ function FlyOut({ x, y, onClose, children }: { x: number; y: number; onClose: ()
  *  The rows are grouped (2026-11-07): a grid of the four most used actions, View, Plugins, a closed
  *  More for the maintenance actions, then Archive. The phone shows them in a sheet, the desktop in a
  *  fly-out at the click; the body is the same. */
-export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
+export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows, inline = false }: {
   at: ThreadMenuAt | null; onClose: () => void; onBranched: (thread: Terminal) => void;
+  /** The menu's tiles and rows drawn in place, with no fly-out or sheet: the desktop right column (2026-11-13). */
+  inline?: boolean;
   leadView?: (close: () => void, rowStyle: React.CSSProperties) => React.ReactNode;
   pluginRows?: ThreadMenuPluginRow[];
 }) {
@@ -330,8 +332,11 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
 
   return (
     <>
-      {/* One body, two shells: on a phone the app's shared slide-up sheet, on desktop a fly-out at the click. */}
-      {isMobile ? (
+      {/* One body, three shells: in place (the desktop right column), on a phone the app's shared
+          slide-up sheet, on desktop a fly-out at the click. */}
+      {inline ? (at && (() => { const b = body(at); return (
+        <div role="menu" aria-label="Thread options" data-testid="thread-menu-inline" onKeyDown={moveFocus} style={{ display: 'flex', flexDirection: 'column' }}>{b.tiles}{b.list}</div>
+      ); })()) : isMobile ? (
         <Modal open={!!at} sheet title={at?.tab.label} onClose={onClose}>
           {/* A fixed height (owner, 2026-11-13): the sheet never reaches the top of the screen; the tiles
               stay at the top and the rows under them scroll. 78% of the screen less the sheet's header. */}

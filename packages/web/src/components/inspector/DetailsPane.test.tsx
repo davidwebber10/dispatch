@@ -83,3 +83,23 @@ it('lists the servers the thread was launched with under Tools, and nothing when
   await screen.findByText('ID');
   expect(screen.queryByText('Tools')).toBeNull();
 });
+
+// Owner, 2026-11-13: "on desktop, the right column options can mirror the right click flyout layout".
+it('with actions it shows the thread menu\'s tiles and rows in place of the old buttons', async () => {
+  const { useTabs } = await import('../../stores/tabs');
+  useTabs.setState({ byProject: { p1: [{ id: 't1', sessionId: 'p1', type: 'claude-code', label: 'Fix login', status: 'idle', config: {}, createdAt: '' } as any] } } as any);
+  vi.spyOn(api, 'getUsageLimits').mockResolvedValue(claude);
+  render(<DetailsPane projectId="p1" terminalId="t1" actions />);
+  const tiles = await screen.findByRole('group', { name: 'Quick actions' });
+  expect(tiles).toBeInTheDocument();
+  for (const name of ['Rename thread', 'Download thread', 'Copy thread ID', 'Reload thread', 'Reset status', 'Archive thread']) expect(screen.getByRole('button', { name })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Reload Thread' })).toBeNull(); // the old button row is gone
+  expect(screen.queryByRole('button', { name: 'Archive Thread' })).toBeNull();
+});
+
+it('without actions (the phone details sheet) it keeps its plain buttons', async () => {
+  vi.spyOn(api, 'getUsageLimits').mockResolvedValue(claude);
+  render(<DetailsPane projectId="p1" terminalId="t1" />);
+  expect(await screen.findByRole('button', { name: 'Archive Thread' })).toBeInTheDocument();
+  expect(screen.queryByRole('group', { name: 'Quick actions' })).toBeNull();
+});
