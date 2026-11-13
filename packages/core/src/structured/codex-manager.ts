@@ -1009,9 +1009,10 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
     if (source) ev.meta = { source };
     this.pushEvent(session, ev);
     session.subagents.turnStarted(); // a new main turn: a held idle belongs to a turn that is over
-    // A message (not one another agent sent) starts a new run: automatic turns may follow it again, and a
-    // delivery that a Stop paused may go at its end. Results that wait go with this turn's end.
-    if (source !== 'coordinator') { session.autoTurns = 0; session.capNoticed = false; session.deliveryPaused = false; }
+    // The PERSON's message (source 'user': the web page and the OS view send it) starts a new run: automatic
+    // turns may follow it again, and a delivery that a Stop paused may go at its end. A peer's message or the
+    // daemon's own (no source: a notice, the continue prompt after a restart) changes neither (review N4).
+    if (source === 'user') { session.autoTurns = 0; session.capNoticed = false; session.deliveryPaused = false; }
     session.lastMainEnd = undefined;
     this.fire('busy', terminalId);
     // Deliver once the thread is started (queued via the ready promise if still starting).
