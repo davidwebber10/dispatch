@@ -71,7 +71,20 @@ export class ThreadTranscripts {
    * See ws/structured.ts's `restOwnsHistory` and getConversation's codex branch.
    */
   historyOwnedByRest(terminalId: string): boolean {
-    return threadHarnessCapabilities(terminalsDb.getById(this.db, terminalId)?.type).restHistory;
+    if (!threadHarnessCapabilities(terminalsDb.getById(this.db, terminalId)?.type).restHistory) return false;
+    // REST owns the history only when it HAS one: a Codex thread with no readable transcript (none found,
+    // or empty) keeps its ring replay and the resume backfill, which are then its only history.
+    const loc = this.locateTranscript(terminalId);
+    if (!loc || loc === 'unsupported') return false;
+    // Has it a conversation item yet? A Codex rollout starts with session_meta; its items are response_item
+    // lines. The head is enough to know (at most 256 KB is read).
+    let fd: number | null = null;
+    try {
+      fd = fs.openSync(loc.file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+      const buf = Buffer.alloc(256 * 1024);
+      const n = fs.readSync(fd, buf, 0, buf.length, 0);
+      return buf.subarray(0, n).toString('utf-8').includes('"response_item"');
+    } catch { return false; } finally { if (fd !== null) try { fs.closeSync(fd); } catch { /* closed */ } }
   }
 
   /**

@@ -42,8 +42,9 @@ afterEach(() => {
 });
 
 describe('SessionService transcript seam (characterization)', () => {
-  it('history is owned by REST for a Codex thread only', () => {
-    expect(['cc', 'cx', 'gk', 'sh', 'missing'].map((id) => svc.historyOwnedByRest(id))).toEqual([false, true, false, false, false]);
+  it('history is owned by REST for a Codex thread only, and only once it has a transcript', () => {
+    // cx has no session id yet, so no rollout: its history is the ring's (the resume backfill).
+    expect(['cc', 'cx', 'gk', 'sh', 'missing'].map((id) => svc.historyOwnedByRest(id))).toEqual([false, false, false, false, false]);
   });
 
   it('history can be paged over REST for Claude Code and Codex only', () => {

@@ -239,8 +239,11 @@ export function handleStructuredConnection(
     held.push(json);
   };
   // W3-D: a client that got the journal frame has the thread's history. History that an agent replays at a
-  // resume (ACP session/load) is marked by the journal's recorder and is not sent to it a second time.
-  const skipReplayed = fromJournal !== null;
+  // resume (ACP session/load, the Codex thread/resume backfill) is marked by the journal's recorder and is
+  // not sent to it a second time. Nor to a client whose history REST owns (a Codex thread with a transcript):
+  // it reads that history over REST, and the backfill would show every turn twice. A Codex thread with no
+  // readable transcript is not REST-owned (historyOwnedByRest), so its backfill still reaches the client.
+  const skipReplayed = fromJournal !== null || restOwned;
   const onEvent = (eid: string, event: unknown) => {
     if (eid !== id || (skipReplayed && (event as { journal_replayed?: unknown } | null)?.journal_replayed === true)) return;
     emit(JSON.stringify(event));

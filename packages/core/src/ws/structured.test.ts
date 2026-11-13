@@ -833,3 +833,33 @@ describe('replay from the message journal', () => {
     expect(resume).toBeLessThan(journalReplay / 10);
   });
 });
+
+// ---- The Codex resume backfill, live, for a client whose history REST owns ----
+// The backfill after thread/resume is marked `journal_replayed` by the recorder. A REST-owned client (no
+// journal frame) reads that history over REST, so the backfill must not reach it live as well (every turn
+// would show twice). A thread with no transcript is not REST-owned, and its backfill still arrives.
+describe('the resume backfill, live', () => {
+  const liveManager = () => {
+    const em = new EventEmitter();
+    const m = { getEvents: () => [], getEventsTail: () => [], getPending: () => null, on: em.on.bind(em), off: em.off.bind(em) } as any;
+    return { m, emit: (e: unknown) => em.emit('event', 't1', e) };
+  };
+  const BACKFILL = { type: 'user', message: { role: 'user', content: 'earlier question' }, journal_replayed: true };
+  const LIVE = { type: 'assistant', message: { content: [{ type: 'text', text: 'new answer' }] } };
+
+  it('a REST-owned client gets no replayed backfill, but every live event', () => {
+    const { ws, sent } = fakeWs();
+    const { m, emit } = liveManager();
+    handleStructuredConnection(ws, REQ, m, undefined, () => true);
+    emit(BACKFILL); emit(LIVE);
+    expect(sent).toEqual([{ type: 'system', subtype: 'inactive' }, LIVE]);
+  });
+
+  it('a Codex thread whose transcript is empty (not REST-owned) still gets the backfill: it is its only history', () => {
+    const { ws, sent } = fakeWs();
+    const { m, emit } = liveManager();
+    handleStructuredConnection(ws, REQ, m, undefined, () => false);
+    emit(BACKFILL); emit(LIVE);
+    expect(sent.filter((e) => e.type !== 'system')).toEqual([BACKFILL, LIVE]);
+  });
+});
