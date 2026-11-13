@@ -25,7 +25,7 @@ export const COMPANY_MODEL_UNREACHABLE = 'The company model cannot be reached. D
 /** The headers taken from the caller. Everything else is dropped. */
 const FORWARDED = ['content-type', 'accept', 'anthropic-version', 'anthropic-beta'] as const;
 /** The headers of the platform's answer passed back to the thread. */
-const RETURNED = ['content-type', 'retry-after', 'x-dispatch-refusal'] as const;
+const RETURNED = ['content-type', 'retry-after', 'x-dispatch-refusal', 'x-should-retry'] as const;
 
 export interface ModelRelayDeps {
   access: () => ModelAccess | null;

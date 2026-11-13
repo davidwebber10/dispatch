@@ -204,7 +204,7 @@ gets `413`. The daemon sends the body unchanged to `{anthropicBaseUrl}/v1/messag
 with `x-dispatch-box-token` (the OUTBOUND token), `x-dispatch-owner` and `x-dispatch-thread-id`
 (from the key). From the caller it forwards `content-type`, `accept`, `anthropic-version` and
 `anthropic-beta` only. The answer streams back chunk by chunk (status, `content-type`, `retry-after`,
-`x-dispatch-refusal`, body). A request is never sent twice. When the caller goes away, the platform
+`x-dispatch-refusal`, `x-should-retry`, body). A request is never sent twice. When the caller goes away, the platform
 request is aborted. Time limits: 900 s in all, 120 s for the status line, 90 s between two chunks.
 The platform cannot be reached, or answers `401`: `503` "The company model cannot be reached.
 Dispatch tries again by itself." Every other status and body passes through as it is. No token, key

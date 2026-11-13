@@ -122,11 +122,13 @@ describe('the company model relay', () => {
 
   test('a platform error passes through as is; a platform 401 becomes 503 with the plain sentence', async () => {
     let status = 429;
-    const { registry, base } = await setup((_req, res) => { res.writeHead(status, { 'content-type': 'application/json', 'retry-after': '9' }); res.end('{"type":"error","error":{"type":"rate_limit_error","message":"Your budget is used up."}}'); });
+    const { registry, base } = await setup((_req, res) => { res.writeHead(status, { 'content-type': 'application/json', 'retry-after': '9', 'x-should-retry': 'false' }); res.end('{"type":"error","error":{"type":"rate_limit_error","message":"Your budget is used up."}}'); });
     const { key } = registry.mint({ kind: 'thread', terminalId: 't-1' });
     const r = await send(base, key, { model: MODEL });
     expect(r.status).toBe(429);
     expect(r.headers.get('retry-after')).toBe('9');
+    // The weekly limit: Claude Code shows the message at once instead of retrying.
+    expect(r.headers.get('x-should-retry')).toBe('false');
     expect((await r.json()).error.message).toBe('Your budget is used up.');
     status = 401;
     const r2 = await send(base, key, { model: MODEL });
