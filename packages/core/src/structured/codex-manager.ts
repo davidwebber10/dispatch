@@ -431,6 +431,9 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
    * Both log `thread.fast.refused`. Any other error is the caller's.
    */
   private async withTier<T>(session: CodexSession, resume: boolean, call: (tier: string | undefined) => Promise<T>): Promise<T> {
+    // The tiers each model offers depend on the signed-in account (model/list): read them before the first
+    // start on a hosted box, so a tier the account does not offer is never asked for.
+    if (isHostedBox() && !this.effortCache) await this.loadModelEfforts().catch(() => null);
     const asked = this.serviceTierFor(session);
     const standard = resume && isHostedBox() ? CODEX_STANDARD_TIER : undefined;
     const send = asked ?? standard;
@@ -460,11 +463,20 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
         res = await call(undefined);
       }
     }
-    const reported = (res as { serviceTier?: unknown } | undefined)?.serviceTier;
+    // codex-cli 0.167 reports the tier in effect as `serviceTier` on the thread/start and thread/resume answer
+    // (measured: `priority` when applied; null when Codex dropped it, for a tier the account does not offer).
+    const answer = res as { serviceTier?: unknown } | undefined;
+    const reportsTier = !!answer && typeof answer === 'object' && 'serviceTier' in answer;
+    const reported = answer?.serviceTier;
     session.serviceTier = typeof reported === 'string' && reported ? reported : undefined;
-    if (asked && session.serviceTier !== asked && !session.tierRefused) {
+    if (asked && !reportsTier) {
+      // An answer with no tier field says nothing either way: not a refusal.
+      boxLog('thread.fast.unreported', { thread: session.terminalId, tier: asked });
+    } else if (asked && session.serviceTier !== asked && !session.tierRefused) {
       session.tierRefused = true;
-      boxLog('thread.fast.refused', { thread: session.terminalId, tier: asked, reported: session.serviceTier ?? null, reason: 'the app-server answered another tier' }, 'warn');
+      const offered = session.model ? this.effortCache?.tiers?.[session.model] : undefined;
+      const reason = offered && !offered.includes(asked) ? 'the account does not offer this tier for the model' : 'Codex did not apply the tier';
+      boxLog('thread.fast.refused', { thread: session.terminalId, tier: asked, reported: session.serviceTier ?? null, reason }, 'warn');
     }
     return res;
   }

@@ -159,7 +159,8 @@ rl.on('line', (line) => {
     // The tier in effect, as codex-cli 0.167.2 reports it: the one asked for, or null. CODEX_FAKE_NO_TIER=1: a tier the
     // account does not offer is dropped silently (no error), as live.
     const tier = process.env.CODEX_FAKE_NO_TIER ? null : (msg.params?.serviceTier ?? null);
-    respond(msg.id, { thread: { id: THREAD, turns: [] }, model: msg.params?.model ?? 'gpt-5.6-sol', serviceTier: tier });
+    // CODEX_FAKE_OMIT_TIER=1: an answer with no serviceTier field at all.
+    respond(msg.id, { thread: { id: THREAD, turns: [] }, model: msg.params?.model ?? 'gpt-5.6-sol', ...(process.env.CODEX_FAKE_OMIT_TIER ? {} : { serviceTier: tier }) });
     notify('thread/started', { thread: { id: THREAD, sessionId: THREAD, turns: [] } });
     return;
   }
@@ -375,6 +376,9 @@ rl.on('line', (line) => {
     respond(msg.id, { data: [
       { model: 'gpt-6-astra', id: 'gpt-6-astra', defaultReasoningEffort: 'medium', supportedReasoningEfforts: eff(['low', 'medium', 'high', 'xhigh', 'max', 'ultra']) },
       { model: 'gpt-6-luna', id: 'gpt-6-luna', defaultReasoningEffort: 'low', supportedReasoningEfforts: eff(['low', 'medium', 'high', 'xhigh', 'max']) },
+      // The service tiers the signed-in account has for the model. CODEX_FAKE_NO_FAST_TIER=1: an account with none.
+      { model: 'gpt-6.1-sol', id: 'gpt-6.1-sol', defaultReasoningEffort: 'low', supportedReasoningEfforts: eff(['low', 'medium', 'high']),
+        serviceTiers: process.env.CODEX_FAKE_NO_FAST_TIER ? [] : [{ id: 'priority', name: 'Fast', description: '' }] },
     ], nextCursor: null });
     return;
   }

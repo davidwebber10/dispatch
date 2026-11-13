@@ -70,7 +70,9 @@ it('loadModelEfforts reads each model\'s efforts and default effort from the app
   const map = await m.loadModelEfforts();
   expect(map?.['gpt-6-luna']).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
   expect(map?.['gpt-6-astra']).toContain('ultra');
-  expect(m.modelDefaultEfforts()).toEqual({ 'gpt-6-astra': 'medium', 'gpt-6-luna': 'low' });
+  expect(m.modelDefaultEfforts()).toEqual({ 'gpt-6-astra': 'medium', 'gpt-6-luna': 'low', 'gpt-6.1-sol': 'low' });
+  // The service tiers the account has per model come from the same list.
+  expect(m.modelServiceTiers()?.['gpt-6.1-sol']).toEqual(['priority']);
   await m.loadModelEfforts();
   expect(logged('model/list')).toHaveLength(1);
 });

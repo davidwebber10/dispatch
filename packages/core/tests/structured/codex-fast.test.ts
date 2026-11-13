@@ -74,6 +74,25 @@ describe('the Codex manager on a hosted box', () => {
     expect(lines.find((l) => l.event === 'thread.model')).toMatchObject({ serviceTier: null, serviceTierAsked: 'priority' });
   });
 
+  it('an answer with no tier field is not a refusal (thread.fast.unreported, info)', async () => {
+    await start({ CODEX_FAKE_OMIT_TIER: '1' });
+    await until(() => lines.some((l) => l.event === 'thread.fast.unreported'), 'thread.fast.unreported');
+    expect(lines.some((l) => l.event === 'thread.fast.refused')).toBe(false);
+    expect(lines.find((l) => l.event === 'thread.fast.unreported')).toMatchObject({ level: 'info', tier: 'priority' });
+  });
+
+  it('an account whose model/list offers no fast tier for the model: the tier is not asked for, and nothing is refused', async () => {
+    await start({ CODEX_FAKE_NO_FAST_TIER: '1' });
+    expect(logged('model/list').length).toBeGreaterThan(0);
+    expect(logged('thread/start')[0].params).not.toHaveProperty('serviceTier');
+    expect(lines.some((l) => l.event === 'thread.fast.refused')).toBe(false);
+  });
+
+  it('a tier Codex drops for a model the account offers it for: refused, with the plain reason', async () => {
+    await start({ CODEX_FAKE_NO_TIER: '1' });
+    expect(lines.find((l) => l.event === 'thread.fast.refused')).toMatchObject({ tier: 'priority', reported: null, reason: 'Codex did not apply the tier' });
+  });
+
   it('F2: switched off, a RESUMED thread asks for the standard tier explicitly (an omitted field keeps a saved priority)', async () => {
     process.env.DISPATCH_CODEX_SERVICE_TIER = 'off';
     m.spawn('t1', { command: process.execPath, args: [fake], workDir: process.cwd(), model: 'gpt-6.1-sol', resumeId: 'cx-thread-1', env: { CODEX_FAKE_LOG: logPath, CODEX_FAKE_SAVED_TIER: 'priority' } });
