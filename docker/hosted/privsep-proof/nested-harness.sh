@@ -93,7 +93,9 @@ if command -v codex >/dev/null 2>&1 && [ -e /etc/codex/requirements.toml ]; then
     out="$(cd "$WORKDIR" && env "${envs[@]}" timeout 40 codex exec "$@" --skip-git-repo-check 'say hi' </dev/null 2>&1 | head -c 20000)"
     appr="$(printf '%s' "$out" | grep -oiE 'approval: *[a-z-]+' | head -1 | sed -E 's/.*: *//')"
     sand="$(printf '%s' "$out" | grep -oiE 'sandbox: *[a-z-]+' | head -1 | sed -E 's/.*: *//')"
-    if [ "$appr" = never ] || [ "$sand" = danger-full-access ]; then bad "nested Codex, $label: approvals are skipped" "approval ${appr:-?}, sandbox ${sand:-?}"
+    # Sandbox danger-full-access is allowed on a hosted box (owner decision 2026-11-13: the box is the
+    # sandbox, see codex_box_row below); approval "never" is still refused.
+    if [ "$appr" = never ]; then bad "nested Codex, $label: approvals are skipped" "approval ${appr:-?}, sandbox ${sand:-?}"
     elif [ -n "$appr$sand" ]; then ok "nested Codex, $label: approvals are not skipped" "approval ${appr:-?}, sandbox ${sand:-?}"
     else info "nested Codex, $label: it named no approval mode" "$(short "$out")"; fi
   }
@@ -101,6 +103,25 @@ if command -v codex >/dev/null 2>&1 && [ -e /etc/codex/requirements.toml ]; then
   printf 'approval_policy = "never"\nsandbox_mode = "danger-full-access"\n' > "$WORKDIR/own-codex/config.toml" 2>/dev/null
   codex_mode "--dangerously-bypass-approvals-and-sandbox" -- --dangerously-bypass-approvals-and-sandbox
   codex_mode "a home of its own with a bypass config, and the flag" "CODEX_HOME=$WORKDIR/own-codex" -- --dangerously-bypass-approvals-and-sandbox
+
+  # The box is the sandbox: a command that Codex runs with its own sandbox off must still be held
+  # by the box (uid 1000, no daemon state, no user namespace, no new privileges, no capabilities).
+  box_out="$(cd "$WORKDIR" && timeout 40 codex -c 'sandbox_mode="danger-full-access"' sandbox -- sh -c '
+    echo "uid=$(id -u)"
+    if ls /var/lib/dispatch/state >/dev/null 2>&1; then echo state=readable; else echo state=denied; fi
+    if unshare -Ur true >/dev/null 2>&1; then echo userns=created; else echo userns=refused; fi
+    grep -E "^(NoNewPrivs|CapEff):" /proc/self/status | tr -s "\t " "=" ' </dev/null 2>&1 | head -c 4000)"
+  if ! printf '%s' "$box_out" | grep -q '^uid='; then
+    info "Codex shell with its own sandbox off: the command did not run here" "$(short "$box_out")"
+  elif printf '%s' "$box_out" | grep -q '^uid=1000$' \
+    && printf '%s' "$box_out" | grep -q '^state=denied$' \
+    && printf '%s' "$box_out" | grep -q '^userns=refused$' \
+    && printf '%s' "$box_out" | grep -q '^NoNewPrivs:=1$' \
+    && printf '%s' "$box_out" | grep -q '^CapEff:=0000000000000000$'; then
+    ok "Codex shell with its own sandbox off is held by the box" "uid 1000, state denied, user namespace refused, no new privileges, no capabilities"
+  else
+    bad "Codex shell with its own sandbox off is NOT held by the box" "$(short "$box_out")"
+  fi
 else
   info "no Codex with a managed policy in this image" "the Codex rows did not run"
 fi

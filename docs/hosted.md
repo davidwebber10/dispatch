@@ -205,6 +205,21 @@ LibreOffice, ImageMagick, Ghostscript, a browser, LaTeX, Java. `/etc/dispatch/to
 tool with its version and purpose; a thread's environment note has one line that points to it. Cost:
 about 940 MB on disk and 290 MB more to pull (compressed), most of it pyarrow, duckdb and pandoc.
 
+**Codex shell: the box is the sandbox** (owner decision 2026-11-13, every profile). Codex 0.167's own
+sandbox is bubblewrap, which needs a user namespace; the box refuses user namespaces (privilege
+separation), so every Codex shell command failed (`bwrap: No permissions to create a new namespace`). On a
+hosted box a Codex thread therefore runs with sandbox `danger-full-access`: Codex starts no sandbox of its
+own, and the command runs inside the box's limits: as the agent user (uid 1000), with no new privileges and
+no capabilities, without access to the daemon's state, and with network reach set by the platform's egress
+control. The proof checks a Codex shell command for each of these. The trade-off: with no inner sandbox,
+the approval policy `on-request` asks only when the model decides to ask (in Smart mode, Codex's reviewer
+still judges what the model escalates); the inner sandbox no longer makes a write outside the project, or a
+network call, surface as an approval. Approval `never` stays forbidden (`requirements.toml`), for a thread
+Dispatch starts and for a `codex` an agent starts itself. A Codex coordinator keeps `read-only` (that
+sandbox is how its write, commit and push approvals are gated), so on a hosted box a Codex coordinator
+cannot run shell commands. `DISPATCH_CODEX_SANDBOX=codex` keeps Codex's own sandbox on a host where user
+namespaces work. A local install is unchanged.
+
 **Codex fast mode.** A Codex thread on a hosted box always asks for the fast service tier (`priority`,
 "Fast" in Codex's model list) on thread start and resume, for every model that offers it, and a Sol
 thread with no effort picked runs at `low` (as Ask does). There is no switch for the person. The task
@@ -263,7 +278,7 @@ every user, project and command-line setting, so they also hold for a harness an
 | --- | --- | --- |
 | Claude Code 2.1.322 | `/etc/claude-code/managed-settings.json` | `permissions.disableBypassPermissionsMode: "disable"`; `allowManagedHooksOnly: true`; `allowManagedPermissionRulesOnly: true`; `forceLoginMethod: "claudeai"`; `disableClaudeAiConnectors: true`; `spinnerVerbs` (the POLYWOOD set, mode `replace`, added at build from `packages/web/src/lib/spinnerWords.ts`) |
 | Claude Code 2.1.322 | `/etc/claude-code/managed-settings.d/` | a link to `/run/dispatch/claude-policy` (root, `0755`); under the business profile the daemon writes `50-dispatch-business-mcp.json` there (see "Company systems only through the platform") |
-| Codex 0.167.0 | `/etc/codex/requirements.toml` | `allowed_approval_policies = ["untrusted", "on-request"]`; `allowed_sandbox_modes = ["read-only", "workspace-write"]`; `[features] apps = false`, `plugins = false` |
+| Codex 0.167.0 | `/etc/codex/requirements.toml` | `allowed_approval_policies = ["untrusted", "on-request"]`; `allowed_sandbox_modes = ["read-only", "workspace-write", "danger-full-access"]` (the box is the sandbox, above); `[features] apps = false`, `plugins = false` |
 | OpenCode 1.19.5 | none | It has a managed config folder (`/etc/opencode`), but an environment variable moves it, and its effect on the flag that skips permissions was not measured (that needs a model). No policy is shipped for it |
 
 Measured in the image, as uid 1000 (the `permissionMode` of the session's own `init` frame; Codex's
@@ -278,7 +293,7 @@ own header):
 | `CLAUDE_CODE_MANAGED_SETTINGS_PATH=<an empty file> claude --dangerously-skip-permissions` | `bypassPermissions` | `default` |
 | a project `.claude/settings.json` with `defaultMode: bypassPermissions`, plus the flag | `bypassPermissions` | `default` |
 | `claude --permission-mode auto` (smart approvals) | `auto` | `auto` |
-| `codex exec --dangerously-bypass-approvals-and-sandbox` | `approval: never`, `sandbox: danger-full-access` | `approval: untrusted`, `sandbox: read-only`, with a warning that names the file |
+| `codex exec --dangerously-bypass-approvals-and-sandbox` | `approval: never`, `sandbox: danger-full-access` | `approval: untrusted` (never is refused, with a warning that names the file); the sandbox may be `danger-full-access`, inside the box's limits |
 | `CODEX_HOME=<a folder with its own config>` and the same | as above | `approval: untrusted`, `sandbox: read-only` |
 
 What the policy does not close: an agent can still start a second harness in its ordinary, asking mode,

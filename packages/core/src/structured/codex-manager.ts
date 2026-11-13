@@ -43,6 +43,25 @@ import { SENT_MARK, isHarnessContext, CONTEXT_NOTICE } from '../conversation/tas
 import { boxLog } from '../os/box-log.js';
 import { SubagentTracker, titleFromAgentPath, subagentResultText, RUNNING_STATES, type SubagentInfo, type SubagentState, type StopAgentResult } from './shared/subagents.js';
 
+/**
+ * The default sandbox for Codex threads on a hosted box (owner decision, 2026-11-13).
+ *
+ * Codex 0.167's own sandbox needs bubblewrap, which needs user namespaces. Privilege separation
+ * blocks user namespaces on purpose, so every Codex shell call failed ("bwrap: No permissions to
+ * create a new namespace"). On a hosted box the box itself is the sandbox: workloads run as
+ * uid 1000 with no_new_privs and a reduced capability set, cannot read daemon state, and reach
+ * the network only through the egress control. So hosted Codex threads run with Codex's inner
+ * sandbox off. Approval policy `never` stays forbidden (codex-requirements.toml).
+ *
+ * `DISPATCH_CODEX_SANDBOX=codex` keeps Codex's own sandbox (for a host where namespaces work).
+ * Returns undefined off a hosted box, so local installs keep their default.
+ */
+export function hostedSandbox(env: NodeJS.ProcessEnv = process.env): 'danger-full-access' | undefined {
+  if (!isHostedBox(env)) return undefined;
+  if ((env.DISPATCH_CODEX_SANDBOX ?? '').trim().toLowerCase() === 'codex') return undefined;
+  return 'danger-full-access';
+}
+
 /** A refusal said in plain words for the person: shown as its message alone, with no "Error:" in front. */
 class PlainRefusal extends Error {}
 const shown = (err: unknown): string => (err instanceof PlainRefusal ? err.message : String(err));
@@ -262,7 +281,7 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
     this.releaseTimeoutMs = opts.releaseTimeoutMs ?? 5000;
     this.modelListTimeoutMs = opts.modelListTimeoutMs ?? 5000;
     this.approvalPolicy = opts.approvalPolicy ?? 'on-request';
-    this.sandbox = opts.sandbox ?? 'workspace-write';
+    this.sandbox = opts.sandbox ?? hostedSandbox() ?? 'workspace-write';
   }
 
   /** The message journal's recorder (W3-D). Set by the daemon; a manager with none writes no journal. */
@@ -1448,7 +1467,9 @@ function governedReviewer(session: CodexSession): { approvalsReviewer?: 'user' }
  * verified against the codex-cli 0.167.0 app-server schema (generate-ts, 2026-11-11).
  */
 function approvalParams(session: CodexSession, policy: string, sandbox: string): Record<string, unknown> {
-  if (session.smart && !session.toolPolicy) return { approvalPolicy: 'on-request', sandbox: 'workspace-write', approvalsReviewer: 'auto_review' };
+  // On a hosted box the box is the sandbox (hostedSandbox(), owner decision 2026-11-13): Codex's own
+  // sandbox cannot start there, so asking for it would fail every shell call.
+  if (session.smart && !session.toolPolicy) return { approvalPolicy: 'on-request', sandbox: hostedSandbox() ?? 'workspace-write', approvalsReviewer: 'auto_review' };
   return { approvalPolicy: session.approvalPolicy ?? policy, sandbox: session.sandbox ?? sandbox, ...governedReviewer(session) };
 }
 

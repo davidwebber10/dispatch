@@ -38,9 +38,11 @@ describe('the harness policy of the image', () => {
     expect(gateway).toEqual({ ...standard, forceLoginMethod: undefined });
     const codex = fs.readFileSync(path.join(POLICY, 'codex-requirements.toml'), 'utf8');
     expect(codex).toMatch(/^allowed_approval_policies = \["untrusted", "on-request"\]$/m);
-    expect(codex).toMatch(/^allowed_sandbox_modes = \["read-only", "workspace-write"\]$/m);
+    // danger-full-access is allowed (owner decision 2026-11-13: the box is the sandbox; the proof's
+    // nested-harness row checks that a Codex shell is still held by the box). "never" stays refused.
+    expect(codex).toMatch(/^allowed_sandbox_modes = \["read-only", "workspace-write", "danger-full-access"\]$/m);
     const settings = codex.split('\n').filter((l) => !l.startsWith('#')).join('\n');
-    expect(settings).not.toMatch(/never|danger-full-access/);
+    expect(settings).not.toMatch(/never/);
     // The apps and connectors of the person's ChatGPT account, and Codex's plugin marketplace: pinned off.
     expect(settings).toMatch(/^\[features\]\napps = false\nplugins = false$/m);
     const codexDev = fs.readFileSync(path.join(POLICY, 'codex-requirements.developer.toml'), 'utf8');

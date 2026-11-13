@@ -1,9 +1,11 @@
 # Codex requirements for a hosted workspace (read by Codex from /etc/codex/requirements.toml; a
 # value outside these sets is replaced by the first allowed one, and Codex says so).
-# No "never" approval policy and no "danger-full-access" sandbox: the flag that skips approvals and
-# the sandbox has no effect, for a thread Dispatch starts and for a `codex` an agent starts itself.
+# No "never" approval policy: the flag that skips approvals has no effect, for a thread Dispatch
+# starts and for a `codex` an agent starts itself. "danger-full-access" is allowed (owner decision,
+# 2026-11-13): Codex's own sandbox needs user namespaces, which privilege separation blocks, so on a
+# hosted box the box itself is the sandbox (uid 1000, no_new_privs, no daemon state, egress control).
 allowed_approval_policies = ["untrusted", "on-request"]
-allowed_sandbox_modes = ["read-only", "workspace-write"]
+allowed_sandbox_modes = ["read-only", "workspace-write", "danger-full-access"]
 
 # Company systems reach a thread only through the platform's gateway. `apps` is Codex's switch for the
 # apps and connectors of the person's ChatGPT account (the `codex_apps` server); `plugins` is its
