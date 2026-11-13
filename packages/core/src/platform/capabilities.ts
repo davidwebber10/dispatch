@@ -22,6 +22,9 @@
 //                   server declares `tools.listChanged`, the GET event stream of /api/os/mcp/<system> carries
 //                   `notifications/tools/list_changed`, a system the person has not connected has its `connect`
 //                   tool, and POST /api/os/connections/refresh is the platform's signal.
+//   codex-signout-v1 the person signs the box's own Codex login out (DELETE /api/accounts/codex/cli,
+//                   auth/codex-signout.ts): 409 while a Codex thread works, else every Codex thread ends,
+//                   `codex logout` runs as the agent, and the usage figures of that login are forgotten.
 //   subagents-v1    a thread's subagents (structured/shared/subagents.ts): Codex sub-thread frames reach the
 //                   thread tagged `parent_tool_use_id`; a `system/subagent` frame for each state change (both
 //                   harnesses); a subagent's approvals and questions surface like the main agent's; the thread
@@ -31,7 +34,7 @@
 // Served by GET /api/host-context (OS reads it at provisioning) and sent on every heartbeat.
 import { privsepProven } from '../privsep/selfcheck.js';
 
-export const BOX_CAPABILITIES = ['base-path', 'os-tools-proxy', 'profile', 'headless-v1', 'idle-info', 'gate-v2', 'inbox-v1', 'live-tools-v1', 'subagents-v1'] as const;
+export const BOX_CAPABILITIES = ['base-path', 'os-tools-proxy', 'profile', 'headless-v1', 'idle-info', 'gate-v2', 'inbox-v1', 'live-tools-v1', 'subagents-v1', 'codex-signout-v1'] as const;
 export type BoxCapability = (typeof BOX_CAPABILITIES)[number];
 
 /**

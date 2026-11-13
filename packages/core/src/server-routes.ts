@@ -76,6 +76,7 @@ import { createUsageLimitsRouter } from './routes/usage-limits.js';
 import { createBootstrapRouter } from './routes/bootstrap.js';
 import { hostContextResponse, type HostContext } from './profile/host-context.js';
 import { createChatsRouter } from './routes/chats.js';
+import { signOutCodexCli } from './auth/codex-signout.js';
 
 /** Everything the `/api` routes need. `createApp` (tests) and `startServer` (daemon) both build one. */
 export interface ApiRouteDeps {
@@ -276,6 +277,14 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
         },
       },
       codexLogin: d.codexLogin ?? new CodexLoginService({ env: () => process.env, isSignedIn: (home) => fs.existsSync(path.join(home, 'auth.json')) }),
+      // codex-signout-v1: the person signs the box's own Codex login out (auth/codex-signout.ts).
+      codexSignOut: () => signOutCodexCli({
+        home: accounts.codexHomeOrCli('cli'),
+        env: () => process.env,
+        busyThread: () => (d.db.prepare(`SELECT label FROM terminals WHERE type = 'codex' AND archived_at IS NULL AND status IN ('working', 'needs_input') LIMIT 1`).get() as { label: string } | undefined)?.label ?? null,
+        stopThreads: () => d.sessionService.structuredManagerFor('codex')?.killAll(),
+        forgetUsage: () => d.usageLimits?.snapshots.forget('codex', 'cli'),
+      }),
     }));
   }
   mount('/api/state', createStateRouter(d.db));

@@ -62,8 +62,10 @@ export function createClaudeAuthRouter(service: ClaudeLoginService): Router {
     res.status(204).end();
   });
 
-  router.delete('/', (_req, res) => {
-    service.signOut();
+  // Sign out. On a hosted box the answer comes once `claude auth logout` ran (the same way as the Codex
+  // sign-out, DELETE /api/accounts/codex/cli).
+  router.delete('/', async (_req, res) => {
+    await service.signOut().catch(() => undefined);
     res.json({ authenticated: false });
   });
 

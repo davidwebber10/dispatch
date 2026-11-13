@@ -223,11 +223,15 @@ export class ClaudeLoginService {
     this.onChangeCb?.();
   }
 
-  /** Forget the stored token (sign out). */
-  signOut(): void {
-    if (this.clean) { void this.clean.login.logout().then(() => this.onChangeCb?.()); return; }
+  /**
+   * Forget the stored token (sign out). On a hosted box (the clean login) `claude auth logout` runs as the
+   * agent; the promise ends when it did, so the answer can say the new state.
+   */
+  signOut(): Promise<void> {
+    if (this.clean) return this.clean.login.logout().then(() => this.onChangeCb?.());
     try { fs.rmSync(this.tokenPath, { force: true }); } catch { /* ignore */ }
     this.onChangeCb?.();
+    return Promise.resolve();
   }
 
   // --- login flow ---------------------------------------------------------

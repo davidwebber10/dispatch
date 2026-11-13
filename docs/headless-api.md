@@ -33,7 +33,7 @@ stub OS, a scripted `claude`). Ids, times and paths are from that run; long valu
 
 ```json
 {"profile":"business","hosted":true,"osBaseUrl":"http://127.0.0.1:48812","ownerEmail":"person@example.com",
- "capabilities":["base-path","os-tools-proxy","profile","headless-v1","idle-info","gate-v2","inbox-v1","live-tools-v1","subagents-v1","privsep-v1"]}
+ "capabilities":["base-path","os-tools-proxy","profile","headless-v1","idle-info","gate-v2","inbox-v1","live-tools-v1","subagents-v1","codex-signout-v1","privsep-v1"]}
 ```
 
 | Capability | Meaning |
@@ -47,6 +47,7 @@ stub OS, a scripted `claude`). Ids, times and paths are from that run; long valu
 | `inbox-v1` | The Inbox routes of section 11 exist. A view that shows the Inbox checks for it first. |
 | `live-tools-v1` | A running thread learns of a changed tool list: `POST /api/os/connections/refresh` is the platform's signal, and a system that is not connected has a `connect` tool (`docs/hosted.md`, "Live tool changes"). |
 | `subagents-v1` | A thread's subagents: lifecycle frames, routed Codex sub-threads, the routes of section 12. |
+| `codex-signout-v1` | The person signs the box's own Codex login out: `DELETE /api/accounts/codex/cli` → `{"signedIn":false}`; `409 {"error":"A Codex thread is working. Stop it or wait until it ends, then sign out."}` while a Codex thread works. Every Codex chat thread ends (it starts again, signed out, on its next message), `codex logout` runs as the agent, and that login's usage figures are forgotten. Owner only (never a thread key). Claude: `DELETE /api/claude-auth` → `{"authenticated":false}` once `claude auth logout` ran. |
 | `privsep-v1` | Only when THIS START proved privilege separation (`docs/hosted-privilege-separation.md`): absent on a box that runs as one user. Require it for a business person. |
 
 `automations-safe` is NOT advertised: a business person may not start automations (section 9).

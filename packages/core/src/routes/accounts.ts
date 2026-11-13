@@ -6,6 +6,7 @@ import type { CodexLoginService } from '../auth/codex-login.js';
 import { ACCOUNT_PROVIDERS, type AccountProvider, type AccountsStore } from '../auth/accounts.js';
 import { clientMessage } from '../http/client-message.js';
 import { nextReadAfter, type UsageReadResult } from '../limits/claude-usage.js';
+import type { CodexSignOutResult } from '../auth/codex-signout.js';
 
 /** A thread pinned to an account, as the delete notice lists it. */
 export interface PinnedThread { id: string; label: string; sessionId: string }
@@ -19,6 +20,8 @@ export interface AccountsRouteExtras {
   };
   /** The device-code sign-in for an added Codex account (2026-11-07). Absent: those routes answer 501. */
   codexLogin?: Pick<CodexLoginService, 'start' | 'status' | 'cancel'>;
+  /** Sign the CLI's own Codex login out (hosted box, codex-signout-v1; auth/codex-signout.ts). Absent: 501. */
+  codexSignOut?: () => Promise<CodexSignOutResult>;
   /** The clock (tests). */
   now?: () => number;
 }
@@ -44,6 +47,8 @@ const isProvider = (v: unknown): v is AccountProvider => typeof v === 'string' &
  *   DELETE /api/accounts/codex/:id/login      abandon the attempt
  *   PUT    /api/accounts/:provider/default { id }
  *   DELETE /api/accounts/:provider/:id
+ *   DELETE /api/accounts/codex/cli             on a hosted box: sign the CLI's own Codex login out
+ *                                             (codex-signout-v1). 409 while a Codex thread works.
  */
 export function createAccountsRouter(accounts: AccountsStore, claudeLogin: ClaudeLoginService, extras: AccountsRouteExtras = {}): Router {
   const router = policyRouter();
@@ -169,9 +174,19 @@ export function createAccountsRouter(accounts: AccountsStore, claudeLogin: Claud
     try { accounts.setDefault(provider, id); res.json(accounts.view().defaults); } catch (err) { res.status(400).json({ error: clientMessage(err) }); }
   });
 
-  router.delete('/:provider/:id', (req, res) => {
+  router.delete('/:provider/:id', async (req, res) => {
     const { provider, id } = req.params;
     if (!isProvider(provider)) return void res.status(404).json({ error: 'unknown provider' });
+    // The CLI's own Codex login on a hosted box: the person signs out of it here (there is no terminal
+    // to run `codex logout` in). A local install keeps the refusal: the login is its computer's.
+    if (provider === 'codex' && id === 'cli' && isHostedBox()) {
+      if (!extras.codexSignOut) return void res.status(501).json({ error: 'this daemon cannot sign Codex out' });
+      try {
+        const r = await extras.codexSignOut();
+        if (!r.ok) return void res.status(r.status).json({ error: r.error });
+        return void res.json({ signedIn: false });
+      } catch (err) { return void res.status(500).json({ error: clientMessage(err) }); }
+    }
     try {
       if (!accounts.remove(provider, id)) return void res.status(404).json({ error: 'unknown account' });
       // Its threads lose the pin and run on the default from their next start (what the notice said).
