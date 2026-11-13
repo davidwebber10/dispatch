@@ -147,10 +147,10 @@ describe('Codex subagents', () => {
     await until(() => log.some((l) => l.edge === 'idle'));
     const agents = m.listSubagents('c6')!;
     expect(agents.map((a) => [a.id, a.title, a.state])).toEqual([
-      ['01a1d205-b2d6-7bd0-9058-85e0e204f8c6', 'Independent file review', 'stopped'],
-      ['01a1d206-0000-7000-8000-00000000000b', 'Check the build output', 'failed'],
+      ['019a0000-0000-7000-8000-00000000000a', 'Review the notes', 'stopped'],
+      ['019a0000-0000-7000-8000-00000000000b', 'Check the build output', 'failed'],
     ]);
-    expect(agents[0]).toMatchObject({ model: 'gpt-6.1-sol', effort: 'medium', callId: 'call_b190f7fad50049bd815f12b0d9de8c2b', startedAt: 1794524952250 });
+    expect(agents[0]).toMatchObject({ model: 'gpt-6.1-sol', effort: 'medium', callId: 'call_fake_started', startedAt: 1700000000000 });
     expect(agents[1]).toMatchObject({ model: 'gpt-6.1-luna', effort: 'low', prompt: 'Check the build output\nThen report what failed.', error: 'The build tool is missing.' });
     // The main agent read the failure itself (wait), and the other was stopped: nothing to deliver.
     expect(turnTexts()).toHaveLength(1);
@@ -163,7 +163,7 @@ describe('Codex subagents', () => {
     spawn('c7');
     m.sendMessage('c7', `replay-file ${fixture('codex-subagent-completed.jsonl')}`);
     await until(() => turnTexts().length === 2 && log.some((l) => l.edge === 'idle'));
-    expect(m.listSubagents('c7')![0]).toMatchObject({ title: 'Summarise the notes', state: 'done', endedAt: 1794525000000 });
+    expect(m.listSubagents('c7')![0]).toMatchObject({ title: 'Summarise the notes', state: 'done', endedAt: 1700000060000 });
     expect(isTaskNotification(turnTexts()[1].text)).toBe(true);
     expect(log.filter((l) => l.edge === 'idle')).toHaveLength(1);
   });

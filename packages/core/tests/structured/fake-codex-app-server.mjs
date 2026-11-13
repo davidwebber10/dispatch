@@ -356,6 +356,6 @@ rl.on('line', (line) => {
     ], nextCursor: null });
     return;
   }
-  // Unknown requests still need a response so the client's pending map drains.
-  if (msg.id !== undefined && msg.method) respond(msg.id, {});
+  // Unknown requests still need a response so the client's pending map drains (logged for the tests).
+  if (msg.id !== undefined && msg.method) { logRequest(msg.method, msg.params); respond(msg.id, {}); }
 });

@@ -113,6 +113,6 @@ export function prepareJournal(db: Database.Database): JournalStatements {
     agentBefore: db.prepare(`SELECT * FROM thread_journal WHERE terminal_id = @terminal_id AND seq > @floor AND seq < @before AND ${AGENT_ROW} ORDER BY seq DESC LIMIT @limit`),
     agentAfter: db.prepare(`SELECT * FROM thread_journal WHERE terminal_id = @terminal_id AND seq > @floor AND seq > @after AND ${AGENT_ROW} ORDER BY seq ASC LIMIT @limit`),
     // The lifecycle frames of every subagent of a thread, oldest first (the agent list after a restart).
-    agentFrames: db.prepare(`SELECT * FROM thread_journal WHERE terminal_id = ? AND kind = 'notice' AND payload LIKE '%"subtype":"subagent"%' ORDER BY seq ASC`),
+    agentFrames: db.prepare(`SELECT * FROM thread_journal WHERE terminal_id = ? AND seq > ? AND kind = 'notice' AND payload LIKE '%"subtype":"subagent"%' ORDER BY seq ASC`),
   };
 }

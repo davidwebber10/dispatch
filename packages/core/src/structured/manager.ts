@@ -399,6 +399,8 @@ export interface IStructuredManager extends EventEmitter {
   stopAllSubagents?(terminalId: string): Promise<{ stopped: string[]; unsupported: string[]; mainInterrupted: boolean }>;
   /** subagents-v1: a subagent's history from the harness (Codex `thread/read` of its sub-thread), tagged with its id. */
   readSubagentHistory?(terminalId: string, agentId: string): Promise<unknown[] | null>;
+  /** subagents-v1: a request waits behind the one in front of the person (an answer must name its request id). */
+  hasWaitingPermission?(terminalId: string): boolean;
   /**
    * Epoch ms of the last frame the live session's CLI put in the ring, or undefined when there is
    * no live session or no frame yet. The stall watchdog reads it (runtime/stall-watchdog.ts).
@@ -500,6 +502,8 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
 
   /** After the last subagent ended, how long a held main-turn idle waits for the CLI's own wake turn (a test shortens it). */
   subagentReleaseMs = SUBAGENT_RELEASE_MS;
+  /** The time limit of a held idle with no subagent frame (shared/subagents.ts; a test shortens it). */
+  subagentLostAfterMs = 30 * 60_000;
 
   setDefaultEnv(env: Record<string, string>): void { this.defaultEnv = env; }
 
@@ -520,6 +524,7 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
     session.subagents = new SubagentTracker('claude-code', {
       emit: (frame) => { if (this.sessions.get(terminalId) === session) { session.ring.push(frame, { quiet: true }); this.fire('event', terminalId, frame); } },
       releaseDelayMs: this.subagentReleaseMs,
+      lostAfterMs: this.subagentLostAfterMs,
     });
     session.toolOwner = new Map();
     session.taskToAgent = new Map();
@@ -644,7 +649,9 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
       if (event?.type === 'control_cancel_request' && session.pending && event.request_id === session.pending.requestId) {
         this.clearPending(terminalId, session);
       } else if (event?.type === 'control_cancel_request' && session.pendingQueue?.length) {
+        const gone = session.pendingQueue.find((p) => p.requestId === event.request_id);
         session.pendingQueue = session.pendingQueue.filter((p) => p.requestId !== event.request_id);
+        if (gone?.agentId && session.pending?.agentId !== gone.agentId && !session.pendingQueue.some((p) => p.agentId === gone.agentId)) session.subagents?.update(gone.agentId, { state: 'working' });
       }
       // A turn the CLI began on its own (no sendMessage): open it here, before its frames and
       // its `result` are delivered, so the status edge and the thread's report fire at its end.
@@ -771,6 +778,7 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
       recorder?.close(); // W3-D: a block that streamed when the CLI exited is written
       session.pending = null; // drop any unanswered permission — the process is gone
       session.pendingQueue = [];
+      session.subagents?.stopAll('The session ended.'); // written while the session can still emit
       session.subagents?.dispose();
       for (const c of session.controls?.values() ?? []) { clearTimeout(c.timer); c.reject(new Error('The thread stopped')); }
       session.controls?.clear();
@@ -877,15 +885,9 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
   ): boolean {
     const s = this.sessions.get(terminalId);
     if (!s || !s.pending) return false;
-    if (requestId && s.pending.requestId !== requestId) {
-      // A request that waits behind the surfaced one (parallel subagents) may be answered by its id.
-      const i = s.pendingQueue?.findIndex((p) => p.requestId === requestId) ?? -1;
-      if (i < 0) return false;
-      const [q] = s.pendingQueue!.splice(i, 1);
-      this.write(terminalId, { type: 'control_response', response: { subtype: 'success', request_id: q.requestId, response: decision.behavior === 'allow' ? { behavior: 'allow', updatedInput: decision.updatedInput ?? q.input } : { behavior: 'deny', message: decision.message ?? 'Denied' } } });
-      if (q.agentId && !s.pendingQueue!.some((p) => p.agentId === q.agentId) && s.pending.agentId !== q.agentId) s.subagents?.update(q.agentId, { state: 'working' });
-      return true;
-    }
+    // Only the request in front of the person is answered: a request that waits behind it has not
+    // been shown, and the caller built `updatedInput` from the one in front.
+    if (requestId && s.pending.requestId !== requestId) return false;
     const rid = s.pending.requestId;
     const response =
       decision.behavior === 'allow'
@@ -1055,6 +1057,7 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
     const parent = typeof e.parent_tool_use_id === 'string' && e.parent_tool_use_id ? e.parent_tool_use_id : null;
     if (parent) {
       const a = t.ensure(parent, typeof e.task_description === 'string' ? { title: e.task_description } : {});
+      t.touch(parent);
       if (typeof e.agent_id === 'string' && e.agent_id) { s.taskToAgent?.set(e.agent_id, parent); if (!a.nativeId) a.nativeId = e.agent_id; }
       const model = e.type === 'assistant' ? e.message?.model : undefined;
       if (typeof model === 'string' && model && model !== SYNTHETIC && !a.model) a.model = model;
@@ -1101,6 +1104,7 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
   private observeTask(s: Session, e: any): void {
     const t = s.subagents!;
     const callId = typeof e.tool_use_id === 'string' ? e.tool_use_id : (typeof e.task_id === 'string' ? s.taskToAgent?.get(e.task_id) : undefined);
+    if (callId && t.has(callId)) t.touch(callId);
     switch (e.subtype) {
       case 'task_started': {
         if (!callId || (e.task_type && e.task_type !== 'local_agent' && !t.has(callId))) return;
@@ -1179,6 +1183,11 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
     return this.sessions.get(terminalId)?.subagents?.list() ?? null;
   }
 
+  /** True while a request waits behind the one in front of the person (an answer must then name its request). */
+  hasWaitingPermission(terminalId: string): boolean {
+    return (this.sessions.get(terminalId)?.pendingQueue?.length ?? 0) > 0;
+  }
+
   /**
    * Stop one subagent with the CLI's `stop_task` control request (task_id = the CLI's own id of the
    * agent). Live-checked on Claude Code 2.1.323 (tests/fixtures/subagents/claude-subagent-stop-*.jsonl),
@@ -1242,6 +1251,10 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
         reason: typeof event.decision_reason === 'string' ? event.decision_reason : typeof event.message === 'string' ? event.message : null,
         at: Date.now(),
       };
+      // subagents-v1: the subagent whose call was blocked, so the card can name it.
+      const agentId = (typeof event.agent_id === 'string' ? session.taskToAgent?.get(event.agent_id) : undefined)
+        ?? (typeof event.tool_use_id === 'string' ? session.toolOwner?.get(event.tool_use_id) : undefined);
+      if (agentId) b.agentId = agentId;
       session.blocked = [...(session.blocked ?? []).filter((x) => x.id !== b.id), b].slice(-20);
       (session.blockedInputs ??= new Map()).set(b.id, input);
       for (const id of session.blockedInputs.keys()) if (!session.blocked.some((x) => x.id === id)) session.blockedInputs.delete(id);
@@ -1383,6 +1396,7 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
     s.controls?.clear();
     s.pending = null;
     s.pendingQueue = [];
+    s.subagents?.stopAll('The session ended.'); // written while the session can still emit
     s.subagents?.dispose();
     // Remove the session first: closing readline below can finish a pending drain (see spawn()),
     // which must then find the session gone and stay silent — this is the one 'exit'.

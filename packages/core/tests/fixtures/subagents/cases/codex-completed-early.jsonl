@@ -1,0 +1,10 @@
+{"_note":"subagents-v1 review M6c: the completed item comes before the sub-thread's own turn end."}
+{"method":"item/completed","params":{"threadId":"$MAIN","turnId":"turn-fake-1","item":{"type":"subAgentActivity","id":"ie1","model":"gpt-fake","reasoningEffort":"low","kind":"started","agentThreadId":"sub-E","agentPath":"/root/early_end"}}}
+{"method":"turn/started","params":{"threadId":"sub-E","turn":{"id":"te1","items":[],"itemsView":"notLoaded","status":"inProgress"}}}
+{"method":"item/completed","params":{"threadId":"$MAIN","turnId":"turn-fake-1","item":{"type":"agentMessage","id":"m1","text":"Started.","phase":"final_answer","memoryCitation":null}}}
+{"method":"turn/completed","params":{"threadId":"$MAIN","turn":{"id":"turn-fake-1","items":[],"itemsView":"notLoaded","status":"completed","durationMs":3}}}
+{"wait":30}
+{"method":"item/completed","params":{"threadId":"$MAIN","item":{"type":"subAgentActivity","id":"ie2","kind":"completed","agentThreadId":"sub-E","agentPath":"/root/early_end","model":null,"reasoningEffort":null}}}
+{"wait":30}
+{"method":"item/completed","params":{"threadId":"sub-E","turnId":"te1","item":{"type":"agentMessage","id":"se1","text":"the final words of the subagent","phase":"final_answer","memoryCitation":null}}}
+{"method":"turn/completed","params":{"threadId":"sub-E","turn":{"id":"te1","items":[],"itemsView":"notLoaded","status":"completed","durationMs":3}}}

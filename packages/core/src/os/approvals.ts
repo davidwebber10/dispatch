@@ -190,6 +190,8 @@ export interface BlockedAction {
   reason: string | null;
   riskLevel?: string | null;
   at: number;
+  /** subagents-v1: the subagent whose action was blocked (absent: the main agent). */
+  agentId?: string;
 }
 
 /** The thread event a blocked action becomes (kept in the replay ring and the journal). */

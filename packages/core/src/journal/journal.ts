@@ -252,7 +252,7 @@ export class MessageJournal {
 
   /** The lifecycle frames (`system/subagent`) of every subagent of a thread, oldest first. */
   subagentFrames(terminalId: string): unknown[] {
-    return (this.q.agentFrames.all(terminalId) as JournalRow[]).map((r) => toItem(r).payload).filter((p) => p !== null);
+    return (this.q.agentFrames.all(terminalId, this.floorOf(terminalId)) as JournalRow[]).map((r) => toItem(r).payload).filter((p) => p !== null);
   }
 
   /** The newest sequence of the thread, or 0 when the journal has no row for it. */

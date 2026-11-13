@@ -77,7 +77,16 @@ interface SubThread {
   translator: CodexTranslator;
   currentTurnId?: string;
   turnActive: boolean;
+  /** The person stopped this subagent: any turn it starts is interrupted, and it is never revived. */
+  stopRequested?: boolean;
+  /** The final text of its last turn (an end reported by an item before that turn's own end needs it). */
+  lastResult?: string;
+  /** A `completed` item came before the sub-thread's own turn end: the end waits for it, at most FINISH_WAIT_MS. */
+  finishTimer?: ReturnType<typeof setTimeout>;
 }
+
+/** How long a reported end waits for the sub-thread's own turn end (which carries the final text). */
+const FINISH_WAIT_MS = 10_000;
 
 /** A surfaced (or waiting) approval: the pending the person sees and the ServerRequest it answers. */
 interface QueuedApproval {
@@ -94,10 +103,19 @@ interface CodexSession {
   agentResults: Array<{ id: string; title: string; state: SubagentState; text: string }>;
   /** A delivery turn was asked for and its turn/started has not come yet: a second delivery waits. */
   delivering?: boolean;
+  /** Turns the daemon started by itself since the person's last message (capped: autoTurnLimit). */
+  autoTurns: number;
+  /** The cap's notice was posted for the current run of automatic turns. */
+  capNoticed?: boolean;
+  /** The person stopped the reply (interrupt, stop-all): no delivery until their next message. */
+  deliveryPaused?: boolean;
+  /** How the last main turn ended: only after a normal end may a delivery follow. */
+  lastMainEnd?: 'normal' | 'other';
   /** Smart approvals (os/approvals.ts): on-request + workspace-write + the auto_review reviewer. */
   smart?: boolean;
-  /** Reviewer denials nobody answered yet (the in-thread cards), with the raw notification for approveGuardianDeniedAction. */
-  blocked?: Array<{ block: BlockedAction; raw: any }>;
+  /** Reviewer denials nobody answered yet (the in-thread cards), with the raw notification for approveGuardianDeniedAction
+   *  and the thread (main or sub-thread) whose action was denied. */
+  blocked?: Array<{ block: BlockedAction; raw: any; threadId?: string }>;
   terminalId: string;
   translator: CodexTranslator;
   /** The recent events for replay; its `lastPushAt` is IStructuredManager.lastFrameAt. */
@@ -193,6 +211,12 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
   private threadToTerminal = new Map<string, string>();
   /** Sub-thread id → its routing record (see SubThread). */
   private subThreads = new Map<string, SubThread>();
+  /** Sub-threads of threads that were stopped: never bound again while this app-server runs. */
+  private deadSubThreads = new Set<string>();
+  /** The most turns the daemon starts by itself (subagent results) since the person's last message. */
+  autoTurnLimit = 3;
+  /** The time limit of a held idle with no subagent frame (shared/subagents.ts; a test shortens it). */
+  subagentLostAfterMs = 30 * 60_000;
   private conn?: JsonRpcStdioClient;
   private connSpec?: { command: string; args: string[]; cwd: string; env: Record<string, string> };
   private defaultEnv: Record<string, string> = {};
@@ -239,6 +263,7 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
       subagents: undefined as unknown as SubagentTracker,
       approvalQueue: [],
       agentResults: [],
+      autoTurns: 0,
       terminalId,
       accountId: opts.accountId,
       translator: new CodexTranslator(),
@@ -264,7 +289,7 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
       startGen: 0,
       ready: Promise.resolve(),
     };
-    session.subagents = new SubagentTracker('codex', { emit: (frame) => this.pushEvent(session, frame) });
+    session.subagents = new SubagentTracker('codex', { emit: (frame) => this.pushEvent(session, frame), lostAfterMs: this.subagentLostAfterMs });
     if (opts.seedEvents?.length) session.ring.seed(opts.seedEvents);
     // W3-D: each finished item goes to the message journal. Codex prose has no whole frame: a block is finished at its stop.
     session.recorder = this.journal?.attach(terminalId, session.ring, { wholeFrames: false });
@@ -420,7 +445,9 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
     if (this.conn !== conn) return; // a newer connection already replaced it
     this.conn = undefined;
     this.threadToTerminal.clear();
+    for (const sub of this.subThreads.values()) if (sub.finishTimer) clearTimeout(sub.finishTimer);
     this.subThreads.clear();
+    this.deadSubThreads.clear();
     const live = [...this.sessions.values()];
     if (live.length === 0 || !this.connSpec) return;
     // Crash recovery: respawn the shared server and thread/resume every live thread by id.
@@ -466,9 +493,19 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
     else if (method === 'turn/completed') { session.turnActive = false; }
     if (method === 'item/autoApprovalReview/completed') this.onReviewCompleted(session, params);
     if (method === 'item/started' || method === 'item/completed') this.observeAgentItem(session, session.threadId ?? null, params?.item);
-    this.applyActions(session, session.translator.translate({ method, params }));
-    // Subagent results that came while this turn ran reach the main agent now (see deliverAgentResults).
-    if (method === 'turn/completed') this.deliverAgentResults(session);
+    const actions = session.translator.translate({ method, params });
+    if (method === 'turn/completed') {
+      // Only a normal end may be followed by a delivery: not a usage limit, an error, an interrupt or a question.
+      const normal = params?.turn?.status === 'completed' && actions.every((a) => a.kind !== 'failed' && a.kind !== 'usage-limit' && a.kind !== 'needs-help');
+      session.lastMainEnd = normal ? 'normal' : 'other';
+      // Subagent results that came while this turn ran reach the main agent now, BEFORE the turn end
+      // settles: the delivery turn's own end settles the thread, so no idle (and no "done" notice) goes out between.
+      if (normal && this.deliverAgentResults(session)) {
+        this.applyActions(session, actions.filter((a) => a.kind !== 'idle'));
+        return;
+      }
+    }
+    this.applyActions(session, actions);
   }
 
   private onServerRequest(method: string, id: RpcId, params: any): void {
@@ -505,7 +542,7 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
   /** `thread/started` of a sub-thread whose parent we route (Thread.parentThreadId, or its spawn source). */
   private maybeBindSubThread(thread: any): void {
     const id = thread?.id;
-    if (typeof id !== 'string' || !id || this.threadToTerminal.has(id)) return;
+    if (typeof id !== 'string' || !id || this.threadToTerminal.has(id) || this.deadSubThreads.has(id)) return;
     const source = thread?.source;
     const spawn = source?.subagent?.thread_spawn ?? source?.subAgent?.thread_spawn;
     const parent = typeof thread?.parentThreadId === 'string' && thread.parentThreadId ? thread.parentThreadId : spawn?.parent_thread_id;
@@ -519,14 +556,20 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
     });
   }
 
-  /** Route a sub-thread's frames to the session that owns `parentThreadId` (its main thread, or the sub-thread above it). */
+  /**
+   * Route a sub-thread's frames to the session that owns `parentThreadId` (its main thread, or the
+   * sub-thread above it). Called only with a parent that a spawn names: the sub-thread's own
+   * `thread/started`, a `subAgentActivity` of kind `started`, a `collabAgentToolCall` spawnAgent. A
+   * sub-thread is never re-bound to another thread, and one of a stopped thread is never bound again.
+   */
   private bindSubThread(id: string, parentThreadId: string, init: Partial<SubagentInfo>): SubThread | undefined {
-    if (this.threadToTerminal.has(id)) return undefined; // a Dispatch thread of its own, never a subagent
+    if (this.threadToTerminal.has(id) || this.deadSubThreads.has(id)) return undefined; // a Dispatch thread of its own, or a dead one
     const parentSub = this.subThreads.get(parentThreadId);
     const terminalId = this.threadToTerminal.get(parentThreadId) ?? parentSub?.terminalId;
     const session = terminalId ? this.sessions.get(terminalId) : undefined;
     if (!terminalId || !session) return undefined;
     let sub = this.subThreads.get(id);
+    if (sub && sub.terminalId !== terminalId) return undefined; // owned by another thread: change nothing
     if (!sub) {
       sub = { id, terminalId, parentId: parentSub ? parentSub.id : null, translator: new CodexTranslator(), turnActive: false };
       this.subThreads.set(id, sub);
@@ -541,11 +584,19 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
     const eventTurnId = params?.turnId ?? params?.turn?.id;
     if (method !== 'turn/started' && eventTurnId && sub.currentTurnId && eventTurnId !== sub.currentTurnId) return;
     const tracker = session.subagents;
-    if (method === 'turn/started') { sub.turnActive = true; sub.currentTurnId = params?.turn?.id; }
-    else if (method === 'turn/completed') sub.turnActive = false;
+    tracker.touch(sub.id);
+    if (method === 'turn/started') {
+      sub.turnActive = true;
+      sub.currentTurnId = params?.turn?.id;
+      // The person stopped it before this turn began: stop the turn now (M1).
+      if (sub.stopRequested && sub.currentTurnId && this.conn?.alive) void this.conn.request('turn/interrupt', { threadId: sub.id, turnId: sub.currentTurnId }).catch(() => {});
+    } else if (method === 'turn/completed') {
+      sub.turnActive = false;
+      this.dropQueuedFor(session, sub.id, 'The subagent turn ended.'); // its waiting requests are dead
+    }
     if (method === 'item/started' && params?.item && !NON_TOOL_ITEM_TYPES.has(params.item.type)) tracker.step(sub.id);
     if (method === 'item/started' || method === 'item/completed') this.observeAgentItem(session, sub.id, params?.item);
-    if (method === 'item/autoApprovalReview/completed') this.onReviewCompleted(session, params);
+    if (method === 'item/autoApprovalReview/completed') this.onReviewCompleted(session, params, sub);
     if (method === 'thread/tokenUsage/updated') {
       const total = params?.tokenUsage?.total;
       if (total && typeof total.inputTokens === 'number' && typeof total.outputTokens === 'number') {
@@ -560,11 +611,12 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
           this.pushEvent(session, tagParent(this.withDenyReason(session, action.event), sub.id));
           break;
         case 'busy':
-          tracker.update(sub.id, { state: 'working' }, { revive: true });
+          if (!sub.stopRequested) tracker.update(sub.id, { state: 'working' }, { revive: true });
           break;
         case 'idle':
         case 'needs-help':
-          this.finishSubagent(session, sub.id, turnStatus === 'interrupted' ? 'stopped' : 'done', action.summary);
+          if (action.summary) sub.lastResult = action.summary;
+          this.finishSubagent(session, sub.id, turnStatus === 'interrupted' || sub.stopRequested ? 'stopped' : 'done', action.summary, undefined, undefined, true);
           break;
         case 'failed':
           this.finishSubagent(session, sub.id, 'failed', undefined, typeof params?.turn?.error?.message === 'string' ? params.turn.error.message : 'The subagent could not finish.');
@@ -588,14 +640,16 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
     const tracker = session.subagents;
     if (item.type === 'subAgentActivity' && typeof item.agentThreadId === 'string' && item.agentThreadId) {
       const id = item.agentThreadId;
-      if (emitter) this.bindSubThread(id, emitter, {
+      // Only a `started` item binds (it is the spawn); every other kind must name a subagent of this thread.
+      if (item.kind === 'started' && emitter) this.bindSubThread(id, emitter, {
         title: titleFromAgentPath(item.agentPath), model: str(item.model), effort: str(item.reasoningEffort),
         nativeId: str(item.agentPath), callId: str(item.id),
         startedAt: typeof item.startedAtMs === 'number' ? item.startedAtMs : undefined,
       });
-      else tracker.ensure(id, { title: titleFromAgentPath(item.agentPath) ?? 'Agent', model: str(item.model), effort: str(item.reasoningEffort), callId: str(item.id) });
+      if (!this.ownsAgent(session, id)) return;
+      tracker.touch(id);
       switch (item.kind) {
-        case 'interacted': tracker.update(id, { state: 'working' }, { revive: true }); break;
+        case 'interacted': if (!this.subThreads.get(id)?.stopRequested) tracker.update(id, { state: 'working' }, { revive: true }); break;
         case 'interrupted': this.finishSubagent(session, id, 'stopped'); break;
         case 'completed':
           this.finishSubagent(session, id, 'done', undefined, undefined, typeof item.completedAtMs === 'number' ? item.completedAtMs : undefined);
@@ -606,20 +660,20 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
     }
     if (item.type !== 'collabAgentToolCall') return;
     const receivers: string[] = Array.isArray(item.receiverThreadIds) ? item.receiverThreadIds.filter((x: unknown): x is string => typeof x === 'string' && !!x) : [];
-    if (item.tool === 'spawnAgent') {
+    if (item.tool === 'spawnAgent' && emitter) {
+      // The sender must be the thread that sent the item (or a sub-thread of this thread).
       const sender = str(item.senderThreadId) ?? emitter;
-      for (const rid of receivers) {
-        const init = { prompt: str(item.prompt), model: str(item.model), effort: str(item.reasoningEffort), callId: str(item.id), title: firstLine(item.prompt) };
-        if (sender) this.bindSubThread(rid, sender, init);
-        else tracker.ensure(rid, init);
+      const senderOk = sender === emitter || this.subThreads.get(sender)?.terminalId === session.terminalId;
+      for (const rid of senderOk ? receivers : []) {
+        this.bindSubThread(rid, sender, { prompt: str(item.prompt), model: str(item.model), effort: str(item.reasoningEffort), callId: str(item.id), title: firstLine(item.prompt) });
       }
     }
     const states = item.agentsStates && typeof item.agentsStates === 'object' ? item.agentsStates : {};
     for (const [rid, st] of Object.entries(states as Record<string, any>)) {
-      if (!tracker.has(rid)) continue;
+      if (!this.ownsAgent(session, rid)) continue;
       const message = str(st?.message);
       switch (st?.status) {
-        case 'running': tracker.update(rid, { state: 'working' }); break;
+        case 'running': tracker.touch(rid); tracker.update(rid, { state: 'working' }); break;
         case 'completed': this.finishSubagent(session, rid, 'done', message); break;
         case 'errored': case 'notFound': this.finishSubagent(session, rid, 'failed', undefined, message ?? 'The subagent could not finish.'); break;
         case 'interrupted': case 'shutdown': this.finishSubagent(session, rid, 'stopped'); break;
@@ -637,19 +691,36 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
    * main turn starts now with it (deliverAgentResults), else at that turn's end. The delivery comes
    * first, then the state: a turn start drops the held idle, so the thread never flips to idle between.
    */
-  private finishSubagent(session: CodexSession, id: string, state: SubagentState, result?: string, error?: string, endedAt?: number): void {
+  private finishSubagent(session: CodexSession, id: string, state: SubagentState, result?: string, error?: string, endedAt?: number, ownTurnEnd = false): void {
     const tracker = session.subagents;
     const a = tracker.get(id);
+    const sub = this.subThreads.get(id);
+    if (sub?.finishTimer) { clearTimeout(sub.finishTimer); sub.finishTimer = undefined; }
     if (!a || !RUNNING_STATES.has(a.state)) {
       // Already ended: keep a result or reason that the first end did not have.
       if (a && (result || error)) tracker.update(id, { ...(a.result ? {} : { result }), ...(a.error ? {} : { error }) });
       return;
     }
+    // An end reported by an item (`completed`, agentsStates) before the sub-thread's own turn end has no
+    // final text yet: wait for that turn end (at most FINISH_WAIT_MS), so the main agent never gets an empty result.
+    if (state === 'done' && !result && !ownTurnEnd && sub?.turnActive) {
+      sub.finishTimer = setTimeout(() => { sub.finishTimer = undefined; this.finishSubagent(session, id, state, sub.lastResult, undefined, endedAt, true); }, FINISH_WAIT_MS);
+      sub.finishTimer.unref?.();
+      return;
+    }
+    if (state === 'done' && !result) result = sub?.lastResult;
     if (a.parentId === null && (state === 'done' || state === 'failed')) {
       session.agentResults.push({ id, title: a.title, state, text: (state === 'done' ? result : error) ?? '' });
-      this.deliverAgentResults(session);
+      if (!session.turnActive) this.deliverAgentResults(session);
     }
     tracker.update(id, { state, ...(result ? { result } : {}), ...(error ? { error } : {}), ...(endedAt ? { endedAt } : {}) });
+  }
+
+  /** True when `id` is a subagent of THIS thread (its tracker has it and no other thread owns its sub-thread). */
+  private ownsAgent(session: CodexSession, id: string): boolean {
+    if (!session.subagents.has(id)) return false;
+    const sub = this.subThreads.get(id);
+    return !sub || sub.terminalId === session.terminalId;
   }
 
   /**
@@ -658,8 +729,21 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
    * reader shows it as a notice and never as the person's message (conversation/task-notification.ts);
    * its echo is also marked `meta.internal`.
    */
-  private deliverAgentResults(session: CodexSession): void {
-    if (session.turnActive || session.delivering || !session.agentResults.length || this.sessions.get(session.terminalId) !== session) return;
+  private deliverAgentResults(session: CodexSession): boolean {
+    if (session.turnActive || session.delivering || !session.agentResults.length || this.sessions.get(session.terminalId) !== session) return false;
+    // Not after the person stopped the reply, not while the thread waits for the person, not after a
+    // turn that ended on an error, a usage limit or a question: the results wait for the next message.
+    if (session.deliveryPaused || session.pending || session.lastMainEnd === 'other') return false;
+    // A cap on the turns the daemon starts by itself (a main agent that starts a subagent in each turn
+    // would otherwise run with no person): past it, one notice, and the results wait for the next message.
+    if (session.autoTurns >= this.autoTurnLimit) {
+      if (!session.capNoticed) {
+        session.capNoticed = true;
+        this.pushEvent(session, { type: 'system', subtype: 'dispatch_notice', level: 'warning', message: 'Agents finished; ask to see their results.' });
+      }
+      return false;
+    }
+    session.autoTurns += 1;
     const results = session.agentResults;
     session.agentResults = [];
     const content: ContentBlock[] = results.map((r) => ({ type: 'text', text: subagentResultText(r) }));
@@ -673,6 +757,7 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
       this.pushEvent(session, { type: 'result', subtype: 'error', is_error: true, result: String(err) });
       this.fire('failed', session.terminalId);
     });
+    return true;
   }
 
   /** Enact translator actions: buffer/emit events, and apply the permission membrane. */
@@ -856,6 +941,10 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
     if (source) ev.meta = { source };
     this.pushEvent(session, ev);
     session.subagents.turnStarted(); // a new main turn: a held idle belongs to a turn that is over
+    // A message (not one another agent sent) starts a new run: automatic turns may follow it again, and a
+    // delivery that a Stop paused may go at its end. Results that wait go with this turn's end.
+    if (source !== 'coordinator') { session.autoTurns = 0; session.capNoticed = false; session.deliveryPaused = false; }
+    session.lastMainEnd = undefined;
     this.fire('busy', terminalId);
     // Deliver once the thread is started (queued via the ready promise if still starting).
     session.ready = session.ready.then(() => this.startTurn(session, content)).catch((err) => {
@@ -950,7 +1039,7 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
   }
 
   /** The reviewer denied an action (critical risk, or it judged it unsafe): a card with its risk and rationale. */
-  private onReviewCompleted(session: CodexSession, params: any): void {
+  private onReviewCompleted(session: CodexSession, params: any, sub?: SubThread): void {
     const review = params?.review;
     if (review?.status !== 'denied') return;
     const { toolName, detail } = describeReviewAction(params?.action);
@@ -960,8 +1049,10 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
       reason: typeof review.rationale === 'string' ? review.rationale : null,
       riskLevel: typeof review.riskLevel === 'string' ? review.riskLevel : null,
       at: Date.now(),
+      ...(sub ? { agentId: sub.id } : {}),
     };
-    session.blocked = [...(session.blocked ?? []).filter((x) => x.block.id !== block.id), { block, raw: params }].slice(-20);
+    // The override names the thread whose action was denied: a sub-thread's own id for a subagent.
+    session.blocked = [...(session.blocked ?? []).filter((x) => x.block.id !== block.id), { block, raw: params, threadId: sub?.id ?? session.threadId }].slice(-20);
     this.pushEvent(session, blockedEvent(block));
   }
 
@@ -991,7 +1082,7 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
     // the person's decision (os/approvals.ts). The person asks again and is asked first.
     try {
       if (!this.conn || !session.threadId) throw new Error('no thread');
-      await this.conn.request('thread/approveGuardianDeniedAction', { threadId: session.threadId, event: hit.raw });
+      await this.conn.request('thread/approveGuardianDeniedAction', { threadId: hit.threadId ?? session.threadId, event: hit.raw });
     } catch {
       this.pushEvent(session, { type: 'system', subtype: 'dispatch_notice', level: 'warning', message: 'Dispatch could not allow that action. Ask for it again: you will be asked before it runs.' });
     }
@@ -1094,6 +1185,7 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
 
   interrupt(terminalId: string): boolean {
     const session = this.sessions.get(terminalId);
+    if (session) session.deliveryPaused = true; // the person stopped the reply: no turn starts by itself after it
     if (!session || !this.conn?.alive || !session.threadId || !session.currentTurnId) return false;
     void this.conn.request('turn/interrupt', { threadId: session.threadId, turnId: session.currentTurnId }).catch(() => {});
     return true;
@@ -1115,20 +1207,19 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
     if (!session || !a) return 'not-found';
     if (!RUNNING_STATES.has(a.state)) return 'not-running';
     const sub = this.subThreads.get(agentId);
-    if (!sub || !this.conn?.alive) return 'unsupported';
-    if (!sub.turnActive || !sub.currentTurnId) {
-      // Started, but its first turn is not known yet: nothing to interrupt. Mark it so the thread does not wait on it.
-      session.subagents.update(agentId, { state: 'stopped' });
-      return 'stopped';
-    }
-    try {
-      await this.conn.request('turn/interrupt', { threadId: sub.id, turnId: sub.currentTurnId });
-    } catch {
-      return 'unsupported';
+    if (!sub || sub.terminalId !== terminalId || !this.conn?.alive) return 'unsupported';
+    sub.stopRequested = true; // a turn it starts later is interrupted at its start (onSubNotification)
+    if (sub.turnActive && sub.currentTurnId) {
+      try {
+        await this.conn.request('turn/interrupt', { threadId: sub.id, turnId: sub.currentTurnId });
+      } catch {
+        sub.stopRequested = false;
+        return 'unsupported';
+      }
     }
     // Answer any request of this subagent that waits for the person: its turn is gone.
     this.dropQueuedFor(session, agentId);
-    this.finishSubagent(session, agentId, 'stopped');
+    if (sub.turnActive || RUNNING_STATES.has(session.subagents.get(agentId)?.state ?? 'done')) this.finishSubagent(session, agentId, 'stopped');
     return 'stopped';
   }
 
@@ -1137,6 +1228,7 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
     const session = this.sessions.get(terminalId);
     if (!session) return { stopped: [], unsupported: [], mainInterrupted: false };
     const out = { stopped: [] as string[], unsupported: [] as string[], mainInterrupted: false };
+    session.deliveryPaused = true; // no turn starts by itself after a stop of everything
     for (const a of session.subagents.running()) {
       const r = await this.stopSubagent(terminalId, a.id);
       if (r === 'stopped') out.stopped.push(a.id);
@@ -1149,7 +1241,7 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
   /** A sub-thread's history as Claude-shaped events tagged with its id (`thread/read`), for the agent journal route. */
   async readSubagentHistory(terminalId: string, agentId: string): Promise<unknown[] | null> {
     const session = this.sessions.get(terminalId);
-    if (!session?.subagents.has(agentId) || !this.conn?.alive) return null;
+    if (!session?.subagents.has(agentId) || this.subThreads.get(agentId)?.terminalId !== terminalId || !this.conn?.alive) return null;
     try {
       const res = await this.conn.request('thread/read', { threadId: agentId, includeTurns: true }, this.releaseTimeoutMs);
       const turns: any[] = Array.isArray(res?.thread?.turns) ? res.thread.turns : [];
@@ -1162,15 +1254,15 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
   }
 
   /** Requests of a stopped subagent that wait in the queue are declined (its turn will not use them). */
-  private dropQueuedFor(session: CodexSession, agentId: string): void {
+  private dropQueuedFor(session: CodexSession, agentId: string, why = 'The subagent was stopped.'): void {
     const keep: QueuedApproval[] = [];
     for (const q of session.approvalQueue) {
       if (q.pending.agentId !== agentId) { keep.push(q); continue; }
-      this.conn?.respond(q.approval.requestId, buildApprovalResponse(q.approval.method, { behavior: 'deny', message: 'The subagent was stopped.' }, q.pending));
+      this.conn?.respond(q.approval.requestId, buildApprovalResponse(q.approval.method, { behavior: 'deny', message: why }, q.pending));
     }
     session.approvalQueue = keep;
     if (session.pending?.agentId === agentId && session.pendingApproval) {
-      this.conn?.respond(session.pendingApproval.requestId, buildApprovalResponse(session.pendingApproval.method, { behavior: 'deny', message: 'The subagent was stopped.' }, session.pending));
+      this.conn?.respond(session.pendingApproval.requestId, buildApprovalResponse(session.pendingApproval.method, { behavior: 'deny', message: why }, session.pending));
       session.pending = null;
       session.pendingApproval = null;
       this.fire('resolved', session.terminalId);
@@ -1210,8 +1302,19 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
     if (!session) return;
     session.pending = null;
     session.approvalQueue = [];
+    session.subagents.stopAll('The session ended.'); // written while the session can still emit
     session.subagents.dispose();
-    for (const [id, sub] of this.subThreads) if (sub.terminalId === terminalId) this.subThreads.delete(id);
+    // Its sub-threads run in the shared app-server: stop their turns and let them go, and never bind them again.
+    for (const [id, sub] of this.subThreads) {
+      if (sub.terminalId !== terminalId) continue;
+      if (sub.finishTimer) clearTimeout(sub.finishTimer);
+      this.subThreads.delete(id);
+      this.deadSubThreads.add(id);
+      if (this.conn?.alive) {
+        if (sub.turnActive && sub.currentTurnId) void this.conn.request('turn/interrupt', { threadId: id, turnId: sub.currentTurnId }).catch(() => {});
+        this.releaseThread(this.conn, id);
+      }
+    }
     if (session.threadId) this.threadToTerminal.delete(session.threadId);
     this.sessions.delete(terminalId);
     session.recorder?.close(); // W3-D: a block that streams at a stop (of the thread, of the daemon) is written

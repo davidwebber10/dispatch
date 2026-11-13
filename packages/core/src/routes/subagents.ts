@@ -42,8 +42,10 @@ export function createSubagentsRouter(deps: SubagentRouteDeps): Router {
     }
     const live = deps.manager(terminalId)?.listSubagents?.(terminalId) ?? null;
     for (const a of live ?? []) byId.set(a.id, a);
-    // A subagent the journal shows running with no live session to run it: the session ended under it.
-    const agents = [...byId.values()].map((a) => (live === null && RUNNING_STATES.has(a.state) ? { ...a, state: 'stopped' as const } : a));
+    // A subagent the journal shows running that the live session does not know (or with no live session):
+    // the session it ran in ended under it.
+    const liveIds = new Set((live ?? []).map((a) => a.id));
+    const agents = [...byId.values()].map((a) => (!liveIds.has(a.id) && RUNNING_STATES.has(a.state) ? { ...a, state: 'stopped' as const } : a));
     return { agents, live: live !== null };
   };
 
@@ -88,7 +90,7 @@ export function createSubagentsRouter(deps: SubagentRouteDeps): Router {
       const hasFrames = page.items.some((i) => !isSubagentFrame(i.payload));
       if (!hasFrames && before === undefined && after === undefined) {
         let history: unknown[] | null = null;
-        if (thread.type === 'claude-code' && thread.externalId && thread.workingDir) history = readSidechainEvents(thread.workingDir, thread.externalId, agentId, agent.nativeId);
+        if (thread.type === 'claude-code' && thread.externalId && thread.workingDir) history = await readSidechainEvents(thread.workingDir, thread.externalId, agentId, agent.nativeId);
         else history = (await deps.manager(terminalId)?.readSubagentHistory?.(terminalId, agentId)) ?? null;
         if (history?.length) body.history = history;
       }

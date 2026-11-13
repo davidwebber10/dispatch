@@ -1,0 +1,4 @@
+{"_note":"subagents-v1 review M4: the reviewer denies an action of a sub-thread."}
+{"method":"item/completed","params":{"threadId":"$MAIN","turnId":"turn-fake-1","item":{"type":"subAgentActivity","id":"ir1","model":"gpt-fake","reasoningEffort":"low","kind":"started","agentThreadId":"sub-R","agentPath":"/root/risky_step"}}}
+{"method":"turn/started","params":{"threadId":"sub-R","turn":{"id":"tr1","items":[],"itemsView":"notLoaded","status":"inProgress"}}}
+{"method":"item/autoApprovalReview/completed","params":{"threadId":"sub-R","turnId":"tr1","reviewId":"review-1","review":{"status":"denied","rationale":"It deletes files.","riskLevel":"critical"},"action":{"type":"command","command":"rm -rf build"}}}

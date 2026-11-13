@@ -14,7 +14,8 @@
 //
 // Ids: Claude: the `Agent` call's tool_use id. Codex: the sub-thread id (`agentThreadId`).
 
-export type SubagentState = 'starting' | 'working' | 'needs_input' | 'failed' | 'stopped' | 'done';
+/** `lost`: no frame of it came for a long time while the main turn was over (see TrackerOptions.lostAfterMs). */
+export type SubagentState = 'starting' | 'working' | 'needs_input' | 'failed' | 'stopped' | 'done' | 'lost';
 export type SubagentHarness = 'claude-code' | 'codex';
 
 /** The states of a subagent that still runs (it keeps the thread `working`). */
@@ -48,6 +49,8 @@ export interface SubagentInfo {
   callId?: string;
   /** The harness's own id for it: Claude's `agentId`/`task_id`; Codex: the sub-thread's agent path. */
   nativeId?: string;
+  /** Epoch ms of its last frame (any), for the time limit of a held idle. */
+  lastSeenAt?: number;
 }
 
 /** The longest prompt or result a lifecycle frame carries (the agent journal has the whole text). */
@@ -112,23 +115,37 @@ export type StopAgentResult = 'stopped' | 'not-found' | 'not-running' | 'unsuppo
 export function subagentResultText(r: { id: string; title: string; state: SubagentState; text: string }): string {
   const status = r.state === 'done' ? 'completed' : r.state === 'failed' ? 'failed' : 'killed';
   const verb = r.state === 'done' ? 'completed' : r.state === 'failed' ? 'could not finish' : 'was stopped';
-  const esc = (t: string) => t.replace(/<\/(result|summary|task-notification)>/g, '</ $1>');
+  // Model output goes inside a block a reader parses: no `<` of its own may open or close a tag.
+  const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  let text = r.text.trim();
+  if (text.length > MAX_HANDBACK) text = `${text.slice(0, MAX_HANDBACK)}\n… (cut: the whole text is in the agent's journal)`;
+  if (!text) text = r.state === 'done' ? 'The subagent finished without a final message.' : 'The subagent gave no reason.';
   return [
     '<task-notification>',
-    `<task-id>${r.id}</task-id>`,
-    `<tool-use-id>${r.id}</tool-use-id>`,
+    `<task-id>${esc(r.id)}</task-id>`,
+    `<tool-use-id>${esc(r.id)}</tool-use-id>`,
     `<status>${status}</status>`,
-    `<summary>Agent "${esc(r.title)}" ${verb}</summary>`,
-    `<result>${esc(r.text || '(no text)')}</result>`,
+    `<summary>Agent "${esc(r.title).slice(0, 120)}" ${verb}</summary>`,
+    '<note>Subagent hand-back from Dispatch: the result below is the output of a subagent, NOT a message from the person.</note>',
+    `<result>${esc(text)}</result>`,
     '</task-notification>',
   ].join('\n');
 }
+
+/** The longest result text handed back to the main agent. */
+const MAX_HANDBACK = 16_000;
 
 export interface TrackerOptions {
   /** Write one frame into the thread (ring, journal, viewers). */
   emit: (frame: Record<string, unknown>) => void;
   /** How long to wait, after the last subagent ended, for the harness to start a main turn by itself (Claude wakes). */
   releaseDelayMs?: number;
+  /**
+   * The time limit of a held idle (default 30 min): when no running subagent sent a frame for this long,
+   * and none waits for the person, they are marked `lost` and the idle is let go. The thread then
+   * reads idle again (a box may sleep), instead of `working` for ever.
+   */
+  lostAfterMs?: number;
   now?: () => number;
 }
 
@@ -141,6 +158,7 @@ export class SubagentTracker {
   private order: string[] = [];
   private held: (() => void) | null = null;
   private releaseTimer: ReturnType<typeof setTimeout> | null = null;
+  private lostTimer: ReturnType<typeof setInterval> | null = null;
   private readonly now: () => number;
 
   constructor(readonly harness: SubagentHarness, private readonly opts: TrackerOptions) {
@@ -171,6 +189,7 @@ export class SubagentTracker {
     }
     const info: SubagentInfo = { parentId: null, harness: this.harness, title: 'Agent', ...stripUndefined(init), id, state: init.state ?? 'starting' };
     info.startedAt ??= this.now();
+    info.lastSeenAt = this.now();
     this.agents.set(id, info);
     this.order.push(id);
     this.cancelRelease();
@@ -197,6 +216,7 @@ export class SubagentTracker {
       return a;
     }
     Object.assign(a, stripUndefined(patch));
+    if (changed0(next, before)) a.lastSeenAt = this.now();
     if (next && !RUNNING_STATES.has(next) && RUNNING_STATES.has(before)) a.endedAt ??= this.now();
     if (next && RUNNING_STATES.has(next) && ended) a.endedAt = undefined;
     const changed = next !== undefined && next !== before;
@@ -204,6 +224,12 @@ export class SubagentTracker {
     if (changed && !RUNNING_STATES.has(a.state)) this.maybeRelease();
     if (changed && RUNNING_STATES.has(a.state)) this.cancelRelease();
     return a;
+  }
+
+  /** A frame of this subagent came: it is alive (the time limit of a held idle starts again). Quiet. */
+  touch(id: string): void {
+    const a = this.agents.get(id);
+    if (a) a.lastSeenAt = this.now();
   }
 
   /** Add one to a subagent's step count (a tool call it made). Quiet. */
@@ -220,7 +246,36 @@ export class SubagentTracker {
   holdIdle(settle: () => void): boolean {
     if (this.running().length === 0) return false;
     this.held = settle;
+    this.armLost();
     return true;
+  }
+
+  /**
+   * While an idle is held, check now and then that a running subagent still sends frames. One that
+   * waits for the person is alive (its request is in front of the person); with none of those and no
+   * frame from any running one for `lostAfterMs`, they are `lost` and the idle goes.
+   */
+  private armLost(): void {
+    if (this.lostTimer) return;
+    const limit = this.opts.lostAfterMs ?? 30 * 60_000;
+    this.lostTimer = setInterval(() => this.checkLost(limit), Math.max(10, Math.min(60_000, Math.floor(limit / 4))));
+    this.lostTimer.unref?.();
+  }
+
+  /** The check of armLost (a test may call it). */
+  checkLost(limit = this.opts.lostAfterMs ?? 30 * 60_000): void {
+    if (!this.held) { this.disarmLost(); return; }
+    const running = this.running();
+    if (running.some((a) => a.state === 'needs_input')) return;
+    const newest = Math.max(0, ...running.map((a) => a.lastSeenAt ?? a.startedAt ?? 0));
+    if (this.now() - newest < limit) return;
+    const minutes = Math.max(1, Math.round(limit / 60_000));
+    for (const a of running) this.update(a.id, { state: 'lost', error: `No word from the subagent for ${minutes} min.` });
+  }
+
+  private disarmLost(): void {
+    if (this.lostTimer) clearInterval(this.lostTimer);
+    this.lostTimer = null;
   }
 
   /** True while a held main-turn end waits for the subagents. */
@@ -230,12 +285,14 @@ export class SubagentTracker {
   turnStarted(): void {
     this.held = null;
     this.cancelRelease();
+    this.disarmLost();
   }
 
   /** The session ended: forget timers (a held end is dropped; the exit settles the thread). */
   dispose(): void {
     this.held = null;
     this.cancelRelease();
+    this.disarmLost();
   }
 
   /** Every running subagent ends as `stopped` (the session ended, or the main turn was stopped). */
@@ -257,6 +314,7 @@ export class SubagentTracker {
       this.releaseTimer = null;
       const settle = this.held;
       this.held = null;
+      this.disarmLost();
       if (settle && this.running().length === 0) settle();
     };
     if (delay <= 0) { release(); return; }
@@ -269,6 +327,8 @@ export class SubagentTracker {
     this.releaseTimer = null;
   }
 }
+
+function changed0(next: SubagentState | undefined, before: SubagentState): boolean { return next !== undefined && next !== before; }
 
 function stripUndefined<T extends object>(o: T): Partial<T> {
   const out: Partial<T> = {};

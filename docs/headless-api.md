@@ -442,35 +442,47 @@ a `result` with `parent_tool_use_id`: it is not the thread's turn end (no "Done"
 is one frame, kept in the journal as a `notice`:
 
 ```json
-{"type":"system","subtype":"subagent","id":"toolu_011z…","parentId":null,"harness":"claude-code",
+{"type":"system","subtype":"subagent","id":"toolu_fake001","parentId":null,"harness":"claude-code",
  "title":"Count files A","kind":"general-purpose","prompt":"…","model":"claude-haiku-5-5",
- "state":"done","startedAt":1794525790840,"endedAt":1794525793177,"tokens":11573,"steps":1,
- "result":"`ls a` lists 2 entries.","background":true,"callId":"toolu_011z…","nativeId":"aceb1634cd57db049"}
+ "state":"done","startedAt":1700000000000,"endedAt":1700000002337,"tokens":11573,"steps":1,
+ "result":"`ls a` lists 2 entries.","background":true,"callId":"toolu_fake001","nativeId":"a0000000000000001"}
 ```
 
-`state`: `starting`, `working`, `needs_input`, `failed`, `stopped`, `done`. Optional: `effort`, `usage`
+`state`: `starting`, `working`, `needs_input`, `failed`, `stopped`, `done`, `lost` (no frame of it for 30 min while the main turn was over). Optional: `effort`, `usage`
 (`{input, output}`), `error`. `nativeId`: Claude's own agent id; Codex: the agent path (`/root/<task>`).
 
 **Approvals and questions.** A subagent's gated call or question is the thread's pending, like the main
 agent's, with `agentId` set (`GET …/permission`, the `permission` frame); answer it with the same
 `POST …/permission`. A Codex sub-thread's request runs through the same rules as the main thread's:
 the thread's tool policy, then the person (or auto-allow). When two requests come together they are
-shown one at a time.
+shown one at a time; while one waits behind another, `POST …/permission` must name its `requestId`, and only
+the request in front can be answered.
 
 **Status.** The thread stays `working` while a subagent runs, also when the main turn ended (a Claude
-background agent, a Codex sub-thread); it is `needs_input` while one waits for the person.
+background agent, a Codex sub-thread); it is `needs_input` while one waits for the person. The hold has a
+time limit: when no running subagent sent a frame for 30 minutes (and none waits for the person), they
+are marked `lost` and the thread settles.
 
 **A finished Codex subagent.** When a top-level Codex subagent ends `done` or `failed` and the main
 agent is idle, the daemon starts a main turn whose input is a `<task-notification>` block with the
 result (the shape Claude Code uses when it wakes its main agent for a background agent). The echo of
 that input carries `meta: {source: "dispatch", internal: true, subagents: [ids]}`; every reader shows
 it as a notice, never as the person's message. A result that ends during a main turn is handed over
-when that turn ends, unless the main agent read it itself (a `wait`). A stopped subagent is not handed over.
+when that turn ends (before the turn settles, so no idle goes out between), unless the main agent read it
+itself (a `wait`). Never after a turn that ended on an error, a usage limit or a question, never while
+the thread waits for the person, and never after the person stopped the reply (Stop, stop-all): the
+results then wait for the next message. At most 3 such turns follow one message of the person; then one
+notice (`dispatch_notice`, "Agents finished; ask to see their results.") and the results wait. A stopped
+subagent is not handed over. The text is escaped, cut at 16,000 characters, and marked as subagent output.
+
+A sub-thread belongs to the thread that spawned it: it is bound only from its own `thread/started` or a
+spawn item (`subAgentActivity` `started`, `collabAgentToolCall` `spawnAgent`), never re-bound, and the
+sub-threads of a stopped thread are interrupted, let go and never bound again.
 
 | Route | Answer |
 | --- | --- |
-| `GET /api/terminals/:id/agents` | `{agents, live, running}`: every subagent of the thread, oldest first (from the journal, then the live session). With no live session, one the journal shows running reads `stopped`. |
-| `GET /api/terminals/:id/agents/:agentId/journal` | One subagent's items, paged like `GET …/journal` (`before=`, `after=`, `limit=`): `{agent, items, firstSeq, lastSeq, hasMore}`. With no journal frame of it and no cursor, `history` holds its steps from the harness (Claude: its sidechain transcript `<session>/subagents/agent-<id>.jsonl`; Codex: `thread/read` of the sub-thread). |
+| `GET /api/terminals/:id/agents` | `{agents, live, running}`: every subagent of the thread, oldest first (from the journal, then the live session). One the journal shows running that the live session does not know (its session ended) reads `stopped`. |
+| `GET /api/terminals/:id/agents/:agentId/journal` | One subagent's items, paged like `GET …/journal` (`before=`, `after=`, `limit=`): `{agent, items, firstSeq, lastSeq, hasMore}`. With no journal frame of it and no cursor, `history` holds its steps from the harness (Claude: its sidechain transcript `<session>/subagents/agent-<id>.jsonl`, read as the agent user, no link, at most 8 MB; Codex: `thread/read` of the sub-thread). |
 | `POST /api/terminals/:id/agents/:agentId/stop` | `{result:"stopped"}`; `404` unknown, `409` not running (or no live session), `501` it cannot be stopped on its own. Claude: the CLI's `stop_task` control request; Codex: `turn/interrupt` on the sub-thread. |
 | `POST /api/terminals/:id/agents/stop-all` | `{stopped, unsupported, mainInterrupted}`: every running subagent, and the main turn when it runs. |
 

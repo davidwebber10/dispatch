@@ -100,13 +100,13 @@ describe('the sidechain transcript (Claude)', () => {
       { type: 'user', uuid: 'x1', isSidechain: true, agentId: 'abc123', message: { role: 'user', content: 'Look at a.json' } },
       { type: 'assistant', uuid: 'x2', isSidechain: true, agentId: 'abc123', message: { role: 'assistant', content: [{ type: 'text', text: 'a.json is fine' }] } },
     ].map((l) => JSON.stringify(l)).join('\n') + '\n');
-    const byMeta = readSidechainEvents(workDir, 'sess-1', 'toolu_X');
+    const byMeta = await readSidechainEvents(workDir, 'sess-1', 'toolu_X');
     expect(byMeta).toEqual([
       { type: 'user', message: { role: 'user', content: 'Look at a.json' }, parent_tool_use_id: 'toolu_X', uuid: 'x1' },
       { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'a.json is fine' }] }, parent_tool_use_id: 'toolu_X', uuid: 'x2' },
     ]);
-    expect(readSidechainEvents(workDir, 'sess-1', 'toolu_X', 'abc123')).toEqual(byMeta);
-    expect(readSidechainEvents(workDir, 'sess-1', 'toolu_unknown')).toEqual([]);
+    expect(await readSidechainEvents(workDir, 'sess-1', 'toolu_X', 'abc123')).toEqual(byMeta);
+    expect(await readSidechainEvents(workDir, 'sess-1', 'toolu_unknown')).toEqual([]);
     expect(JSON.stringify(readSessionBackfill(workDir, 'sess-1'))).not.toContain('sidechain');
     // The agent journal route: no journal rows for it, so `history` is the sidechain.
     const a = express();
@@ -115,6 +115,55 @@ describe('the sidechain transcript (Claude)', () => {
     const res = await request(a).get('/api/terminals/t1/agents/toolu_X/journal');
     expect(res.body.items).toEqual([]);
     expect(res.body.history).toEqual(byMeta);
+  });
+
+  /** A session folder with one subagent whose files the test then replaces. */
+  function store() {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sidechain-h1-'));
+    const proj = path.join(os.homedir(), '.claude', 'projects', encodeClaudeProjectDir(workDir, 'darwin'));
+    const sub = path.join(proj, 'sess-2', 'subagents');
+    fs.mkdirSync(sub, { recursive: true });
+    fs.writeFileSync(path.join(proj, 'sess-2.jsonl'), JSON.stringify({ type: 'user', message: { role: 'user', content: 'hi' } }) + '\n');
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'sidechain-outside-'));
+    const secret = path.join(outside, 'secret.jsonl');
+    fs.writeFileSync(secret, JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'DATA FROM OUTSIDE' }] } }) + '\n');
+    fs.writeFileSync(path.join(outside, 'meta.json'), JSON.stringify({ toolUseId: 'toolu_L' }));
+    return { workDir, proj, sub, outside, secret };
+  }
+
+  it('H1: a link at the transcript or at the meta file is not followed', async () => {
+    const { workDir, sub, outside, secret } = store();
+    fs.symlinkSync(path.join(outside, 'meta.json'), path.join(sub, 'agent-l1.meta.json'));
+    fs.symlinkSync(secret, path.join(sub, 'agent-l1.jsonl'));
+    expect(await readSidechainEvents(workDir, 'sess-2', 'toolu_L')).toEqual([]);
+    expect(await readSidechainEvents(workDir, 'sess-2', 'toolu_L', 'l1')).toEqual([]);
+  });
+
+  it('H1: a linked subagents folder (or session folder) is refused', async () => {
+    const { workDir, proj, outside, secret } = store();
+    fs.rmSync(path.join(proj, 'sess-2'), { recursive: true });
+    const real = path.join(outside, 'session');
+    fs.mkdirSync(path.join(real, 'subagents'), { recursive: true });
+    fs.copyFileSync(secret, path.join(real, 'subagents', 'agent-l2.jsonl'));
+    fs.writeFileSync(path.join(real, 'subagents', 'agent-l2.meta.json'), JSON.stringify({ toolUseId: 'toolu_L' }));
+    fs.symlinkSync(real, path.join(proj, 'sess-2'));
+    expect(await readSidechainEvents(workDir, 'sess-2', 'toolu_L')).toEqual([]);
+    expect(await readSidechainEvents(workDir, 'sess-2', 'toolu_L', 'l2')).toEqual([]);
+  });
+
+  it('H1: a FIFO meta file or transcript does not block, and a file over the limit is not read', async () => {
+    const { workDir, sub } = store();
+    const { execFileSync } = await import('node:child_process');
+    execFileSync('mkfifo', [path.join(sub, 'agent-f1.meta.json')]);
+    execFileSync('mkfifo', [path.join(sub, 'agent-f2.jsonl')]);
+    const started = Date.now();
+    expect(await readSidechainEvents(workDir, 'sess-2', 'toolu_F')).toEqual([]);
+    expect(await readSidechainEvents(workDir, 'sess-2', 'toolu_F', 'f2')).toEqual([]);
+    expect(Date.now() - started).toBeLessThan(2000);
+    const { MAX_SIDECHAIN_BYTES } = await import('../../src/sessions/cc-sessions.js');
+    const line = JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'x'.repeat(1000) }] } }) + '\n';
+    fs.writeFileSync(path.join(sub, 'agent-big.jsonl'), line.repeat(Math.ceil((MAX_SIDECHAIN_BYTES + 1) / line.length)));
+    expect(await readSidechainEvents(workDir, 'sess-2', 'toolu_B', 'big')).toEqual([]);
   });
 });
 
@@ -127,7 +176,7 @@ describe('the subagent routes', () => {
   }
   const info = (id: string, state: SubagentInfo['state']): SubagentInfo => ({ id, parentId: null, harness: 'claude-code', title: id, state });
 
-  it('lists from the journal and the live session (live wins); a running one with no live session reads stopped', async () => {
+  it('lists from the journal and the live session (live wins); a running one the live session does not know reads stopped (M5)', async () => {
     const j = journal();
     j.append('t1', { kind: 'notice', payload: { type: 'system', subtype: 'subagent', id: 'A', parentId: null, harness: 'codex', title: 'A', state: 'working' } });
     j.append('t1', { kind: 'notice', payload: { type: 'system', subtype: 'subagent', id: 'B', parentId: null, harness: 'codex', title: 'B', state: 'working' } });
@@ -138,8 +187,9 @@ describe('the subagent routes', () => {
     expect(dead.body.agents.map((a: any) => [a.id, a.state])).toEqual([['A', 'stopped'], ['B', 'stopped']]);
     const manager = { listSubagents: () => [info('B', 'done'), info('C', 'working')], isAlive: () => true } as unknown as IStructuredManager;
     const live = await request(app({ journal: j, thread, manager: () => manager })).get('/api/terminals/t1/agents');
-    expect(live.body.agents.map((a: any) => [a.id, a.state])).toEqual([['A', 'working'], ['B', 'done'], ['C', 'working']]);
-    expect(live.body.running).toBe(2);
+    // A is running in the journal only: its session ended (a new session started for the next message).
+    expect(live.body.agents.map((a: any) => [a.id, a.state])).toEqual([['A', 'stopped'], ['B', 'done'], ['C', 'working']]);
+    expect(live.body.running).toBe(1);
     expect((await request(app({ journal: j, thread, manager: () => manager })).get('/api/terminals/nope/agents')).status).toBe(404);
   });
 
