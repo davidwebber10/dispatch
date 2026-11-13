@@ -70,8 +70,11 @@ export function ProviderRing({ ring, size }: { ring: ChipRing; size: number }) {
   );
 }
 
-/** The rail's ring slots (2026-11-13): one size for every account, so a moving highlight shifts nothing. */
-const RAIL_SLOT = 40;
+/**
+ * The rail's ring slots (2026-11-13): one size for every account, with room under the ring for the
+ * "This thread" label that rides in the sliding highlight. So a moving highlight shifts nothing.
+ */
+const RAIL_SLOT = 56;
 const RAIL_GAP = 4;
 const RAIL_PAD = 6;
 /** True when the device asks for less motion: the highlight then jumps instead of sliding. */
@@ -138,11 +141,14 @@ export function UsageChip({ variant, only, hideAll, current }: {
         {currentIdx >= 0 && (
           <span data-testid="usage-ring-highlight" aria-hidden
             style={{ position: 'absolute', top: RAIL_PAD, left: '50%', width: 46, height: RAIL_SLOT, marginLeft: -23, boxSizing: 'border-box', borderRadius: 'var(--radius-md)', border: '1px solid color-mix(in srgb, var(--color-accent) 55%, transparent)', background: 'color-mix(in srgb, var(--color-accent) 10%, transparent)', pointerEvents: 'none',
-              transform: `translateY(${currentIdx * (RAIL_SLOT + RAIL_GAP)}px)`, transition: reducedMotion() ? 'none' : 'transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1)' }} />
+              transform: `translateY(${currentIdx * (RAIL_SLOT + RAIL_GAP)}px)`, transition: reducedMotion() ? 'none' : 'transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1)',
+              display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 5 }}>
+            <span style={{ font: '600 7px var(--font-mono)', lineHeight: 1.15, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--color-accent)', textAlign: 'center' }}>{'This '}<br />thread</span>
+          </span>
         )}
         {rings.map((r) => (
           <span key={`${r.provider}|${r.accountId}`} data-rail-slot data-testid={isCurrent(r) ? 'usage-ring-current' : undefined}
-            style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 46, height: RAIL_SLOT, flexShrink: 0 }}>
+            style={{ position: 'relative', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', width: 46, height: RAIL_SLOT, paddingTop: 5, boxSizing: 'border-box', flexShrink: 0 }}>
             <ProviderRing ring={r} size={30} />
           </span>
         ))}

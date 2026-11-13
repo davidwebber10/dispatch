@@ -205,6 +205,14 @@ describe('rail: the open thread\'s account (2026-11-09)', () => {
     expect(new Set(slots).size).toBe(1); // nothing below shifts when the highlight moves
   });
 
+  // Owner, 2026-11-13: "we lost THIS THREAD. need that". The label rides in the sliding box.
+  it('the highlight carries the THIS THREAD label, so the label moves with it', () => {
+    useUsageLimits.setState({ summary: two() });
+    render(<UsageChip variant="rail" current={{ provider: 'claude-code', accountId: 'home' }} />);
+    expect(screen.getByTestId('usage-ring-highlight')).toHaveTextContent('This thread');
+    expect(screen.getAllByText(/This/)).toHaveLength(1);
+  });
+
   it('no open thread: no mark', () => {
     useUsageLimits.setState({ summary: two() });
     render(<UsageChip variant="rail" current={null} />);
