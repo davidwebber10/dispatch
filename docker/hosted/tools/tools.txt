@@ -9,6 +9,7 @@ qpdf | deb:qpdf | split, merge, decrypt and repair PDF files
 tesseract | deb:tesseract-ocr | OCR: read text from an image or a scanned page (English data installed)
 pandoc | deb:pandoc | convert between Markdown, HTML, .docx, .odt, .epub and more
 jq | deb:jq | read and change JSON
+curl | deb:curl | download a file over HTTPS (where the box may connect is set by the platform)
 sqlite3 | deb:sqlite3 | open and query SQLite files
 file | deb:file | name the type of a file
 rg | deb:ripgrep | search text in files

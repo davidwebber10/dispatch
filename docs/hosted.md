@@ -189,12 +189,13 @@ through `npx`); `git` (the daemon's git routes and every harness); `ripgrep` (Cl
 `procps` (`ps`, for the daemon's process list); `less` (the pager of git and the CLIs);
 `ca-certificates`; `bash` and the Debian base (`apt`, `dpkg`, `perl-base`, `tar`, `sed`, `awk`:
 part of the base system; `apt` can do nothing without root). Removed: `gcc`, `g++`, `make`, `pip`,
-`curl`, `pnpm`, `corepack`. A developer who needs a toolchain gets the developer image (below), not
+`pnpm`, `corepack`. A developer who needs a toolchain gets the developer image (below), not
 this one.
 
 **Document tools** (`docker/hosted/tools`), so an agent can read and write what a person attaches:
 `unzip`, `zip`, `7z`, `poppler-utils` (`pdftotext`, `pdfinfo`, `pdftoppm`, `pdfimages`), `qpdf`,
-`tesseract` (English), `pandoc`, `jq`, `sqlite3`, `file`, the DejaVu, Liberation and Noto core fonts,
+`tesseract` (English), `pandoc`, `jq`, `sqlite3`, `file`, `curl` (where the box may connect is the
+platform's egress control), the DejaVu, Liberation and Noto core fonts,
 and `python3` (no pip) with pandas, numpy, openpyxl, xlsxwriter, python-docx, python-pptx, pypdf,
 pdfplumber, reportlab, Pillow, matplotlib, duckdb, pyarrow, tabulate, python-dateutil, chardet,
 extract-msg, icalendar, markdown, beautifulsoup4 and lxml. The Python libraries are installed in a
@@ -233,7 +234,7 @@ with mode 1777, so a volume the platform mounts there is writable by uid 1000. T
 `docker run --read-only --security-opt no-new-privileges --cap-drop ALL` and a home volume.
 
 **The developer image** (`--target runtime-dev`, its own tag, never `latest`): the same, plus
-`build-essential`, `curl`, and the developer harness policy (a harness may skip
+`build-essential` and the developer harness policy (a harness may skip
 approvals, so CLI threads and unattended agents work as on a local install). The daemon does not start
 a business person's thread on it.
 

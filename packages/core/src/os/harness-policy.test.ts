@@ -71,7 +71,8 @@ describe('the harness policy of the image', () => {
     // python3 and unzip are there on purpose (the document tools, docker/hosted/tools); pip is not.
     expect(dockerfile).not.toMatch(/\|\s*(ba)?sh\b/);
     const commands = runtime.split('\n').filter((l) => !l.trimStart().startsWith('#')).join('\n');
-    expect(commands).not.toMatch(/build-essential|python3-pip|python3-venv|\bcurl\b|\bgcc\b|\bmake\b|imagemagick|ghostscript|libreoffice/i);
+    // curl is there on purpose (agents download files; the egress control decides where): compilers and pip are not.
+    expect(commands).not.toMatch(/build-essential|python3-pip|python3-venv|\bgcc\b|\bmake\b|imagemagick|ghostscript|libreoffice/i);
     expect(commands).toMatch(/! python3 -m pip --version/);
   });
 });

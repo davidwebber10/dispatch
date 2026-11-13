@@ -119,7 +119,7 @@ FROM ${NODE_IMAGE} AS runtime
 #   ripgrep         Claude Code's search tool
 #   procps          platform.listProcessIds() shells out to `ps`
 #   less            the pager of git and of the CLIs
-# Not here: compilers and make (build stage only), curl, pip, pnpm, corepack.
+# Not here: compilers and make (build stage only), pip, pnpm, corepack.
 # (util-linux, which has `setpriv`, is part of the base system.)
 RUN apt-get update && apt-get -y upgrade \
     && apt-get install -y --no-install-recommends git ca-certificates ripgrep procps less \
@@ -130,9 +130,10 @@ RUN apt-get update && apt-get -y upgrade \
 # One layer per group, so the size of each is visible in `docker history`. No ImageMagick and no
 # Ghostscript (their security history; Pillow and poppler cover the same files), no LibreOffice, no
 # browser, no LaTeX, no Java. The setuid sweep below covers these packages too.
-#   archives, PDF, OCR and small data CLIs
+#   archives, PDF, OCR, small data CLIs, and curl (agents download files; where the box may connect is the
+#   platform's egress control, not the absence of a client: node can already fetch)
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends unzip zip 7zip poppler-utils qpdf tesseract-ocr tesseract-ocr-eng jq sqlite3 file \
+    && apt-get install -y --no-install-recommends unzip zip 7zip poppler-utils qpdf tesseract-ocr tesseract-ocr-eng jq sqlite3 file curl ca-certificates \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 #   pandoc (document conversion)
 RUN apt-get update && apt-get install -y --no-install-recommends pandoc \
@@ -255,7 +256,7 @@ ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 # CLI threads and unattended agents work as on a local install). Never for a business person.
 FROM runtime AS runtime-dev
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential curl \
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
     && rm -rf /var/lib/apt/lists/* \
     && install -m 644 /opt/dispatch/policy/claude-managed-settings.developer.json /etc/claude-code/managed-settings.json \
     && install -m 644 /opt/dispatch/policy/codex-requirements.developer.toml /etc/codex/requirements.toml \
