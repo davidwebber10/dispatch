@@ -60,6 +60,8 @@ describe('the harness policy of the image', () => {
     expect(dockerfile).toMatch(/install -d -o root -g root -m 0755 \/run\/dispatch \/run\/dispatch\/agent \/run\/dispatch\/claude-policy/);
     expect(dockerfile).toMatch(/install -m 644 \/opt\/dispatch\/policy\/codex-requirements\.developer\.toml \/etc\/codex\/requirements\.toml/);
     expect(dockerfile).toMatch(/^FROM \$\{NODE_IMAGE\} AS runtime$/m);
+    // The runtime ships dist, not the core sources, tests or stand-in harness programs (final review N7).
+    expect(dockerfile).toMatch(/^RUN rm -rf packages\/core\/src packages\/core\/tests /m);
     expect(dockerfile).toMatch(/^ARG NODE_IMAGE=node:[\w.-]+@sha256:[0-9a-f]{64}$/m);
     expect(dockerfile).toMatch(/^ARG CLAUDE_SHA256_ARM64=[0-9a-f]{64}$/m);
     // The last USER of the runtime stage is the runtime user.

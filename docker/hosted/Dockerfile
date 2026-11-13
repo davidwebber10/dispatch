@@ -48,6 +48,10 @@ RUN NODE_ENV=development pnpm install --frozen-lockfile \
 # The harness policy files as installed: the Claude Code ones get the POLYWOOD spinner words, read from
 # the web client's word-set file (packages/core/src/os/hosted-claude-policy.ts). Fails when the set is missing.
 RUN node packages/core/dist/os/hosted-claude-policy-cli.js docker/hosted/policy /out/policy
+# The daemon runs from dist: the core sources, tests and stand-in harness programs are not shipped (the
+# proof mounts its stand-in from the repository). The web sources stay: the daemon reads the spinner word
+# set from packages/web/src/lib/spinnerWords.ts (settings/word-sets.ts).
+RUN rm -rf packages/core/src packages/core/tests packages/core/vitest.config.ts packages/core/tsconfig.test.json
 
 # ── agents: the agent CLIs, each checked against a pinned hash ──────────────────────────────────────
 FROM ${NODE_IMAGE} AS agents

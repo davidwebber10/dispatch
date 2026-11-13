@@ -10,4 +10,4 @@ esac
 # The proof's stand-in for an agent at work (and for a prompt-injected one): a script the harness
 # process starts, with the harness's own arguments and environment.
 if [ -x "$HOME/proof/on-harness-start.sh" ]; then ( "$HOME/proof/on-harness-start.sh" "$@" >/dev/null 2>&1 & ); fi
-exec node /app/packages/core/tests/structured/fake-claude.mjs "$@"
+exec node /opt/proof/fake-claude.mjs "$@"

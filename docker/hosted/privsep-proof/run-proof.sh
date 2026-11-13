@@ -16,6 +16,8 @@
 # although the text was there (seen with `docker logs`).
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# The stand-in Claude Code program comes from the repository, not from the image: the runtime image holds no tests.
+FAKE_CLAUDE_MJS="$(cd "$HERE/../../../packages/core/tests/structured" && pwd)/fake-claude.mjs"
 IMAGE=dispatch-box-privsep:latest; OLD_IMAGE=""; BOX_PORT=3972; STUB_PORT=3922; DIST=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -75,7 +77,7 @@ start_box() { # start_box <name> <image> <home volume> <state volume or ""> [ext
   local ro=""; [ "$image" = "$IMAGE" ] && ro="--read-only $PLATFORM_CAP_DROP"
   docker run -d --name "$name" --platform linux/arm64 --init --user 0 $ro -p "127.0.0.1:$BOX_PORT:3456" \
     -v "$home:/home/dispatch" ${state:+-v "$state:/var/lib/dispatch/state"} \
-    -v "$HERE/fake-claude:/opt/agents/.local/bin/claude:ro" ${DIST:+-v "$DIST:/app/packages/core/dist:ro"} \
+    -v "$HERE/fake-claude:/opt/agents/.local/bin/claude:ro" -v "$FAKE_CLAUDE_MJS:/opt/proof/fake-claude.mjs:ro" ${DIST:+-v "$DIST:/app/packages/core/dist:ro"} \
     -e DISPATCH_BOX_TOKEN="$IN" -e OS_BOX_TOKEN="$OUT" -e OS_BASE_URL="http://host.docker.internal:$STUB_PORT" \
     -e DISPATCH_OWNER_EMAIL=person@example.com -e DISPATCH_BOX_ID=proofbox -e DISPATCH_BASE_PATH="$BASE" -e DISPATCH_PROFILE=developer \
     -e AWS_CONTAINER_CREDENTIALS_RELATIVE_URI=/v2/credentials/not-real -e ECS_CONTAINER_METADATA_URI_V4=http://169.254.170.2/v4/not-real \
@@ -126,6 +128,7 @@ DOCS="$(docker exec -u 1000:1000 "$NAME" sh -c 'pdftotext -v 2>&1 | head -1; unz
 echo "$DOCS" | grep -q 'python ok' && [ "$(echo "$DOCS" | grep -c .)" -ge 10 ] && fok "the document tools run as the agent user (uid 1000)" "$(echo "$DOCS" | tr '\n' ';' | cut -c1-110)" || fbad "the document tools run as the agent user (uid 1000)" "$(echo "$DOCS" | tr '\n' ';' | cut -c1-200)"
 [ "$(inbox stat -c '%U:%G %a' /etc/dispatch/tools.json 2>/dev/null)" = "root:root 644" ] && inbox node -e 'const t=JSON.parse(require("fs").readFileSync("/etc/dispatch/tools.json","utf8"));process.exit(Array.isArray(t.tools)&&t.tools.length>20&&t.tools.every(x=>x.name&&x.version&&x.purpose)?0:1)' && fok "the tool list /etc/dispatch/tools.json: root 644, every tool has a version" || fbad "the tool list /etc/dispatch/tools.json" "$(inbox stat -c '%n %U:%G %a' /etc/dispatch/tools.json 2>&1)"
 [ -z "$(inbox find /opt/dispatch/python -perm /022 ! -type l 2>/dev/null | head -1)" ] && [ "$(inbox stat -c '%U' /opt/dispatch/python)" = root ] && fok "the Python libraries belong to root and no one else may write them" || fbad "the Python libraries belong to root and no one else may write them" "$(inbox find /opt/dispatch/python -perm /022 ! -type l | head -3 | tr '\n' ' ')"
+[ -z "$(inbox sh -c 'ls -d /app/packages/core/src /app/packages/core/tests 2>/dev/null')" ] && fok "the image holds no core sources, tests or stand-in harness programs" || fbad "the image holds no core sources, tests or stand-in harness programs" "$(inbox sh -c 'ls -d /app/packages/core/src /app/packages/core/tests 2>/dev/null' | tr '\n' ' ')"
 [ "$(docker image inspect "$IMAGE" --format '{{.Config.User}}')" = dispatch ] && fok "the image's default user is the agent user, not root" || fbad "the image's default user is the agent user" "$(docker image inspect "$IMAGE" --format '{{.Config.User}}')"
 [ "$(docker inspect "$NAME" --format '{{.HostConfig.ReadonlyRootfs}}')" = true ] && fok "the box runs with a read-only root file system" || fbad "the box runs with a read-only root file system"
 [ "$(inbox stat -c '%U:%G %a' /etc/claude-code/managed-settings.json /etc/codex/requirements.toml 2>/dev/null | sort -u)" = "root:root 644" ] && fok "both managed policy files belong to root, mode 644" || fbad "both managed policy files belong to root, mode 644" "$(inbox stat -c '%n %U:%G %a' /etc/claude-code/managed-settings.json /etc/codex/requirements.toml 2>&1 | tr '\n' ' ')"
@@ -325,7 +328,7 @@ PORT=$((BOX_PORT + 1))
 compat() { # compat <label> <extra docker args...>: start, wait for the health call
   docker rm -f "$NAME-compat" >/dev/null 2>&1
   docker run -d --name "$NAME-compat" --platform linux/arm64 --init --read-only -p "127.0.0.1:$PORT:3456" \
-    -v "$HERE/fake-claude:/opt/agents/.local/bin/claude:ro" \
+    -v "$HERE/fake-claude:/opt/agents/.local/bin/claude:ro" -v "$FAKE_CLAUDE_MJS:/opt/proof/fake-claude.mjs:ro" \
     -e DISPATCH_BOX_TOKEN="$IN" -e OS_BOX_TOKEN="$IN" -e OS_BASE_URL="http://host.docker.internal:$STUB_PORT" \
     -e DISPATCH_OWNER_EMAIL=person@example.com -e DISPATCH_BOX_ID=proofbox -e DISPATCH_BASE_PATH="$BASE" -e DISPATCH_PROFILE=developer \
     "$@" "$IMAGE" >/dev/null || return 1
