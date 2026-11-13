@@ -81,6 +81,11 @@ describe('the Codex manager on a hosted box', () => {
     expect(lines.find((l) => l.event === 'thread.fast.unreported')).toMatchObject({ level: 'info', tier: 'priority' });
   });
 
+  it('the box log names the tiers the account offers per model (codex.tiers), read before the first start', async () => {
+    await start();
+    expect(lines.find((l) => l.event === 'codex.tiers')).toMatchObject({ level: 'info', tiers: { 'gpt-6.1-sol': ['priority'] } });
+  });
+
   it('an account whose model/list offers no fast tier for the model: the tier is not asked for, and nothing is refused', async () => {
     await start({ CODEX_FAKE_NO_FAST_TIER: '1' });
     expect(logged('model/list').length).toBeGreaterThan(0);

@@ -1266,7 +1266,12 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
         cursor = typeof res?.nextCursor === 'string' && res.nextCursor ? res.nextCursor : null;
         if (!cursor) break;
       }
-      if (Object.keys(map).length) this.effortCache = { at: Date.now(), map, defaults, tiers };
+      if (Object.keys(map).length) {
+        this.effortCache = { at: Date.now(), map, defaults, tiers };
+        // The service tiers the signed-in account offers per model (they depend on the account): one line
+        // per read, so the box log answers "is Fast available here?" directly.
+        boxLog('codex.tiers', { tiers: Object.fromEntries(Object.entries(tiers).filter(([, t]) => t.length)) });
+      }
       return this.effortCache?.map ?? null;
     } catch {
       return c?.map ?? null;
