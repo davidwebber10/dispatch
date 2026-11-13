@@ -109,8 +109,12 @@ function toolInputForItem(item: any): Record<string, unknown> {
     }
     case 'mcpToolCall': return { server: item.server, tool: item.tool, arguments: item.arguments };
     case 'dynamicToolCall': return { tool: item.tool, arguments: item.arguments };
+    // Its query and action arrive only at item/completed (item/started has an empty query).
+    case 'webSearch': return { query: item.query, ...(item.action != null ? { action: item.action } : {}) };
+    case 'imageGeneration': return { ...(item.revisedPrompt != null ? { prompt: item.revisedPrompt } : {}), ...(item.inputImages != null ? { inputImages: item.inputImages } : {}) };
     default: {
-      const { id, type, ...rest } = item ?? {};
+      // The call's own fields, without what describes how it went (that is the result's).
+      const { id, type, status, result, results, error, failure, durationMs, success, contentItems, agentsStates, aggregatedOutput, exitCode, processId, savedPath, ...rest } = item ?? {};
       return rest;
     }
   }
@@ -368,12 +372,22 @@ export class CodexTranslator {
       return out;
     }
     if (NON_TOOL_ITEMS.has(item.type)) return [];
+    const started = this.itemDetails.get(item.id);
     this.itemDetails.set(item.id, item);
+    const out: TranslatedAction[] = [];
+    // Some items carry their details only at completion (webSearch: the query and the action; a
+    // fileChange's final change list): the tool_use sent at item/started showed an empty or older input.
+    // Send the call again, whole, with the same id: a view and the journal replace the input by id.
+    const input = toolInputForItem(item);
+    if (!started || JSON.stringify(toolInputForItem(started)) !== JSON.stringify(input)) {
+      out.push({ kind: 'event', event: { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: item.id, name: toolNameForItem(item), input }] } } });
+    }
     // Tool finished → emit the tool_result the reducer pairs with the tool_use above by id.
-    return [{
+    out.push({
       kind: 'event',
       event: { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: item.id, content: toolOutputForItem(item), is_error: itemIsError(item) }] } },
-    }];
+    });
+    return out;
   }
 
   private tokenUsage(params: any): TranslatedAction[] {
