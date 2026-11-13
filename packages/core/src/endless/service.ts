@@ -32,6 +32,7 @@ import { nodeName } from './tree.js';
 import { redactKeys, redactKeysDeep } from '../auth/redact-keys.js';
 import { resolveProject, overseerOf, type ProjectRef } from './projects.js';
 import type { LedgerService } from '../overseer/ledger-service.js';
+import type { McpServerSpec } from '../mcp/injection.js';
 import { DocsService } from '../docs/service.js';
 import { privsep } from '../privsep/config.js';
 import { publishToAgent, runDirFor } from '../privsep/paths.js';
@@ -74,6 +75,11 @@ export interface EndlessServiceOptions {
   manager: IStructuredManager;
   chatDir: string;
   home: string;
+  /**
+   * The servers a thread gets from Dispatch (Doppler and every integration), for a turn the user
+   * starts (owner, 2026-11-13: "all tools should be given to Chat"). Read at each such turn.
+   */
+  toolSpecs?: () => McpServerSpec[];
   summarizer?: Summarizer;
   keys?: KeyRegistry;
   limits?: ViewLimits;
@@ -96,6 +102,10 @@ export class EndlessService {
   readonly turns: TurnRunner;
   readonly mediaDir: string;
   readonly mcpConfigPath: string;
+  /** The tools file of a turn the user starts: memory + toolSpecs (see chatToolsConfig). */
+  readonly toolsMcpConfigPath: string;
+  /** The memory server's entry, set at boot (it names the daemon's port). */
+  private memoryServer: ChatMcpServer | null = null;
   /** The read-only doc resolver behind GET /doc (chat thread visibility spec, 12.5). */
   readonly docs: DocsService;
   private readonly timeZone: string;
@@ -130,6 +140,7 @@ export class EndlessService {
     // With privilege separation the chat folder is the agent's: the config the daemon writes for the
     // harness goes to the agent run dir (read-only for workloads) instead.
     this.mcpConfigPath = path.join(privsep() ? runDirFor(o.chatDir, 'chat') : o.chatDir, 'memory.mcp.json');
+    this.toolsMcpConfigPath = path.join(path.dirname(this.mcpConfigPath), 'tools.mcp.json');
     this.timeZone = o.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
     this.now = o.now ?? Date.now;
     this.docs = new DocsService(o.db, this.store, this.now);
@@ -146,6 +157,7 @@ export class EndlessService {
     this.turns = new TurnRunner({
       store: this.store, views: this.views, compactor: this.compactor, manager: o.manager,
       chatDir: o.chatDir, mcpConfigPath: this.mcpConfigPath,
+      toolsMcpConfigPath: o.toolSpecs ? () => this.writeToolsConfig() : undefined,
       systemPrompt: () => this.systemPrompt(),
       statusBlock: (project) => buildStatusBlock(collectProjects(o.db, this.store), { now: this.now(), timeZone: this.timeZone, projectId: project }),
       projectName: (id) => this.projectName(id),
@@ -182,6 +194,24 @@ export class EndlessService {
   setKeyRegistry(keys: KeyRegistry): void { this.keys = keys; }
 
   /** True after a successful start(); the routes refuse every request until then. */
+  /**
+   * Write the tools file for a turn the user starts and return its path (2026-11-13). It is written
+   * for each such turn, so an integration added, changed or turned off applies at the next turn. A
+   * failure falls back to the memory-only file: the turn still runs.
+   */
+  private writeToolsConfig(): string {
+    if (!this.memoryServer || !this.o.toolSpecs) return this.mcpConfigPath;
+    try {
+      const cfg = chatToolsConfig(this.memoryServer, this.o.toolSpecs());
+      fs.writeFileSync(this.toolsMcpConfigPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
+      fs.chmodSync(this.toolsMcpConfigPath, 0o600); // an older file keeps its mode on overwrite
+      return this.toolsMcpConfigPath;
+    } catch (err) {
+      console.warn('[endless] could not write the tools file; this turn has the memory server only:', redactKeys(String(err)));
+      return this.mcpConfigPath;
+    }
+  }
+
   get available(): boolean { return this.phase === 'ready'; }
 
   /**
@@ -196,7 +226,8 @@ export class EndlessService {
     this.views.load();
     agentMkdir(this.mediaDir);
     const memoryMcp = fileURLToPath(new URL('./memory-mcp.js', import.meta.url));
-    fs.writeFileSync(this.mcpConfigPath, JSON.stringify({ mcpServers: { memory: { command: 'node', args: [memoryMcp], env: { DISPATCH_PORT: String(port), DISPATCH_AUTH: '${DISPATCH_AUTH}' } } } }, null, 2), { mode: 0o600 });
+    this.memoryServer = { command: 'node', args: [memoryMcp], env: { DISPATCH_PORT: String(port), DISPATCH_AUTH: '${DISPATCH_AUTH}' } };
+    fs.writeFileSync(this.mcpConfigPath, JSON.stringify({ mcpServers: { memory: this.memoryServer } }, null, 2), { mode: 0o600 });
     fs.chmodSync(this.mcpConfigPath, 0o600); // an older file keeps its mode on overwrite
     publishToAgent(this.mcpConfigPath);
     const last = this.store.getState('turn_status');
@@ -613,3 +644,23 @@ export function startEndless(svc: EndlessService, port: number): boolean {
     return false;
   }
 }
+
+/** One server entry of a Claude `--mcp-config` file. */
+export interface ChatMcpServer { command: string; args: string[]; env?: Record<string, string> }
+
+/**
+ * The tools file of a Chat turn the user starts (owner, 2026-11-13: "all tools should be given to
+ * Chat"): the memory server first, then each server a thread gets from Dispatch, written the way
+ * composeInjection writes a thread's file. A spec cannot replace the memory server. A spec that reads
+ * the thread key gets a reference to the variable, never a literal (the turn's env holds Chat's key).
+ */
+export function chatToolsConfig(memory: ChatMcpServer, specs: McpServerSpec[]): { mcpServers: Record<string, ChatMcpServer> } {
+  const mcpServers: Record<string, ChatMcpServer> = { memory };
+  for (const s of specs) {
+    if (!s?.name || s.name === 'memory' || mcpServers[s.name]) continue;
+    const env = s.authEnv ? { ...(s.env ?? {}), DISPATCH_AUTH: '${DISPATCH_AUTH}' } : s.env;
+    mcpServers[s.name] = { command: s.command, args: s.args, ...(env ? { env } : {}) };
+  }
+  return { mcpServers };
+}
+

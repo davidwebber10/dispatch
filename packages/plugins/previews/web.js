@@ -294,6 +294,16 @@ export default function activate(d) {
   }
 
   // Copy: `label` is the text on the button, `aria` its name (default the label); `compact` is the icon alone.
+  // The empty view (owner, 2026-11-13: "higher quality empty view: icon and center aligned with a bit
+  // of top padding"). One look for the thread tab, the project sheet and the Inbox screen.
+  function EmptyState({ title, body, loading }) {
+    return h('div', { 'data-testid': 'inbox-empty', role: 'status', style: { display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: 6, padding: '44px 20px 28px' } },
+      h('span', { 'aria-hidden': true, style: { width: 48, height: 48, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 6, background: 'color-mix(in srgb, var(--color-text-emphasis) 6%, transparent)', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' } },
+        h(icons.tray, { size: 22 })),
+      h('div', { style: { fontSize: 14, fontWeight: 600, color: 'var(--color-text-primary)' } }, loading ? 'Loading…' : title),
+      !loading && body && h('div', { style: { maxWidth: 270, fontSize: 12.5, lineHeight: 1.5, color: 'var(--color-text-tertiary)' } }, body));
+  }
+
   function CopyButton({ text, label, aria, compact }) {
     const [state, setState] = useState('idle');
     useEffect(() => { if (state === 'idle') return; const t = setTimeout(() => setState('idle'), 1600); return () => clearTimeout(t); }, [state]);
@@ -628,7 +638,7 @@ export default function activate(d) {
       h('div', { style: { display: 'flex', flexDirection: 'column', gap: 10, paddingBottom: 6 } },
         h('div', { style: row }, h(SendSecretButton, { onClick: () => setSending(true) })),
         sending && h(SendSecret, { sessionId, onClose: () => setSending(false) }),
-        mine.length === 0 && h('div', { style: { fontSize: 13, color: 'var(--color-text-tertiary)', padding: '8px 0 14px' } }, loaded ? `Nothing here yet. Threads put commands, links, files and text in ${NAME} for you.` : 'Loading…'),
+        mine.length === 0 && h(EmptyState, { loading: !loaded, title: 'Nothing here yet', body: 'Threads in this project put commands, links, files and text here for you.' }),
         ...mine.slice(0, shown).map((p) => cardOf(p, false)),
         mine.length > shown && h('button', { type: 'button', onClick: () => setShown((n) => n + PAGE),
           style: { alignSelf: 'center', height: 34, padding: '0 16px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13, fontWeight: 500, cursor: 'pointer' } },
@@ -684,7 +694,7 @@ export default function activate(d) {
         all.length > 0 && h('div', { role: 'search' },
           h(ui.FilterBar, { query, onQueryChange: setQuery, placeholder: `Search ${MANY}`, facets,
             doneLabel: `Show ${items.length} ${items.length === 1 ? ONE : MANY}` })),
-        all.length === 0 && h('div', { style: { fontSize: 13.5, color: 'var(--color-text-tertiary)', padding: '20px 0' } }, loaded ? `Nothing yet. Ask a thread to send you a command, a link, a screenshot or a page: it lands in ${NAME}.` : 'Loading…'),
+        all.length === 0 && h(EmptyState, { loading: !loaded, title: `Your ${NAME} is empty`, body: 'Ask a thread to send you a command, a link, a screenshot or a page. It lands here.' }),
         all.length > 0 && items.length === 0 && h('div', { style: { fontSize: 13.5, color: 'var(--color-text-tertiary)', padding: '12px 0' } }, `No ${ONE} matches.`),
         ...groups.map((g) => h('section', { key: g.day, style: { display: 'flex', flexDirection: 'column', gap: 10 } },
           h('h2', { style: { margin: 0, font: '500 10.5px var(--font-mono)', letterSpacing: '1.2px', textTransform: 'uppercase', color: 'var(--color-text-tertiary)' } }, g.day),
@@ -715,14 +725,13 @@ export default function activate(d) {
     useEffect(() => { setPage({ id: terminalId, shown: PAGE }); }, [terminalId]);
     const shown = page.id === terminalId ? page.shown : PAGE;
     const visible = useMemo(() => mine.slice(0, shown), [mine, shown]);
-    const empty = (text) => h('div', { style: { fontSize: 13, color: 'var(--color-text-tertiary)', padding: '4px 2px' } }, text);
-    if (!terminalId) return h('div', { style: { padding: 12, display: 'flex', flexDirection: 'column', gap: 10 } }, empty(`Open a thread to see its ${MANY}.`));
+    if (!terminalId) return h('div', { style: { padding: 12 } }, h(EmptyState, { title: 'No thread open', body: `Open a thread to see its ${MANY}.` }));
     const thread = threads.find((t) => t.id === terminalId);
     const project = sessionId || (thread ? thread.projectId : null);
     return h('div', { style: { padding: 12, display: 'flex', flexDirection: 'column', gap: 10 } },
       project && h('div', { style: row }, h(SendSecretButton, { onClick: () => setSending(true) })),
       sending && project && h(SendSecret, { sessionId: project, terminalId, terminalLabel: thread ? thread.label : null, onClose: () => setSending(false) }),
-      mine.length === 0 && empty(loaded ? `No ${MANY} from this thread yet. A thread sends commands, links, files and text here.` : 'Loading…'),
+      mine.length === 0 && h(EmptyState, { loading: !loaded, title: `No ${MANY} from this thread yet`, body: 'When this thread sends you a command, a link, a file or a screenshot, it shows here.' }),
       ...visible.map((p) => cardOf(p, false)),
       mine.length > shown && h('button', { type: 'button', onClick: () => setPage({ id: terminalId, shown: shown + PAGE }),
         style: { alignSelf: 'center', height: 34, padding: '0 16px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13, fontWeight: 500, cursor: 'pointer' } },

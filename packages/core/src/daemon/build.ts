@@ -498,6 +498,13 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     db, broadcaster, manager: endlessManager,
     chatDir: agentDirFor(dataDir, 'chat'),
     home: os.homedir(),
+    // A turn the user starts gets the servers a thread gets from Dispatch (owner, 2026-11-13: "all
+    // tools should be given to Chat"): Doppler and every integration. Read at each such turn, after
+    // the build, so the services declared below exist by then.
+    toolSpecs: () => {
+      const sec = secretsService.getServerSpec();
+      return [...(sec ? [sec] : []), ...integrationsService.getServerSpecs(), ...osConnections.getServerSpecs()];
+    },
     limits: limitsFromEnv(env.DISPATCH_ENDLESS_LIMITS),
     openRouterKey: resolveOpenRouterKey,
     finalOutput: (id) => sessionService.finalOutput(id),

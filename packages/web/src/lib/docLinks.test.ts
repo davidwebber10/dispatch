@@ -99,3 +99,20 @@ describe('classifyLink: a relative link in a doc opened by its absolute path', (
     expect(classifyLink('../b.md', { ...ctx, from: '/Users/me/dev/app/docs/plan.md' })).toEqual(doc('/Users/me/dev/app/b.md'));
   });
 });
+
+// Owner, 2026-11-13: Chat finds a thread and links it; a tap opens that thread. The link is the
+// thread's own app address, /p/<project>/t/<thread>, written as a path or as a URL of this app.
+describe('classifyLink: a link to a thread', () => {
+  const ctx = { project: null, projects: [{ id: 'p1', folder: '/Users/me/dev/app' }] };
+  it('a /p/<project>/t/<thread> path is a thread link', () => {
+    expect(classifyLink('/p/proj-1/t/thr-9', ctx)).toEqual({ kind: 'thread', projectId: 'proj-1', threadId: 'thr-9' });
+  });
+  it('the same address on this app\'s host is a thread link', () => {
+    expect(classifyLink('http://localhost:3456/p/proj-1/t/thr-9', ctx)).toEqual({ kind: 'thread', projectId: 'proj-1', threadId: 'thr-9' });
+  });
+  it('a project address, an agent address and another site are not', () => {
+    expect(classifyLink('/p/proj-1', ctx).kind).not.toBe('thread');
+    expect(classifyLink('/p/proj-1/a/agent-2', ctx).kind).not.toBe('thread');
+    expect(classifyLink('https://example.com/p/proj-1/t/thr-9', ctx)).toEqual({ kind: 'web', href: 'https://example.com/p/proj-1/t/thr-9' });
+  });
+});
