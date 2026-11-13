@@ -7,8 +7,8 @@
 # dropped.
 #
 # It can still be STARTED as root (`user: "0"` in the task definition) for one thing:
-#   • DISPATCH_ALLOW_MODEL_GATEWAY=1 (tests and a later phase): the Claude Code policy without
-#     `forceLoginMethod` has to replace the image's file, which only root can do.
+#   • DISPATCH_ALLOW_MODEL_GATEWAY=1 (tests and a later phase): the gateway policy file replaces the
+#     image's file, and the forced-login drop-in is not written; only root can do either.
 # In that case it does the root-only step and then runs the daemon as uid 1000 with setpriv (which
 # needs the SETUID and SETGID capabilities, and a writable /etc/claude-code). Nothing else runs as root.
 #
@@ -62,12 +62,25 @@ fi
 # managed policy, so only root may ever write it: the daemon writes the business MCP allow-list there
 # when it runs as root (privilege separation). Emptied at every start. A folder (or its parent) that
 # another user could change stops the start: an agent could write its own policy there.
+#
+# The forced Claude login (`forceLoginMethod: "claudeai"`) lives in this folder too, as LOGIN_DROPIN: the
+# image bakes it in, and a root start writes it again after emptying the folder. The daemon (root) lifts
+# it only while the platform grants a company Claude model and turns the person's own login off
+# (packages/core/src/os/login-policy.ts). A start that is not root cannot write it, so it must find it.
 POLICY_DROPIN=/run/dispatch/claude-policy
+LOGIN_DROPIN="$POLICY_DROPIN/10-dispatch-login.json"
 if [ "$(id -u)" = "0" ]; then
   mkdir -p "$POLICY_DROPIN"
   chown 0:0 /run/dispatch "$POLICY_DROPIN"
   chmod 755 /run/dispatch "$POLICY_DROPIN"
   find "$POLICY_DROPIN" -mindepth 1 -delete
+  if [ "${DISPATCH_ALLOW_MODEL_GATEWAY:-}" != "1" ]; then
+    install -o 0 -g 0 -m 644 "$POLICY_DIR/claude-login-dropin.json" "$LOGIN_DROPIN"
+  fi
+elif ! grep -q '"forceLoginMethod"' "$LOGIN_DROPIN" 2>/dev/null; then
+  echo "FATAL: $LOGIN_DROPIN is missing: Claude Code would not force the person's own login. Start the" >&2
+  echo "       container as root (privilege separation), or keep the image's /run/dispatch. Refusing to start." >&2
+  exit 1
 fi
 for d in /run/dispatch "$POLICY_DROPIN"; do
   [ -e "$d" ] || continue

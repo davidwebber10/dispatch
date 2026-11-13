@@ -121,8 +121,18 @@ if start_box "$NAME" "$IMAGE" "$VH" "$VS"; then fok "the box starts and answers 
 CTX="$(api GET /api/host-context)"
 echo "$CTX" | grep -q '"privsep-v1"' && fok "the start-up self-check passed: privsep-v1 is reported" || fbad "privsep-v1 is reported" "$(docker logs "$NAME" 2>&1 | grep privsep.proof | tail -1 | cut -c1-200)"
 CAPS="$(echo "$CTX" | jget capabilities)"
-MISSING=""; for c in base-path profile os-tools-proxy headless-v1 idle-info gate-v2 privsep-v1 inbox-v1 live-tools-v1 subagents-v1 codex-signout-v1 company-claude-v1; do echo "$CAPS" | grep -q "\"$c\"" || MISSING="$MISSING $c"; done
+MISSING=""; for c in base-path profile os-tools-proxy headless-v1 idle-info gate-v2 privsep-v1 inbox-v1 live-tools-v1 subagents-v1 codex-signout-v1; do echo "$CAPS" | grep -q "\"$c\"" || MISSING="$MISSING $c"; done
 [ -z "$MISSING" ] && fok "the capability list is complete" "$CAPS" || fbad "the capability list is complete" "missing:$MISSING in $CAPS"
+# The forced Claude login is a root-owned drop-in (os/login-policy.ts): present by default, so company-claude-v1 is not reported.
+LOGIN=/etc/claude-code/managed-settings.d/10-dispatch-login.json
+! inbox grep -q '"forceLoginMethod"' /etc/claude-code/managed-settings.json && [ "$(inbox stat -L -c '%U %a' "$LOGIN" 2>/dev/null)" = "root 644" ] && inbox grep -q '"forceLoginMethod": *"claudeai"' "$LOGIN" && ! echo "$CAPS" | grep -q '"company-claude-v1"' \
+  && fok "the forced Claude login is a root-owned drop-in (644); company-claude-v1 is not reported" || fbad "the forced Claude login is a root-owned drop-in; company-claude-v1 is not reported" "$(inbox ls -la /run/dispatch/claude-policy 2>&1 | tr '\n' ' ') $CAPS"
+login_after() { # login_after <company 1|0>: the platform's answer changes; prints "<drop-in present 1|0> <capability reported 1|0>"
+  curl -s "http://127.0.0.1:$STUB_PORT/__ctl?company=$1" >/dev/null; api POST /api/os/connections/refresh >/dev/null; sleep 1
+  local d=0 c=0; inbox test -e "$LOGIN" && d=1; api GET /api/host-context | grep -q '"company-claude-v1"' && c=1; echo "$d $c"
+}
+[ "$(login_after 1)" = "0 1" ] && fok "a company-billed person: the daemon removes the login drop-in and reports company-claude-v1" || fbad "a company-billed person: the login drop-in is removed" "$(inbox ls /run/dispatch/claude-policy 2>&1 | tr '\n' ' ')"
+[ "$(login_after 0)" = "1 0" ] && [ "$(inbox stat -L -c '%U %a' "$LOGIN" 2>/dev/null)" = "root 644" ] && fok "the grant ends: the drop-in is back (root, 644) and company-claude-v1 is gone" || fbad "the grant ends: the drop-in is back" "$(inbox ls -la /run/dispatch/claude-policy 2>&1 | tr '\n' ' ')"
 docker logs "$NAME" 2>&1 | grep -q 'privilege separation is ON' && fok "the entrypoint chose the two-user layout (state volume present)" || fbad "the entrypoint chose the two-user layout"
 docker logs "$NAME" 2>&1 | grep -q 'box tokens: split' && fok "two different tokens: each has one job (split mode)" || fbad "two different tokens: split mode" "$(docker logs "$NAME" 2>&1 | grep 'box tokens' | tail -1)"
 [ "$(inbox ps -o user= -p "$(inbox pgrep -f dist/server.js | head -1)" | tr -d ' ')" = root ] && fok "the daemon runs as root (bounded capability set)" "CapBnd $(inbox sh -c 'sed -n "s/^CapBnd:[[:space:]]*//p" /proc/$(pgrep -f dist/server.js | head -1)/status')" || fbad "the daemon runs as root"
@@ -349,6 +359,7 @@ if compat -v "$VH-compat:/home/dispatch"; then
   CC="$(api GET /api/host-context | jget capabilities)"
   docker logs "$NAME-compat" 2>&1 | grep -q 'privilege separation is OFF' && ! echo "$CC" | grep -q privsep-v1 && echo "$CC" | grep -q gate-v2 && echo "$CC" | grep -q inbox-v1 && fok "it runs as one user and does not report privsep-v1" "$CC" || fbad "it runs as one user and does not report privsep-v1" "$CC"
   [ "$(docker exec "$NAME-compat" sh -c 'ps -o user= -p $(pgrep -f dist/server.js | head -1)' | tr -d ' ')" = dispatch ] && fok "its daemon runs as the agent user (no process is root)" || fbad "its daemon runs as the agent user"
+  [ "$(docker exec "$NAME-compat" stat -L -c '%U %a' /etc/claude-code/managed-settings.d/10-dispatch-login.json 2>/dev/null)" = "root 644" ] && ! echo "$CC" | grep -q company-claude-v1 && fok "one user: the image's forced-login drop-in is in place (root, 644); no company-claude-v1" || fbad "one user: the image's forced-login drop-in is in place" "$CC"
   CSID="$(api POST /api/sessions '{"name":"compat"}' | jget id)"
   CTID="$(api POST "/api/sessions/$CSID/terminals" '{"type":"claude-code","label":"chat","config":{"transport":"structured"}}' | jget id)"; sleep 2
   api POST "/api/terminals/$CTID/message" '{"content":"compat turn"}' >/dev/null; sleep 4
@@ -388,6 +399,13 @@ if compat --user 0 $PLATFORM_CAPS --security-opt seccomp=unconfined -v "$VH-comp
 else
   fbad "no seccomp filter: the box starts" "$(docker logs "$NAME-compat" 2>&1 | tail -3 | tr '\n' ' ')"
 fi
+docker rm -f "$NAME-compat" >/dev/null 2>&1
+# One user, and an empty /run/dispatch (a platform volume that hides the image's folder): the entrypoint
+# cannot write the forced-login drop-in, so it refuses to start (fail closed).
+docker run --name "$NAME-compat" --platform linux/arm64 --init --read-only --tmpfs /run/dispatch:mode=755 -v "$VH-compat:/home/dispatch" \
+  -e DISPATCH_BOX_TOKEN="$IN" -e OS_BOX_TOKEN="$OUT" -e OS_BASE_URL="http://host.docker.internal:$STUB_PORT" "$IMAGE" >/dev/null 2>&1
+docker logs "$NAME-compat" 2>&1 | grep -q '10-dispatch-login.json is missing' && [ "$(docker inspect -f '{{.State.Running}}' "$NAME-compat" 2>/dev/null)" = false ] \
+  && fok "one user, no forced-login drop-in: the box refuses to start" || fbad "one user, no forced-login drop-in: the box refuses to start" "$(docker logs "$NAME-compat" 2>&1 | tail -2 | tr '\n' ' ')"
 docker rm -f "$NAME-compat" >/dev/null 2>&1
 PORT="$BOX_PORT"
 
