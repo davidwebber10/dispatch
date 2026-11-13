@@ -6,10 +6,6 @@
 # hosted box the box itself is the sandbox (uid 1000, no_new_privs, no daemon state, egress control).
 allowed_approval_policies = ["untrusted", "on-request"]
 allowed_sandbox_modes = ["read-only", "workspace-write", "danger-full-access"]
-# No web search (owner decision 2026-11-13): Codex's web search tool is off, and a person's or an agent's
-# own config cannot turn it on (a `web_search` setting outside this set falls back to "disabled").
-# Fetching a page (curl) stays: where the box may connect is the platform's egress control.
-allowed_web_search_modes = ["disabled"]
 
 # Company systems reach a thread only through the platform's gateway. `apps` is Codex's switch for the
 # apps and connectors of the person's ChatGPT account (the `codex_apps` server); `plugins` is its

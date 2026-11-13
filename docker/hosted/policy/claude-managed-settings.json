@@ -1,10 +1,7 @@
 {
   "forceLoginMethod": "claudeai",
   "permissions": {
-    "disableBypassPermissionsMode": "disable",
-    "deny": [
-      "WebSearch"
-    ]
+    "disableBypassPermissionsMode": "disable"
   },
   "allowManagedHooksOnly": true,
   "allowManagedPermissionRulesOnly": true,

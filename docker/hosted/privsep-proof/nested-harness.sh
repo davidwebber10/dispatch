@@ -38,20 +38,6 @@ if [ -n "$REAL" ] && [ -x "$REAL" ] && [ "$(head -c 2 "$REAL" 2>/dev/null)" != '
   claude_mode "--settings with the bypass as default mode" -- --settings '{"permissions":{"defaultMode":"bypassPermissions"}}'
   claude_mode "a managed-settings path of its own, and the flag" "CLAUDE_CODE_MANAGED_SETTINGS_PATH=$WORKDIR/empty-policy.json" -- --dangerously-skip-permissions
   claude_mode "a config folder of its own, and the flag" "CLAUDE_CONFIG_DIR=$WORKDIR/own-config" -- --dangerously-skip-permissions
-  # No web search (owner decision 2026-11-13): the managed policy denies WebSearch, so the tool is not in the
-  # list the CLI offers the model, also when the agent asks for it. WebFetch stays.
-  claude_search() { # claude_search <label> [VAR=value ...] -- <flags...>
-    local label="$1"; shift
-    local envs=(); while [ "$1" != "--" ]; do envs+=("$1"); shift; done; shift
-    local out tools
-    out="$(cd "$WORKDIR" && env "${envs[@]}" timeout 40 "$REAL" "$@" -p --output-format stream-json --verbose 'say hi' </dev/null 2>&1 | head -c 20000)"
-    tools="$(printf '%s' "$out" | grep -o '"tools":\[[^]]*\]' | head -1)"
-    if [ -z "$tools" ]; then info "nested Claude Code, $label: no tool list" "$(short "$out")"
-    elif printf '%s' "$tools" | grep -q '"WebSearch"'; then bad "nested Claude Code, $label: web search is offered" "$(short "$tools")"
-    else ok "nested Claude Code, $label: no web search" "WebFetch $(printf '%s' "$tools" | grep -q '"WebFetch"' && echo kept || echo absent)"; fi
-  }
-  claude_search "plain" --
-  claude_search "--allowedTools WebSearch and an allow rule" -- --allowedTools WebSearch --settings '{"permissions":{"allow":["WebSearch"]}}'
 
   # ── The Artifact tools publish to the person's claude.ai account: off by the managed policy ──
   art="$(cd "$WORKDIR" && CLAUDE_CODE_ARTIFACT=1 timeout 40 "$REAL" --settings '{"enableArtifact":true,"disableArtifact":false}' -p --output-format stream-json --verbose 'say hi' </dev/null 2>&1 | grep -m1 '"subtype":"init"' | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log((JSON.parse(s).tools||[]).filter(t=>/^Artifact/.test(t)).join(",")||"none")}catch{console.log("?")}})')"
@@ -117,20 +103,6 @@ if command -v codex >/dev/null 2>&1 && [ -e /etc/codex/requirements.toml ]; then
   printf 'approval_policy = "never"\nsandbox_mode = "danger-full-access"\n' > "$WORKDIR/own-codex/config.toml" 2>/dev/null
   codex_mode "--dangerously-bypass-approvals-and-sandbox" -- --dangerously-bypass-approvals-and-sandbox
   codex_mode "a home of its own with a bypass config, and the flag" "CODEX_HOME=$WORKDIR/own-codex" -- --dangerously-bypass-approvals-and-sandbox
-  # No web search (owner decision 2026-11-13): requirements.toml allows only web_search "disabled", so a
-  # setting that asks for it falls back to disabled, and Codex says so.
-  codex_search() { # codex_search <label> [VAR=value ...] -- <flags...>
-    local label="$1"; shift
-    local envs=(); while [ "$1" != "--" ]; do envs+=("$1"); shift; done; shift
-    local out
-    out="$(cd "$WORKDIR" && env "${envs[@]}" timeout 40 codex "$@" exec --skip-git-repo-check 'say hi' </dev/null 2>&1 | head -c 20000)"
-    if printf '%s' "$out" | grep -q 'web_search_mode` is disallowed by requirements; falling back to required value Disabled'; then ok "nested Codex, $label: no web search" "falls back to Disabled"
-    else bad "nested Codex, $label: web search was not refused" "$(short "$out")"; fi
-  }
-  mkdir -p "$WORKDIR/search-codex" 2>/dev/null
-  printf 'web_search = "live"\n' > "$WORKDIR/search-codex/config.toml" 2>/dev/null
-  codex_search "-c web_search=live" -- -c 'web_search="live"'
-  codex_search "a home of its own with web_search = live" "CODEX_HOME=$WORKDIR/search-codex" --
 
   # The box is the sandbox: a command that Codex runs with its own sandbox off must still be held
   # by the box (uid 1000, no daemon state, no user namespace, no new privileges, no capabilities).

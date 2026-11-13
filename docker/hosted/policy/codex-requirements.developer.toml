@@ -1,8 +1,5 @@
 # Codex requirements for a DEVELOPER's hosted workspace (the developer image): approvals and the
 # sandbox are the developer's to choose, but the apps and connectors of the person's ChatGPT account
 # stay off, as on the standard image. Company systems reach a thread only through the platform.
-# No web search, as on the standard image (owner decision 2026-11-13).
-allowed_web_search_modes = ["disabled"]
-
 [features]
 apps = false

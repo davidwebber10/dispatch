@@ -220,13 +220,6 @@ sandbox is how its write, commit and push approvals are gated), so on a hosted b
 cannot run shell commands. `DISPATCH_CODEX_SANDBOX=codex` keeps Codex's own sandbox on a host where user
 namespaces work. A local install is unchanged.
 
-**No web search** (owner decision 2026-11-13, every profile). Claude Code's managed settings deny
-`WebSearch` (the tool is not offered, and no setting or flag of the person's or an agent's brings it back:
-a managed deny wins over every allow). Codex's requirements allow only `web_search = "disabled"`
-(`allowed_web_search_modes`): any other value falls back to disabled, and Codex says so. Fetching a page
-stays (Claude Code's WebFetch, `curl`): where the box may connect is the platform's egress control. The
-proof checks both harnesses, also when the agent asks for the tool.
-
 **Codex fast mode.** A Codex thread on a hosted box always asks for the fast service tier (`priority`,
 "Fast" in Codex's model list) on thread start and resume, for every model that offers it, and a Sol
 thread with no effort picked runs at `low` (as Ask does). There is no switch for the person. The task
@@ -285,7 +278,7 @@ every user, project and command-line setting, so they also hold for a harness an
 | --- | --- | --- |
 | Claude Code 2.1.322 | `/etc/claude-code/managed-settings.json` | `permissions.disableBypassPermissionsMode: "disable"`; `allowManagedHooksOnly: true`; `allowManagedPermissionRulesOnly: true`; `forceLoginMethod: "claudeai"`; `disableClaudeAiConnectors: true`; `spinnerVerbs` (the POLYWOOD set, mode `replace`, added at build from `packages/web/src/lib/spinnerWords.ts`) |
 | Claude Code 2.1.322 | `/etc/claude-code/managed-settings.d/` | a link to `/run/dispatch/claude-policy` (root, `0755`); under the business profile the daemon writes `50-dispatch-business-mcp.json` there (see "Company systems only through the platform") |
-| Codex 0.167.0 | `/etc/codex/requirements.toml` | `allowed_approval_policies = ["untrusted", "on-request"]`; `allowed_sandbox_modes = ["read-only", "workspace-write", "danger-full-access"]` (the box is the sandbox, above); `allowed_web_search_modes = ["disabled"]`; `[features] apps = false`, `plugins = false` |
+| Codex 0.167.0 | `/etc/codex/requirements.toml` | `allowed_approval_policies = ["untrusted", "on-request"]`; `allowed_sandbox_modes = ["read-only", "workspace-write", "danger-full-access"]` (the box is the sandbox, above); `[features] apps = false`, `plugins = false` |
 | OpenCode 1.19.5 | none | It has a managed config folder (`/etc/opencode`), but an environment variable moves it, and its effect on the flag that skips permissions was not measured (that needs a model). No policy is shipped for it |
 
 Measured in the image, as uid 1000 (the `permissionMode` of the session's own `init` frame; Codex's

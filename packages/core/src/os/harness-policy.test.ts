@@ -22,8 +22,7 @@ describe('the harness policy of the image', () => {
     const standard = JSON.parse(fs.readFileSync(path.join(POLICY, 'claude-managed-settings.json'), 'utf8'));
     expect(standard).toEqual({
       forceLoginMethod: 'claudeai',
-      // No web search (owner decision 2026-11-13); WebFetch stays (the egress control decides where).
-      permissions: { disableBypassPermissionsMode: 'disable', deny: ['WebSearch'] },
+      permissions: { disableBypassPermissionsMode: 'disable' },
       allowManagedHooksOnly: true,
       allowManagedPermissionRulesOnly: true,
       // The connectors of the person's own claude.ai account never load (os/hosted-mcp-policy.ts).
@@ -33,7 +32,7 @@ describe('the harness policy of the image', () => {
       disableArtifact: true,
     });
     const developer = JSON.parse(fs.readFileSync(path.join(POLICY, 'claude-managed-settings.developer.json'), 'utf8'));
-    expect(developer).toEqual({ forceLoginMethod: 'claudeai', permissions: { deny: ['WebSearch'] }, disableClaudeAiConnectors: true, enableArtifact: false, disableArtifact: true });
+    expect(developer).toEqual({ forceLoginMethod: 'claudeai', disableClaudeAiConnectors: true, enableArtifact: false, disableArtifact: true });
     // The gateway mode drops only the login method: approvals are as strict.
     const gateway = JSON.parse(fs.readFileSync(path.join(POLICY, 'claude-managed-settings.gateway.json'), 'utf8'));
     expect(gateway).toEqual({ ...standard, forceLoginMethod: undefined });
@@ -44,12 +43,10 @@ describe('the harness policy of the image', () => {
     expect(codex).toMatch(/^allowed_sandbox_modes = \["read-only", "workspace-write", "danger-full-access"\]$/m);
     const settings = codex.split('\n').filter((l) => !l.startsWith('#')).join('\n');
     expect(settings).not.toMatch(/never/);
-    // No web search, and no config of the person's or an agent's can turn it on (owner decision 2026-11-13).
-    expect(codex).toMatch(/^allowed_web_search_modes = \["disabled"\]$/m);
     // The apps and connectors of the person's ChatGPT account, and Codex's plugin marketplace: pinned off.
     expect(settings).toMatch(/^\[features\]\napps = false\nplugins = false$/m);
     const codexDev = fs.readFileSync(path.join(POLICY, 'codex-requirements.developer.toml'), 'utf8');
-    expect(codexDev.split('\n').filter((l) => l && !l.startsWith('#')).join('\n')).toBe('allowed_web_search_modes = ["disabled"]\n[features]\napps = false');
+    expect(codexDev.split('\n').filter((l) => l && !l.startsWith('#')).join('\n')).toBe('[features]\napps = false');
   });
 
   test('the image installs the policy root-owned, strips setuid bits and does not run as root by default', () => {
