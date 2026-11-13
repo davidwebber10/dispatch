@@ -56,7 +56,16 @@ trap cleanup EXIT
 cleanup_start() { docker rm -f "$NAME" "$NAME-old" "$NAME-compat" >/dev/null 2>&1; docker volume rm -f "$VH" "$VS" "$VH-legacy" "$VS-legacy" "$VH-compat" "$VS-compat" >/dev/null 2>&1; }
 cleanup_start
 
-STUB_OUTBOUND_TOKEN="$OUT" node "$HERE/os-stub.mjs" "$STUB_PORT" "$WORK/stub.log" >"$WORK/stub.out" 2>&1 &
+# How a box reaches the stand-in platform at host.docker.internal. Docker Desktop (macOS) maps that name
+# to the host's loopback by itself. A Linux host (the release workflow's runner) does not: the name is
+# added to each box (host-gateway) and the stub also listens on the bridge's gateway address, which only
+# the containers and the host can reach.
+HOST_GW=""; STUB_EXTRA_HOST=""
+if [ "$(uname -s)" = Linux ]; then
+  HOST_GW="--add-host=host.docker.internal:host-gateway"
+  STUB_EXTRA_HOST="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')"
+fi
+STUB_EXTRA_HOST="$STUB_EXTRA_HOST" STUB_OUTBOUND_TOKEN="$OUT" node "$HERE/os-stub.mjs" "$STUB_PORT" "$WORK/stub.log" >"$WORK/stub.out" 2>&1 &
 STUB_PID=$!
 sleep 1
 
@@ -75,7 +84,7 @@ start_box() { # start_box <name> <image> <home volume> <state volume or ""> [ext
   # And with the capabilities the platform's task definition leaves: it drops these seven of the
   # runtime's default set, which leaves CHOWN DAC_OVERRIDE FOWNER KILL SETGID SETUID SETPCAP.
   local ro=""; [ "$image" = "$IMAGE" ] && ro="--read-only $PLATFORM_CAP_DROP"
-  docker run -d --name "$name" --platform linux/arm64 --init --user 0 $ro -p "127.0.0.1:$BOX_PORT:3456" \
+  docker run -d --name "$name" --platform linux/arm64 --init --user 0 $ro ${HOST_GW:+"$HOST_GW"} -p "127.0.0.1:$BOX_PORT:3456" \
     -v "$home:/home/dispatch" ${state:+-v "$state:/var/lib/dispatch/state"} \
     -v "$HERE/fake-claude:/opt/agents/.local/bin/claude:ro" -v "$FAKE_CLAUDE_MJS:/opt/proof/fake-claude.mjs:ro" ${DIST:+-v "$DIST:/app/packages/core/dist:ro"} \
     -e DISPATCH_BOX_TOKEN="$IN" -e OS_BOX_TOKEN="$OUT" -e OS_BASE_URL="http://host.docker.internal:$STUB_PORT" \
@@ -327,7 +336,7 @@ docker rm -f "$NAME" >/dev/null 2>&1
 PORT=$((BOX_PORT + 1))
 compat() { # compat <label> <extra docker args...>: start, wait for the health call
   docker rm -f "$NAME-compat" >/dev/null 2>&1
-  docker run -d --name "$NAME-compat" --platform linux/arm64 --init --read-only -p "127.0.0.1:$PORT:3456" \
+  docker run -d --name "$NAME-compat" --platform linux/arm64 --init --read-only ${HOST_GW:+"$HOST_GW"} -p "127.0.0.1:$PORT:3456" \
     -v "$HERE/fake-claude:/opt/agents/.local/bin/claude:ro" -v "$FAKE_CLAUDE_MJS:/opt/proof/fake-claude.mjs:ro" \
     -e DISPATCH_BOX_TOKEN="$IN" -e OS_BOX_TOKEN="$IN" -e OS_BASE_URL="http://host.docker.internal:$STUB_PORT" \
     -e DISPATCH_OWNER_EMAIL=person@example.com -e DISPATCH_BOX_ID=proofbox -e DISPATCH_BASE_PATH="$BASE" -e DISPATCH_PROFILE=developer \
@@ -389,7 +398,7 @@ echo "################ D3. a second harness with the bypass flags, started by a 
 PORT=$((BOX_PORT + 1)); BOX="$NAME-compat"
 docker rm -f "$BOX" >/dev/null 2>&1; docker volume rm -f "$VH-compat" "$VS-compat" >/dev/null 2>&1
 # shellcheck disable=SC2086
-docker run -d --name "$BOX" --platform linux/arm64 --init --user 0 --read-only $PLATFORM_CAP_DROP -p "127.0.0.1:$PORT:3456" \
+docker run -d --name "$BOX" --platform linux/arm64 --init --user 0 --read-only $PLATFORM_CAP_DROP ${HOST_GW:+"$HOST_GW"} -p "127.0.0.1:$PORT:3456" \
   -v "$VH-compat:/home/dispatch" -v "$VS-compat:/var/lib/dispatch/state" \
   -e DISPATCH_BOX_TOKEN="$IN" -e OS_BOX_TOKEN="$OUT" -e OS_BASE_URL="http://host.docker.internal:$STUB_PORT" \
   -e DISPATCH_OWNER_EMAIL=person@example.com -e DISPATCH_BOX_ID=proofbox -e DISPATCH_BASE_PATH="$BASE" -e DISPATCH_PROFILE=developer \
