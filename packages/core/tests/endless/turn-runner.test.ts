@@ -11,7 +11,7 @@ import { FakeSummarizer, settle } from './fake-summarizer.js';
 import { FakeManager, texts } from './fake-manager.js';
 import { KeyRegistry } from '../../src/auth/principals.js';
 
-function setup(opts: { keys?: KeyRegistry; waitMs?: number; failLogOn?: string; readImage?: (file: string) => { mimeType: string; data: string } | null; onEmit?: (e: EndlessEvent) => void } = {}) {
+function setup(opts: { keys?: KeyRegistry; waitMs?: number; failLogOn?: string; readImage?: (file: string) => { mimeType: string; data: string } | null; onEmit?: (e: EndlessEvent) => void; toolsMcpConfigPath?: () => string } = {}) {
   const db = new Database(':memory:');
   initSchema(db);
   const store = new EndlessStore(db);
@@ -25,7 +25,7 @@ function setup(opts: { keys?: KeyRegistry; waitMs?: number; failLogOn?: string; 
     return appendLogged({ store, views, compactor }, input);
   };
   const runner = new TurnRunner({
-    store, views, compactor, manager: fake.asManager(), chatDir: '/chat', mcpConfigPath: '/chat/memory.mcp.json',
+    store, views, compactor, manager: fake.asManager(), chatDir: '/chat', mcpConfigPath: '/chat/memory.mcp.json', toolsMcpConfigPath: opts.toolsMcpConfigPath,
     systemPrompt: () => 'SYS', statusBlock: (p) => `<status>\nnow: X; project ${p ?? 'none'}\n</status>`,
     projectName: (id) => (id ? `name-${id}` : null), log, emit: (e) => { events.push(e); opts.onEmit?.(e); },
     readImage: opts.readImage ?? (() => ({ mimeType: 'image/png', data: 'AAAA' })), waitMs: opts.waitMs ?? 50, graceMs: 10, keys: opts.keys ? () => opts.keys : undefined,
@@ -782,3 +782,25 @@ describe('TurnRunner', () => {
     expect(ended).toBe(true);
   });
 });
+
+// Owner, 2026-11-13: "all tools should be given to Chat. why does Chat not have the Google Chat MCP tool?"
+// A turn the user starts gets the tools file (memory + Doppler + every Dispatch integration), written
+// fresh for that turn. A turn a thread report starts keeps the memory-only file (SEC-07).
+describe('the tools of a Chat turn (2026-11-13)', () => {
+  it('a user turn reads the tools file, a report turn the memory-only file', async () => {
+    let writes = 0;
+    const t = setup({ toolsMcpConfigPath: () => { writes++; return '/chat/tools.mcp.json'; } });
+    t.runner.send({ text: 'hi', project: null, media: [] });
+    await settle();
+    await finish(t);
+    const [w] = t.log({ kind: 'work', text: '[Fix] report: done', ref: 't1' });
+    t.runner.deliver({ i: w.i, kind: 'work', text: w.text, project: null });
+    await settle();
+    await finish(t);
+    const [user, rep] = t.fake.spawned.map((s) => s.opts.args);
+    expect(user[user.indexOf('--mcp-config') + 1]).toBe('/chat/tools.mcp.json');
+    expect(rep[rep.indexOf('--mcp-config') + 1]).toBe('/chat/memory.mcp.json');
+    expect(writes).toBe(1); // written for the user turn only
+  });
+});
+

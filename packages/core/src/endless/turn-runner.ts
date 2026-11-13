@@ -55,7 +55,13 @@ export interface TurnDeps {
   compactor: Compactor;
   manager: IStructuredManager;
   chatDir: string;
+  /** The memory-only server file: compactions and turns that a thread report starts (SEC-07). */
   mcpConfigPath: string;
+  /**
+   * The tools file of a turn the user starts (2026-11-13): memory, Doppler and every Dispatch
+   * integration, written fresh for the turn. Absent: the memory-only file, as before.
+   */
+  toolsMcpConfigPath?: () => string;
   systemPrompt: () => string;
   statusBlock: (project: string | null) => string;
   projectName: (id: string | null) => string | null;
@@ -270,7 +276,7 @@ export class TurnRunner {
       if (minted) keyHandle = minted.handle;
       d.manager.spawn(id, {
         command: d.command ?? 'claude',
-        args: [...(d.commandArgs ?? []), ...endlessClaudeArgs({ model: d.settings?.().model ?? TURN_MODEL, effort: d.settings?.().effort, systemPrompt: d.systemPrompt(), mcpConfigPath: d.mcpConfigPath, userTools: true, reportTurn: this.turnReduced })],
+        args: [...(d.commandArgs ?? []), ...endlessClaudeArgs({ model: d.settings?.().model ?? TURN_MODEL, effort: d.settings?.().effort, systemPrompt: d.systemPrompt(), mcpConfigPath: this.turnReduced ? d.mcpConfigPath : (d.toolsMcpConfigPath?.() ?? d.mcpConfigPath), userTools: true, reportTurn: this.turnReduced })],
         workDir: d.chatDir,
         env: minted ? { ...FIXED_CONTEXT_ENV, DISPATCH_AUTH: minted.key } : FIXED_CONTEXT_ENV,
       });
