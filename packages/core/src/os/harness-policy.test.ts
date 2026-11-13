@@ -53,6 +53,10 @@ describe('the harness policy of the image', () => {
     const dockerfile = fs.readFileSync(path.join(POLICY, '../Dockerfile'), 'utf8');
     expect(dockerfile).toMatch(/install -m 644 \/opt\/dispatch\/policy\/claude-managed-settings\.json \/etc\/claude-code\/managed-settings\.json/);
     expect(dockerfile).toMatch(/install -m 644 \/opt\/dispatch\/policy\/codex-requirements\.toml \/etc\/codex\/requirements\.toml/);
+    // Codex's system config: the hosted default model (the owner, 2026-11-13). A default, not a rule.
+    expect(dockerfile).toMatch(/install -m 644 \/opt\/dispatch\/policy\/codex-config\.toml \/etc\/codex\/config\.toml/);
+    const codexConfig = fs.readFileSync(path.join(POLICY, 'codex-config.toml'), 'utf8');
+    expect(codexConfig.split('\n').filter((l) => l && !l.startsWith('#')).join('\n')).toBe('model = "gpt-6.1-sol"');
     expect(dockerfile).toMatch(/find \/ -xdev -type f -perm \/6000 -exec chmod a-s/);
     // The policy files come from the build step that adds the spinner words, and Claude Code's drop-in
     // folder is a link to the root-owned folder the daemon writes (os/hosted-mcp-policy.ts).

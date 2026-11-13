@@ -220,6 +220,12 @@ sandbox is how its write, commit and push approvals are gated), so on a hosted b
 cannot run shell commands. `DISPATCH_CODEX_SANDBOX=codex` keeps Codex's own sandbox on a host where user
 namespaces work. A local install is unchanged.
 
+**Codex default model.** A Codex thread with no model picked runs `gpt-6.1-sol` on a hosted box (the
+owner, 2026-11-13). The daemon sends it for a Dispatch thread (`DISPATCH_CODEX_DEFAULT_MODEL` sets another;
+`off` leaves Codex's own default), and the image's `/etc/codex/config.toml` names it for a `codex` an agent
+starts itself. It is a default, not a rule: Codex's requirements have no key that pins a model, so a pick,
+a person's own `~/.codex/config.toml` or a `-c model=` flag wins.
+
 **Codex fast mode.** A Codex thread on a hosted box always asks for the fast service tier (`priority`,
 "Fast" in Codex's model list) on thread start and resume, for every model that offers it, and a Sol
 thread with no effort picked runs at `low` (as Ask does). There is no switch for the person. The task

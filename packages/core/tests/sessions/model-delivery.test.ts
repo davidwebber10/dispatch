@@ -119,3 +119,34 @@ it('F4: the hosted Sol default effort is low, another word is used only when the
     for (const [k, v] of [['OS_BASE_URL', saved.a], ['OS_BOX_TOKEN', saved.b], ['DISPATCH_CODEX_SOL_EFFORT', saved.c]] as const) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }
 });
+
+it('the owner\'s default (2026-11-13): a hosted Codex thread with no pick runs gpt-6.1-sol; a pick wins; a local install keeps Codex\'s own default', async () => {
+  const { hostedCodexDefaultModel } = await import('../../src/structured/codex-fast.js');
+  const { resolveSpawnModel } = await import('../../src/overseer/spawn-model.js');
+  const HOSTED = { OS_BASE_URL: 'https://os.example.com', OS_BOX_TOKEN: 'box-token-for-test' };
+  expect(hostedCodexDefaultModel({ ...HOSTED }, true)).toBe('gpt-6.1-sol');
+  expect(hostedCodexDefaultModel({ DISPATCH_CODEX_DEFAULT_MODEL: 'gpt-6-luna' }, true)).toBe('gpt-6-luna');
+  expect(hostedCodexDefaultModel({ DISPATCH_CODEX_DEFAULT_MODEL: 'off' }, true)).toBeUndefined();
+  expect(hostedCodexDefaultModel({}, false)).toBeUndefined();
+  expect(resolveSpawnModel({ harness: 'codex', config: {}, codexDefault: 'gpt-6.1-sol' })).toBe('gpt-6.1-sol');
+  expect(resolveSpawnModel({ harness: 'codex', config: { model: 'gpt-6.1-terra' }, codexDefault: 'gpt-6.1-sol' })).toBe('gpt-6.1-terra');
+  expect(resolveSpawnModel({ harness: 'codex', config: {}, codexDefault: 'sonnet' })).toBeUndefined();
+
+  const saved = { a: process.env.OS_BASE_URL, b: process.env.OS_BOX_TOKEN, c: process.env.DISPATCH_PROFILE };
+  // A hosted developer box (a business box also needs the standard image's strict harness policy files).
+  Object.assign(process.env, HOSTED, { DISPATCH_PROFILE: 'developer' });
+  const real = new CodexStructuredSessionManager();
+  svc.registerStructuredManager('codex', real);
+  svc.setStructuredCommandOverride({ command: process.execPath, args: [fake] });
+  const prev = process.env.CODEX_FAKE_LOG;
+  process.env.CODEX_FAKE_LOG = logPath;
+  try {
+    svc.createTerminal('s1', 'codex', 'C', false, undefined, undefined, osConfig());
+    await until(() => logged('thread/start').length > 0, 'thread/start');
+    expect(logged('thread/start')[0].params.model).toBe('gpt-6.1-sol');
+  } finally {
+    real.killAll();
+    if (prev === undefined) delete process.env.CODEX_FAKE_LOG; else process.env.CODEX_FAKE_LOG = prev;
+    for (const [k, v] of [['OS_BASE_URL', saved.a], ['OS_BOX_TOKEN', saved.b], ['DISPATCH_PROFILE', saved.c]] as const) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+});

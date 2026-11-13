@@ -58,3 +58,19 @@ export function codexDefaultEffort(
   if (OFF.test(e)) return undefined;
   return /^[a-z]+$/.test(e) ? e : undefined;
 }
+
+/** The model a hosted Codex thread runs on when nobody picked one (the owner, 2026-11-13: GPT-6.1 Sol). */
+export const HOSTED_CODEX_DEFAULT_MODEL = 'gpt-6.1-sol';
+
+/**
+ * The default model of a Codex thread on a hosted box: GPT-6.1 Sol, not Codex's own default.
+ * DISPATCH_CODEX_DEFAULT_MODEL sets another; an OFF value leaves Codex's own default. A local install: none.
+ * The image's /etc/codex/config.toml names the same model, for a `codex` an agent starts itself.
+ */
+export function hostedCodexDefaultModel(env: NodeJS.ProcessEnv = process.env, hosted: boolean = isHostedBox(env)): string | undefined {
+  if (!hosted) return undefined;
+  const raw = env.DISPATCH_CODEX_DEFAULT_MODEL;
+  const m = raw === undefined ? HOSTED_CODEX_DEFAULT_MODEL : raw.trim();
+  if (OFF.test(m)) return undefined;
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,80}$/.test(m) ? m : HOSTED_CODEX_DEFAULT_MODEL;
+}
