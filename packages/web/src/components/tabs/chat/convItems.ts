@@ -86,7 +86,13 @@ export function imagesFromContent(content: unknown, sessionId?: string): ConvIte
  * notification is what CAUSES the assistant's next action; a `/compact` echo is a useful
  * "this happened here" marker); a contentless echo is dropped (null).
  */
-export function userOrNotice(text: string, source: ConvItem['source'], uuid?: string): ConvItem | null {
+/** The daemon's mark on the echo of a SENT message (core conversation/task-notification.ts SENT_MARK). */
+export const SENT_MARK = 'dispatch_sent';
+
+export function userOrNotice(text: string, source: ConvItem['source'], uuid?: string, sent = false): ConvItem | null {
+  // A message someone SENT (the daemon marks its echo `dispatch_sent`) is the sender's words, shown as
+  // written: no text shape can turn it into a notice or nothing. Only daemon and harness input is classified.
+  if (sent) return { kind: 'user', text, ...(source ? { source } : {}), ...(uuid ? { uuid } : {}) };
   const c = classifyUserText(text);
   if (c.kind === 'drop') return null;
   if (c.kind === 'notice') return { kind: 'notice', text: c.text, ...(uuid ? { uuid } : {}) };
@@ -159,8 +165,9 @@ export function itemsFromEvent(event: unknown, sessionId: string | undefined, se
     const content = e.message.content;
     const source = e.meta?.source as ConvItem['source'] | undefined;
     const uuid = typeof e.uuid === 'string' ? e.uuid : undefined;
+    const sent = e[SENT_MARK] === true;
     if (typeof content === 'string') {
-      if (content.trim()) { const it = userOrNotice(content, source, uuid); if (it) out.push(it); }
+      if (content.trim()) { const it = userOrNotice(content, source, uuid, sent); if (it) out.push(it); }
     } else if (Array.isArray(content)) {
       for (const b of content) {
         if (!b) continue;
@@ -168,7 +175,7 @@ export function itemsFromEvent(event: unknown, sessionId: string | undefined, se
           out.push({ kind: 'tool-result', toolId: b.tool_use_id, text: flattenContent(b.content), isError: b.is_error === true, ...(uuid ? { uuid } : {}) });
           out.push(...imagesFromContent(b.content, sessionId));
         } else if (b.type === 'text' && b.text) {
-          const it = userOrNotice(b.text, source, uuid);
+          const it = userOrNotice(b.text, source, uuid, sent);
           if (it) out.push(it);
         } else if (b.type === 'image') {
           const img = imageItemFromBlock(b, sessionId);

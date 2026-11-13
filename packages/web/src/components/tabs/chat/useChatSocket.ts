@@ -3,7 +3,7 @@ import { modelFromFrame } from '../../../lib/modelName';
 import { useActiveModel } from '../../../stores/activeModel';
 import type { ConvItem, PendingPermission } from '../../../api/types';
 import { openStructuredSocket } from '../../../api/structured-socket';
-import { safeJson, flattenContent, imageItemFromBlock, imagesFromContent, userOrNotice, errorText, daemonSystemItems } from './convItems';
+import { safeJson, flattenContent, imageItemFromBlock, imagesFromContent, userOrNotice, errorText, daemonSystemItems, SENT_MARK } from './convItems';
 import { threadViewCache } from '../../../lib/threadViewCache';
 import { shownThisTurn, withSeq, type ChatHistory } from './useChatHistory';
 import type { ApiRetry, AuthRequired, CompactResult } from './useStructuredChat';
@@ -619,13 +619,15 @@ export function useChatSocket(args: {
           // synthesizes that event before the CLI's real one exists) — fine, since that item
           // is never going to collide with an older REST page anyway.
           const uuid = typeof event.uuid === 'string' ? event.uuid : undefined;
+          // A sent message (the daemon's `dispatch_sent` echo) shows as written, never classified.
+          const sent = event[SENT_MARK] === true;
           const add: ConvItem[] = [];
           if (typeof content === 'string') {
             // A plain human turn rebuilt from the transcript backfill (resume after a daemon
             // restart) stores `content` as a STRING, not an array. Handle it so the user's own
             // messages aren't dropped on reconnect — assistant turns are always array-shaped,
             // which is why only the user's bubbles went missing after a restart.
-            if (content.trim()) { const it = userOrNotice(content, source, uuid); if (it) add.push(it); }
+            if (content.trim()) { const it = userOrNotice(content, source, uuid, sent); if (it) add.push(it); }
           } else if (Array.isArray(content)) {
             for (const b of content) {
               if (b.type === 'tool_result') {
@@ -638,7 +640,7 @@ export function useChatSocket(args: {
                 add.push(...imagesFromContent(b.content, sessionIdRef.current));
               } else if (b.type === 'text' && b.text) {
                 // P0a: the backend buffers/echoes the user's own turn as a text block.
-                const it = userOrNotice(b.text, source, uuid);
+                const it = userOrNotice(b.text, source, uuid, sent);
                 if (it) add.push(it);
               } else if (b.type === 'image') {
                 // A human-attached image on the user's own turn — tag it so surfaces can

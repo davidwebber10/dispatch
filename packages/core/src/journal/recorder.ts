@@ -345,14 +345,14 @@ export class ThreadRecorder {
         else if (b.type === 'image') other += 1;
       }
     } else return;
+    // A message someone sent (the person, a peer, an automation) is the sender's words, shown as written:
+    // no classification can turn it into context, a notice or a tool result, whatever its blocks look like.
+    if (e[SENT_MARK] === true) { this.write('user', uuid, e, e); return; }
     if (results) {
       const native = uuid ?? (results === 1 && typeof firstResultId === 'string' ? `tr:${firstResultId}` : undefined);
       this.write('tool', native, e, e);
       return;
     }
-    // A message someone sent (the person, a peer, an automation) is the sender's words, shown as written:
-    // no classification can turn it into context or a notice, whatever its text looks like.
-    if (e[SENT_MARK] === true) { this.write('user', uuid, e, e); return; }
     const classes = texts.filter((t) => t.trim()).map((t) => classifyUserText(t).kind);
     const shown = classes.filter((k) => k !== 'drop' && k !== 'context');
     if (!shown.length && !other) {
