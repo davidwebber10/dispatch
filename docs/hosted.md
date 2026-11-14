@@ -425,11 +425,28 @@ A release image is built by CI, never on a laptop: `.github/workflows/hosted-ima
    seccomp filter (the host's AppArmor restriction on user namespaces is switched off so that the
    proof measures the filter). A failed check or an attack that is not stopped fails the job. The
    log is the artifact `privsep-proof-<version>`, and the summary is on the run page.
-3. Only after the proof passes, it pushes `ghcr.io/davidwebber10/dispatch-box:<version>` with
-   BuildKit provenance and an SBOM. It pulls the pushed digest and compares its layers and
-   configuration with the image that the proof ran on.
-4. It signs a build provenance attestation for that digest (`actions/attest-build-provenance`,
-   keyless, stored on this repository and in the registry), and prints the digest.
+3. It builds the same image again from the cache as an OCI layout (gzip layers) and adds a
+   lazy-loading index with `soci convert --standalone` (soci pinned by version and SHA-256). A
+   container platform that supports SOCI (for example Fargate) then starts the container before the
+   whole image is pulled. A check fails the job unless the image index holds exactly one
+   `linux/arm64` image manifest and exactly one SOCI index (`artifactType`
+   `application/vnd.amazon.soci.index.v2+json`), the image manifest names that index in
+   `com.amazon.soci.index-digest`, every layer is gzip (never zstd: lazy loading reads gzip only),
+   and the layers and the config are the proved image's. This runs on a branch run too.
+4. Only after that, on a tag, it pushes that image index to `ghcr.io/davidwebber10/dispatch-box:<version>`
+   (the only push of the tag; the published digest is the digest of the image index that holds both
+   the image and the SOCI index). It pulls the pushed digest and compares its layers and
+   configuration with the image that the proof ran on. The in-registry BuildKit provenance and SBOM
+   are no longer in the image index; the signed attestation is.
+5. It signs a build provenance attestation for that digest (`actions/attest-build-provenance`,
+   keyless, stored on this repository and in the registry), and prints the digest and the SOCI index.
+
+To check a released image by hand:
+
+```bash
+docker buildx imagetools inspect --raw ghcr.io/davidwebber10/dispatch-box@<digest> \
+  | jq '.manifests[] | {digest, artifactType, platform, annotations}'
+```
 
 It pushes only on a version tag. A manual run on a branch builds and proves the image and pushes
 nothing. It has no `pull_request` trigger, so code from a fork never runs in it, and the job does not
