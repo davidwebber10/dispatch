@@ -82,7 +82,7 @@ describe('buildDaemon', () => {
     const k = kit({ timers: true });
     expect(daemonTimers(k.daemon.services, { network: true }).map((t) => t.name)).toEqual([
       'ws-heartbeat', 'plugin-watch', 'marketplace-check', 'usage-limits', 'usage-gauge', 'box-heartbeat',
-      'pty-timing', 'update-check', 'telemetry', 'scheduler-tick', 'auto-archive', 'interim-recap',
+      'pty-timing', 'update-check', 'telemetry', 'scheduler-tick', 'process-reaper', 'auto-archive', 'interim-recap',
     ]);
   });
 

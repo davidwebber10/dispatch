@@ -1,4 +1,5 @@
 import { expandHome } from './project-dir.js';
+import { noteResumeAsked } from '../os/process-reaper.js';
 import { redactKeys } from '../auth/redact-keys.js';
 import { clientMessage } from '../http/client-message.js';
 import os from 'os';
@@ -755,6 +756,7 @@ export class ThreadSpawner {
     const session = sessionsDb.getById(this.db, terminal.session_id);
     if (!session) return false;
     const workDir = expandHome(terminal.working_dir || session.working_dir);
+    noteResumeAsked(terminalId, config); // a dormant thread's resume clock (os/process-reaper.ts); nothing otherwise
     try {
       this.spawnStructured(terminal, config, workDir);
       this.lastSpawnError.delete(terminalId);

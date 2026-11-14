@@ -170,6 +170,9 @@ export class OsConnectionsProvider {
     return { 'x-dispatch-box-token': this.boxToken, ...(this.ownerEmail ? { 'x-dispatch-owner': this.ownerEmail } : {}) };
   }
 
+  /** OS's own address (the box calls it with `boxHeaders`), or null when this box is not hosted. Never handed to a thread. */
+  osBaseUrl(): string | null { return this.enabled ? this.baseUrl ?? null : null; }
+
   snapshot(): OsConnectionsState { return { ...this.state }; }
 
   publicSnapshot(): OsConnectionsPublic {

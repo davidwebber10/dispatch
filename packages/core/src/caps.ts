@@ -80,3 +80,19 @@ export const wsBufferGraceMs = (): number => fromEnv('DISPATCH_WS_BUFFER_GRACE_M
  * fill the log. DISPATCH_MAX_CRASH_LOGS_PER_MINUTE (default 20; 0 = log every one).
  */
 export const maxCrashLogsPerMinute = (): number => fromEnv('DISPATCH_MAX_CRASH_LOGS_PER_MINUTE', 20);
+
+/**
+ * One company-data export that the daemon saves into a thread's workspace (os/export-download.ts).
+ * DISPATCH_MAX_EXPORT_BYTES (default 256 MiB). A larger export is not saved; the thread keeps the sample rows.
+ */
+export const maxExportBytes = (): number => fromEnv('DISPATCH_MAX_EXPORT_BYTES', 256 * MiB) || 256 * MiB;
+
+/**
+ * Idle thread processes (os/process-reaper.ts). Both are OFF unless the host sets them: a local install
+ * never stops a thread's process by itself.
+ *   DISPATCH_IDLE_PROCESS_MINUTES  minutes of idle time before a thread's process is stopped (unset or 0: off).
+ *   DISPATCH_MAX_LIVE_PROCESSES    live thread processes on this host before the least recently used idle
+ *                                  one is stopped (unset or 0: off).
+ */
+export const idleProcessMinutes = (): number => fromEnv('DISPATCH_IDLE_PROCESS_MINUTES', 0);
+export const maxLiveProcesses = (): number => Math.floor(fromEnv('DISPATCH_MAX_LIVE_PROCESSES', 0));
