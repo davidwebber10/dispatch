@@ -238,6 +238,42 @@ jobs:
           echo "soci=$SOCI" >> "$GITHUB_OUTPUT"
           echo "image index $DIGEST, image manifest $IMG, SOCI index $SOCI"
 
+      # skopeo 1.13 (the Ubuntu 24.04 package) cannot copy this index with --preserve-digests: it asks
+      # to convert the OCI index and then refuses, so v4.8.1 never published. 1.15 and later copy it
+      # byte for byte. The image is pinned by digest, as soci is pinned by SHA-256.
+      - name: Install skopeo (pinned by digest)
+        env:
+          SKOPEO_IMAGE: quay.io/skopeo/stable:v1.18.0@sha256:c4c8a9d6fc95e331fa92fc31de3f6c9b5fe4761c82f0acb99669eef067fb7c33
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin" "$HOME/.docker"
+          [ -f "$HOME/.docker/config.json" ] || echo '{}' > "$HOME/.docker/config.json"
+          cat > "$RUNNER_TEMP/bin/skopeo" <<EOF
+          #!/usr/bin/env bash
+          exec docker run --rm --network host -e REGISTRY_AUTH_FILE=/auth/config.json \\
+            -v "\$HOME/.docker:/auth:ro" -v "$RUNNER_TEMP/oci:/oci:ro" $SKOPEO_IMAGE "\$@"
+          EOF
+          chmod +x "$RUNNER_TEMP/bin/skopeo"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bin/skopeo" --version
+
+      # Every run proves the push keeps the digest, on a throwaway local registry: only a tag run pushes
+      # to GHCR, so without this a push failure is first seen on a release.
+      - name: Prove the push keeps the digest
+        env:
+          DIGEST: ${{ steps.soci.outputs.digest }}
+        run: |
+          set -euo pipefail
+          docker run -d --name proof-registry -p 127.0.0.1:5000:5000 \
+            registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373 >/dev/null
+          trap 'docker rm -f proof-registry >/dev/null' EXIT
+          for _ in $(seq 30); do curl -fs http://127.0.0.1:5000/v2/ >/dev/null && break; sleep 1; done
+          skopeo copy --all --preserve-digests --dest-tls-verify=false \
+            oci-archive:/oci/soci.tar docker://127.0.0.1:5000/proof:candidate
+          pushed="sha256:$(skopeo inspect --raw --tls-verify=false docker://127.0.0.1:5000/proof:candidate | sha256sum | cut -d' ' -f1)"
+          [ "$pushed" = "$DIGEST" ] || { echo "::error::the copy changed the digest: $pushed, not $DIGEST"; exit 1; }
+          echo "the copy keeps $DIGEST"
+
       - name: Log in to GHCR
         if: steps.meta.outputs.push == 'true'
         uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
@@ -255,11 +291,8 @@ jobs:
           DIGEST: ${{ steps.soci.outputs.digest }}
         run: |
           set -euo pipefail
-          command -v skopeo >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq skopeo; }
-          skopeo --version
-          skopeo copy --all --preserve-digests --authfile "$HOME/.docker/config.json" \
-            "oci-archive:$RUNNER_TEMP/oci/soci.tar" "docker://$IMAGE:$VERSION"
-          pushed="sha256:$(skopeo inspect --raw --authfile "$HOME/.docker/config.json" "docker://$IMAGE:$VERSION" | sha256sum | cut -d' ' -f1)"
+          skopeo copy --all --preserve-digests oci-archive:/oci/soci.tar "docker://$IMAGE:$VERSION"
+          pushed="sha256:$(skopeo inspect --raw "docker://$IMAGE:$VERSION" | sha256sum | cut -d' ' -f1)"
           [ "$pushed" = "$DIGEST" ] || { echo "::error::the registry holds $pushed for the tag, not $DIGEST"; exit 1; }
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
