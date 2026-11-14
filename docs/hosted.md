@@ -19,6 +19,9 @@ below turns it on.
 | `DISPATCH_PROFILE` | provisioner | First profile. OS's `profile` in `/api/dispatch/connections` wins, live. |
 | `DISPATCH_CLAUDE_LOGIN` | optional | `cli`: the clean Claude login on a local install too; `token`: keep setup-token even when hosted. |
 | `DISPATCH_RESUME_CHATS` | optional | `1`: resume ordinary chat threads after a restart on a local install; `0`: off when hosted. |
+| `DISPATCH_IDLE_PROCESS_MINUTES` | provisioner | Minutes of idle time before a thread's process is stopped (the thread goes dormant; the next message resumes it). Unset or `0`: off, as on every local install. See "Idle thread processes". |
+| `DISPATCH_MAX_LIVE_PROCESSES` | provisioner | Live thread processes on the host before the least recently used idle one is stopped. Unset or `0`: off. About `floor((memory MB - 1024) / 200)`: `12` for 4 GB. |
+| `DISPATCH_MAX_EXPORT_BYTES` | optional | Largest data export the box saves into a thread's workspace (default 256 MiB). See "Data exports". |
 | `DISPATCH_ALLOW_MODEL_GATEWAY` | optional (image) | `1`: `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_CUSTOM_HEADERS` and model variables pass through, and the forced-login drop-in is not written. Tests and a later phase only. |
 
 Thread setting: `config.approvals` = `auto` | `ask` | `smart` (default `smart` for a plain chat thread
@@ -140,6 +143,41 @@ servers are fixed at thread start, so it reaches new threads only. For Codex, a 
 the app-server unloaded it (`thread/unsubscribe`, then `thread/resume` after
 `thread_unload_delay_secs`) does load the new tools with its history (measured); Dispatch does not do
 that by itself yet.
+
+## Idle thread processes
+
+Each open thread keeps a CLI process (about 140 MB resident). On a small host the processes, not the
+disk, run the memory out. `packages/core/src/os/process-reaper.ts` stops the ones nobody uses, and only
+when the host sets `DISPATCH_IDLE_PROCESS_MINUTES` or `DISPATCH_MAX_LIVE_PROCESSES`; a local install sets
+neither and nothing changes there.
+
+- **Idle stop.** A thread whose process has had no message, frame or answer for the idle time, and that
+  has no open turn, pending question or approval, blocked action, running subagent, and is not a role
+  run, is stopped by the normal thread stop. The thread is then dormant (`processDormantAt` in its config).
+- **Live cap.** A process start that would pass `DISPATCH_MAX_LIVE_PROCESSES` first stops the least
+  recently used idle process. A busy process is never stopped: when all are busy the start goes ahead
+  and the box logs `live_cap_exceeded`. Codex threads share one app-server and are not counted.
+- **Nothing visible.** A dormant thread keeps its status, an open chat gets no "Process exited" line,
+  and opening or scrolling it reads the journal only: it does not start the process. A restart keeps it dormant.
+- **Resume.** A message, an approval answer, a schedule or a coordinator notice resumes it by the path a
+  thread takes after a daemon restart (`ensureStructuredAlive`: `-r <session>` and the transcript
+  backfill), then delivers the input. Measured on a laptop with Claude Code 2.1.325, message to first
+  CLI frame: about 270 ms for a small session, about 330 ms for a 22 MB transcript (about 840 ms when the
+  transcript is not in the file cache).
+- **Log lines.** `thread.process_stopped` (`reason`: `idle` | `lru`), `thread.process_resumed`
+  (`startMs`), `live_cap_exceeded`, and `host.live_processes` (`count`, `rssMb`) when the count changes
+  and every 5 minutes.
+
+## Data exports
+
+A company tool can answer with a data export: `result.structuredContent.os === "export/v1"`, with
+`download: { path: "/api/dispatch/exports/<id>", auth: "box-token" }`. The tools route
+(`packages/core/src/os/tools-proxy.ts`, `os/export-download.ts`) then downloads the file with the box's
+own headers (the thread never sees them), only from that route and only with `box-token`, streams it with
+a size cap (`DISPATCH_MAX_EXPORT_BYTES`), and saves it as the agent user to
+`<thread workspace>/exports/<name>` (`[a-z0-9-_.]`, `-2`, `-3` when the name exists). It adds one text
+item to the result: "Saved to exports/<name> (<rows> rows; columns: …). Read it with code; do not paste
+it into the reply." A failed download leaves the result as it was, plus one short note.
 
 ## Company models (capability `company-claude-v1`)
 
@@ -387,11 +425,28 @@ A release image is built by CI, never on a laptop: `.github/workflows/hosted-ima
    seccomp filter (the host's AppArmor restriction on user namespaces is switched off so that the
    proof measures the filter). A failed check or an attack that is not stopped fails the job. The
    log is the artifact `privsep-proof-<version>`, and the summary is on the run page.
-3. Only after the proof passes, it pushes `ghcr.io/davidwebber10/dispatch-box:<version>` with
-   BuildKit provenance and an SBOM. It pulls the pushed digest and compares its layers and
-   configuration with the image that the proof ran on.
-4. It signs a build provenance attestation for that digest (`actions/attest-build-provenance`,
-   keyless, stored on this repository and in the registry), and prints the digest.
+3. It builds the same image again from the cache as an OCI layout (gzip layers) and adds a
+   lazy-loading index with `soci convert --standalone` (soci pinned by version and SHA-256). A
+   container platform that supports SOCI (for example Fargate) then starts the container before the
+   whole image is pulled. A check fails the job unless the image index holds exactly one
+   `linux/arm64` image manifest and exactly one SOCI index (`artifactType`
+   `application/vnd.amazon.soci.index.v2+json`), the image manifest names that index in
+   `com.amazon.soci.index-digest`, every layer is gzip (never zstd: lazy loading reads gzip only),
+   and the layers and the config are the proved image's. This runs on a branch run too.
+4. Only after that, on a tag, it pushes that image index to `ghcr.io/davidwebber10/dispatch-box:<version>`
+   (the only push of the tag; the published digest is the digest of the image index that holds both
+   the image and the SOCI index). It pulls the pushed digest and compares its layers and
+   configuration with the image that the proof ran on. The in-registry BuildKit provenance and SBOM
+   are no longer in the image index; the signed attestation is.
+5. It signs a build provenance attestation for that digest (`actions/attest-build-provenance`,
+   keyless, stored on this repository and in the registry), and prints the digest and the SOCI index.
+
+To check a released image by hand:
+
+```bash
+docker buildx imagetools inspect --raw ghcr.io/davidwebber10/dispatch-box@<digest> \
+  | jq '.manifests[] | {digest, artifactType, platform, annotations}'
+```
 
 It pushes only on a version tag. A manual run on a branch builds and proves the image and pushes
 nothing. It has no `pull_request` trigger, so code from a fork never runs in it, and the job does not

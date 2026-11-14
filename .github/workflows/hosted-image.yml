@@ -5,9 +5,12 @@
 #      is built from the pinned bases and locks alone.
 #   2. Run the privilege-separation proof (docker/hosted/privsep-proof/run-proof.sh) against THAT
 #      image. Any failed check or any attack that is not stopped fails the job; the log is an artifact.
-#   3. Only then push to ghcr.io/<owner>/dispatch-box:<version>, with BuildKit provenance and SBOM,
-#      and sign a provenance attestation for the pushed digest (actions/attest-build-provenance).
-#      The push step checks that the pushed image is the image that was proved (same config digest).
+#   3. Add a lazy-loading index (SOCI, index manifest v2; soci pinned by SHA-256) to the same image as
+#      an OCI layout, and check it: one linux/arm64 image manifest, one SOCI index named by the image
+#      manifest, every layer gzip, layers and config unchanged and equal to the proved image's.
+#   4. Only then push that image index to ghcr.io/<owner>/dispatch-box:<version> (one push, the tag is
+#      never moved), check that the pushed image is the image that was proved (same layers and config),
+#      and sign a provenance attestation for the image index digest (actions/attest-build-provenance).
 #
 # A push happens only on a version tag: the tag push itself, or a manual run on a tag ref with
 # `push` ticked. A manual run on a branch builds and proves, and pushes nothing.
@@ -145,6 +148,96 @@ jobs:
           path: ${{ runner.temp }}/proof/
           if-no-files-found: warn
 
+      # The lazy-loading index (SOCI, index manifest v2), so a container platform that supports it (for
+      # example Fargate) starts the container before the whole image is pulled. Runs on every run, so a
+      # branch run proves the conversion too; only a tag run pushes.
+      #
+      #   1. The same build again, from the builder's cache of the proved build, as an OCI layout with
+      #      gzip layers (the format soci reads in standalone mode; no containerd store is needed).
+      #   2. `soci convert --standalone` adds the SOCI index next to the image manifest. It changes
+      #      the image manifest (one annotation) and the image index; never a layer or the config.
+      #   3. The check below fails the job unless the result is exactly what the platform needs.
+      # The in-registry BuildKit provenance and SBOM are not in this image index: the signed
+      # attestation below is what a consumer verifies.
+      - name: Build the OCI layout of the proved image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/hosted/Dockerfile
+          target: runtime
+          platforms: linux/arm64
+          push: false
+          provenance: false
+          sbom: false
+          outputs: type=oci,dest=${{ runner.temp }}/oci/image.tar,compression=gzip,force-compression=false
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+
+      - name: Install soci (pinned, checked by SHA-256)
+        env:
+          SOCI_VERSION: 0.16.1
+          SOCI_SHA256: 8cea5bd515c5beda5d9e9ba3ddaadcf3e2a5fcd11ea3492630cbd91da68db8a3
+        run: |
+          set -euo pipefail
+          f="soci-snapshotter-${SOCI_VERSION}-linux-arm64-static.tar.gz"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$f" "https://github.com/awslabs/soci-snapshotter/releases/download/v${SOCI_VERSION}/$f"
+          echo "$SOCI_SHA256  $RUNNER_TEMP/$f" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/soci"
+          tar -xzf "$RUNNER_TEMP/$f" -C "$RUNNER_TEMP/soci" soci
+          "$RUNNER_TEMP/soci/soci" --version
+
+      - name: Add the lazy-loading index
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/soci/soci" convert --standalone --format oci-archive --platform linux/arm64 \
+            "$RUNNER_TEMP/oci/image.tar" "$RUNNER_TEMP/oci/soci.tar"
+          mkdir -p "$RUNNER_TEMP/oci/plain" "$RUNNER_TEMP/oci/soci"
+          tar -xf "$RUNNER_TEMP/oci/image.tar" -C "$RUNNER_TEMP/oci/plain"
+          tar -xf "$RUNNER_TEMP/oci/soci.tar" -C "$RUNNER_TEMP/oci/soci"
+
+      - name: Check the lazy-loading index
+        id: soci
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/oci"
+          blob() { cat "$1/blobs/sha256/${2#sha256:}"; }
+          [ "$(jq '.manifests | length' soci/index.json)" = 1 ] || { echo "::error::the layout must hold one image index"; exit 1; }
+          DIGEST="$(jq -r '.manifests[0].digest' soci/index.json)"
+          blob soci "$DIGEST" > index.json
+          jq . index.json
+          test "$(jq -r .mediaType index.json)" = application/vnd.oci.image.index.v1+json
+          test "$(jq '[.manifests[] | select((.artifactType // "") == "" and .platform.os == "linux" and .platform.architecture == "arm64")] | length' index.json)" = 1 \
+            || { echo "::error::the index must hold exactly one linux/arm64 image manifest"; exit 1; }
+          test "$(jq '[.manifests[] | select(.artifactType == "application/vnd.amazon.soci.index.v2+json")] | length' index.json)" = 1 \
+            || { echo "::error::the index must hold exactly one SOCI index (manifest v2)"; exit 1; }
+          IMG="$(jq -r '[.manifests[] | select((.artifactType // "") == "" and .platform.architecture == "arm64")][0].digest' index.json)"
+          SOCI="$(jq -r '.manifests[] | select(.artifactType == "application/vnd.amazon.soci.index.v2+json") | .digest' index.json)"
+          blob soci "$IMG" > image.json
+          test "$(jq -r '.annotations["com.amazon.soci.index-digest"]' image.json)" = "$SOCI" \
+            || { echo "::error::the image manifest does not name the SOCI index"; exit 1; }
+          test "$(jq '[.layers[].mediaType | select(test("zstd"))] | length' image.json)" = 0 \
+            || { echo "::error::a layer is zstd; the platform lazy loads gzip only"; exit 1; }
+          test "$(jq '[.layers[].mediaType | select(test("gzip") | not)] | length' image.json)" = 0 \
+            || { echo "::error::every layer must be gzip"; exit 1; }
+          # The conversion changes no layer and not the config: the same as the OCI build before it.
+          PLAIN="$(jq -r '.manifests[0].digest' plain/index.json)"
+          blob plain "$PLAIN" > plain-image.json
+          if [ "$(jq -r .mediaType plain-image.json)" = application/vnd.oci.image.index.v1+json ]; then
+            PLAIN="$(jq -r '[.manifests[] | select(.platform.architecture == "arm64")][0].digest' plain-image.json)"
+            blob plain "$PLAIN" > plain-image.json
+          fi
+          test "$(jq -c '[.config.digest, [.layers[].digest]]' image.json)" = "$(jq -c '[.config.digest, [.layers[].digest]]' plain-image.json)" \
+            || { echo "::error::the conversion changed a layer or the config"; exit 1; }
+          # The config of the OCI build is the config of the proved image (same layers, same runtime config).
+          proved="$(docker image inspect dispatch-box:candidate --format '{{json .RootFS.Layers}}')"
+          built="$(blob soci "$(jq -r .config.digest image.json)" | jq -c .rootfs.diff_ids)"
+          [ "$proved" = "$built" ] || { echo "::error::the OCI build has other layers than the proved image"; exit 1; }
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "soci=$SOCI" >> "$GITHUB_OUTPUT"
+          echo "image index $DIGEST, image manifest $IMG, SOCI index $SOCI"
+
       - name: Log in to GHCR
         if: steps.meta.outputs.push == 'true'
         uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
@@ -153,25 +246,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # The same build again, now pushed with provenance and SBOM. Every step comes from the builder's
-      # cache of the build above, so the image is the one that was proved; the next step checks that.
+      # The only push of the version tag: the checked layout, byte for byte (the digest does not change).
       - name: Push the proved image
         id: push
         if: steps.meta.outputs.push == 'true'
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: docker/hosted/Dockerfile
-          target: runtime
-          platforms: linux/arm64
-          push: true
-          provenance: mode=max
-          sbom: true
-          tags: ${{ env.IMAGE }}:${{ steps.meta.outputs.version }}
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          DIGEST: ${{ steps.soci.outputs.digest }}
+        run: |
+          set -euo pipefail
+          command -v skopeo >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq skopeo; }
+          skopeo --version
+          skopeo copy --all --preserve-digests --authfile "$HOME/.docker/config.json" \
+            "oci-archive:$RUNNER_TEMP/oci/soci.tar" "docker://$IMAGE:$VERSION"
+          pushed="sha256:$(skopeo inspect --raw --authfile "$HOME/.docker/config.json" "docker://$IMAGE:$VERSION" | sha256sum | cut -d' ' -f1)"
+          [ "$pushed" = "$DIGEST" ] || { echo "::error::the registry holds $pushed for the tag, not $DIGEST"; exit 1; }
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
       # Store-agnostic: pull the pushed digest and compare its layers (uncompressed digests) and its
       # runtime configuration with the image the proof ran on.
@@ -202,12 +292,15 @@ jobs:
         env:
           VERSION: ${{ steps.meta.outputs.version }}
           DIGEST: ${{ steps.push.outputs.digest }}
+          SOCI: ${{ steps.soci.outputs.soci }}
         run: |
           echo "image   $IMAGE:$VERSION"
           echo "digest  $DIGEST"
+          echo "lazy-loading index  $SOCI"
           {
             echo '### Released image'
             echo "- image: \`$IMAGE:$VERSION\`"
             echo "- digest: \`$DIGEST\`"
+            echo "- lazy-loading index: \`$SOCI\`"
             echo "- verify: \`gh attestation verify oci://$IMAGE@$DIGEST --repo $GITHUB_REPOSITORY --signer-workflow $GITHUB_REPOSITORY/.github/workflows/hosted-image.yml --source-ref $GITHUB_REF\`"
           } >> "$GITHUB_STEP_SUMMARY"

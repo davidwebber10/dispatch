@@ -72,6 +72,8 @@ export interface TerminalConfig {
   interruptedAt?: string;
   /** Why the thread is dormant ('scheduled' status). */
   scheduledWake?: string;
+  /** The host stopped the idle process (os/process-reaper.ts); the next message starts it again. ISO time of the stop. */
+  processDormantAt?: string;
   /** Claude no longer has the conversation behind the stored session id. */
   lostConversation?: { externalId: string; at: string };
   totalTokens?: number;
