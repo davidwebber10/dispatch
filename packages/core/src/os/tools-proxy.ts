@@ -37,6 +37,7 @@ import { keyRoute, ownerOnly, ownerOnlyStrict, policyRouter, type Rule } from '.
 import { principalOf, scopeOf } from '../auth/request-principal.js';
 import { isLoopbackAddress } from '../files/reveal.js';
 import type { OsConnectionsProvider } from '../integrations/os-provider.js';
+import { withSavedExport, exportOf } from './export-download.js';
 import { OS_SELF_SYSTEM, gatewayInfo, instructionsHome, isSystemId, localToolName, osServerSpecs, realToolName, renameTool, rewriteInstructions, serverNameFor, setGatewayInfo, toolSystem } from './os-servers.js';
 
 export interface OsToolsProxyDeps {
@@ -49,6 +50,13 @@ export interface OsToolsProxyDeps {
   systemsFor?: (terminalId: string) => string[] | null;
   /** OS's tool list (which servers exist, and tools/list while OS is away). */
   catalog?: OsToolCatalog;
+  /**
+   * The thread's workspace (its working folder). An export result (`export/v1`) is saved below it, in
+   * `exports/` (os/export-download.ts). Absent: an export result gets the "could not be saved" note.
+   */
+  workspaceFor?: (terminalId: string) => string | null;
+  /** A private folder of the daemon for an export's temporary file (default: the OS temp folder). */
+  exportScratchDir?: string;
 }
 
 /** The gateway's one tool of a system the person has not connected yet (`<system>_connect`, thread name `connect`). */
@@ -322,6 +330,18 @@ export function createOsToolsRouter(deps: OsToolsProxyDeps): Router {
           if (a.result && Array.isArray(a.result.content)) {
             return { ...a, result: { ...a.result, content: [...a.result.content, { type: 'text', text: connectFollowUp(ctx.system, liveOf(ctx)) }] } };
           }
+        }
+        // A data export: the daemon saves the file into the thread's workspace with the box's own
+        // credentials (the thread never sees them) and tells the agent where it is.
+        if (a && exportOf(a.result)) {
+          let workspace: string | null = null;
+          try { workspace = deps.workspaceFor?.(ctx.terminalId) ?? null; } catch { workspace = null; }
+          return withSavedExport({
+            osBaseUrl: () => deps.provider.osBaseUrl(),
+            boxHeaders: () => deps.provider.boxHeaders(),
+            fetchImpl: deps.fetchImpl,
+            scratchDir: deps.exportScratchDir,
+          }, a, workspace, { 'x-dispatch-thread-id': ctx.terminalId });
         }
         if (a) return a;
         return errorResult(id, r.status === 404 ? 'not_permitted' : 'tool_failed', (r.body as Json | null)?.message ?? `Company tools failed (HTTP ${r.status}).`);

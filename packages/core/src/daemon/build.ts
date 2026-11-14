@@ -19,6 +19,8 @@ import express from 'express';
 import type Database from 'better-sqlite3';
 import * as pendingQuestionsDb from '../db/pending-questions.js';
 import * as terminalsDb from '../db/terminals.js';
+import * as sessionsDb from '../db/sessions.js';
+import { expandHome } from '../sessions/project-dir.js';
 import * as appState from '../db/app-state.js';
 import * as usageDb from '../db/usage.js';
 import type { SessionService } from '../sessions/service.js';
@@ -55,6 +57,7 @@ import { createOsToolsRouter, OsToolCatalog, osSystemServerSpecs, systemsForSpaw
 import { ClaudeCliLogin, planOf } from '../auth/claude-cli-login.js';
 import { useCleanClaudeLogin, isHostedBox } from '../os/hosted-mode.js';
 import { boxLog } from '../os/box-log.js';
+import { createProcessReaper, type ProcessReaper } from '../os/process-reaper.js';
 import { wireStopOnAuthFailure } from '../os/auth-stop.js';
 import { createApprovalsRouter } from '../os/approvals-routes.js';
 import { createContinuityRouter } from '../os/continuity.js';
@@ -207,6 +210,8 @@ export interface DaemonServices {
   terminalMonitor: TerminalMonitor;
   threadAutoNamer: ThreadAutoNamer;
   stallWatchdog: StallWatchdog;
+  /** Stops idle thread processes on a host that asks for it (os/process-reaper.ts). Null on every local install. */
+  processReaper: ProcessReaper | null;
   // Agents and roles
   agentService: AgentService;
   rolesService: RolesService;
@@ -485,6 +490,15 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     });
   }
   const journalWiring = wireJournal(db, harnesses.managers.values()); // W3-D: the message journal
+  // Idle thread processes (os/process-reaper.ts): only when the host sets DISPATCH_IDLE_PROCESS_MINUTES or
+  // DISPATCH_MAX_LIVE_PROCESSES. A local install sets neither: no reaper, no hook, nothing changes.
+  const processReaper = createProcessReaper({
+    db, managers: harnesses.managers,
+    stop: (id) => sessionService.stopTerminal(id),
+    log: (event, fields, level) => { if (isHostedBox(env)) boxLog(event, fields, level); else console.log(`[reaper] ${event} ${JSON.stringify(fields)}`); },
+    ...(opts.clock ? { now: opts.clock } : {}),
+  });
+  processReaper?.attach();
   wireRestoredQuestions(db, sessionService, harnesses.managers.values(), statusService); // a pending question survives a restart (W2-C)
   agentService.setLifecycleService(statusService);
   statusService.onHarnessCommitted((event) => { if (event.type === 'process.exited') rolesService.handleTerminalExit(event.terminalId); });
@@ -716,6 +730,14 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
       onUnreachable: (terminalId, message) => {
         sessionService.structuredManagerForTerminal(terminalId)?.postEvent?.(terminalId, { type: 'system', subtype: 'dispatch_notice', level: 'warning', message });
       },
+      // An export result is saved into the thread's working folder (os/export-download.ts), the folder its process runs in.
+      workspaceFor: (terminalId) => {
+        const row = terminalsDb.getById(db, terminalId);
+        if (!row || row.archived_at) return null;
+        const dir = row.working_dir || sessionsDb.getById(db, row.session_id)?.working_dir;
+        return dir ? expandHome(dir) : null;
+      },
+      exportScratchDir: path.join(dataDir, 'export-downloads'),
     }),
     // Company models (os/model-relay.ts): a company-model Claude thread's Messages traffic, to the platform's proxy.
     createModelRelayRouter({
@@ -761,7 +783,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   const services: DaemonServices = {
     db, dataDir, keys, noCredentialStats: auth.noCredentialStats, accessGate: auth.accessGate, pairCodes: auth.pairCodes, devices: auth.devices,
     authRequestService, claudeLogin, codexLogin, accounts, sockets, broadcaster, ptyManager, sessionService, statusService,
-    harnessManagers: harnesses.managers, structuredManager: harnesses.claude, terminalMonitor, threadAutoNamer, stallWatchdog,
+    harnessManagers: harnesses.managers, structuredManager: harnesses.claude, terminalMonitor, threadAutoNamer, stallWatchdog, processReaper,
     agentService, rolesService, outbox, watchDispatcher, ledgerService, pushService, endless, endlessManager,
     usageLimits, limitSnapshots, usageGauge, usage, boxHeartbeat, secretsService, integrationsService, osConnections, toolsAuth,
     refreshSpawnEnv: spawnEnv.refresh, plugins, marketplaces, installer, skills, threadEvents, pluginHooks, pluginWorkers, assistRunner,
