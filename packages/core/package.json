@@ -1,6 +1,6 @@
 {
   "name": "dispatch-server",
-  "version": "4.7.7",
+  "version": "4.7.8",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -17,6 +17,10 @@
     "./access": {
       "types": "./dist/auth/access-api.d.ts",
       "default": "./dist/auth/access-api.js"
+    },
+    "./update-target": {
+      "types": "./dist/update/target.d.ts",
+      "default": "./dist/update/target.js"
     },
     "./credential": {
       "types": "./dist/auth/credential.d.ts",
