@@ -46,6 +46,23 @@ describe('preflightUpdate', () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toMatch(/diverged/i);
     expect(result.forceable).toBeFalsy();
+    // Not stuck: the explicit switch lifts it (LR-2).
+    expect(result.needsSwitchBack).toBe(true);
+    expect(await run({ head: 'mine', ancestors: {} }, { switchBack: true })).toEqual({ ok: true, move: 'back' });
+  });
+
+  it('a dirty tree with the explicit switch gets the move-back message, not the forward "update anyway" advice', async () => {
+    const result = await run({ head: 'mine', ancestors: {}, dirty: ' M a.ts\n' }, { switchBack: true });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/clean working tree/);
+    expect(result.reason).not.toMatch(/update anyway/);
+    expect(result.forceable).toBeFalsy();
+  });
+
+  it('the explicit switch does not skip the dirty gate of a plain forward update', async () => {
+    const result = await run({ dirty: ' M a.ts\n' }, { switchBack: true });
+    expect(result.ok).toBe(false);
+    expect(result.forceable).toBe(true);
   });
 
   it('succeeds when already up to date', async () => {

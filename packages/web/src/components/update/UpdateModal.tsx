@@ -27,7 +27,7 @@ export function UpdateModal() {
   const dismissedVersion = useUpdate((s) => s.dismissedVersion);
   const currentVersion = useUpdate((s) => s.currentVersion);
   const notes = useUpdate((s) => s.notes);
-  const { apply, applying, failReason, failDirty, failDirtyOverflow, canForce, inProgress, hosted } = useApplyUpdate();
+  const { apply, applying, failReason, failDirty, failDirtyOverflow, canForce, needsSwitchBack, inProgress, hosted } = useApplyUpdate();
   const runFailed = useUpdate((s) => s.runFailed);
   const hidden = useUpdate((s) => s.progressHidden);
   const doneVersion = useUpdate((s) => s.doneVersion);
@@ -115,7 +115,7 @@ export function UpdateModal() {
                     command is advice the reader cannot follow. */}
                 {hosted || usesPlainWording()
                   ? PLAIN['update.failed.hint']
-                  : <>Run it manually instead: <code style={{ font: '400 11px var(--font-mono)' }}>dispatch update</code></>}
+                  : <>Run it manually instead: <code style={{ font: '400 11px var(--font-mono)' }}>{needsSwitchBack ? 'dispatch update --switch-back' : 'dispatch update'}</code></>}
                 {failDirty && failDirty.length > 0 && (
                   <div style={{ marginTop: 8, maxHeight: 136, overflowY: 'auto', font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', background: 'color-mix(in srgb, var(--color-canvas) 50%, transparent)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', padding: '6px 8px' }}>
                     {/* `pre` on the status only: porcelain codes carry a meaningful leading
@@ -124,6 +124,11 @@ export function UpdateModal() {
                       <div key={i}><span style={{ whiteSpace: 'pre' }}>{d.status}</span> {d.path}</div>
                     ))}
                     {failDirtyOverflow > 0 && <div>+{failDirtyOverflow} more</div>}
+                  </div>
+                )}
+                {needsSwitchBack && available && (
+                  <div style={{ marginTop: 10 }}>
+                    <button onClick={() => void apply(false, true)} disabled={applying} style={{ ...ghost, opacity: applying ? 0.7 : 1 }}>Switch to {available.version}</button>
                   </div>
                 )}
                 {canForce && (

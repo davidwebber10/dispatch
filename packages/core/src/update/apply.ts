@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from 'child_process';
+import { execFile, execFileSync, spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { platform } from '../platform/index.js';
@@ -6,10 +6,38 @@ import { markUpdateFailed } from './progress.js';
 import { getRunningVersion } from './version.js';
 import {
   MoveRefused, planMove, ReleaseSourceError, resolveTarget, stepFailed,
-  type FetchReleasesOptions, type GitExec, type Move,
+  type AsyncGitExec, type FetchReleasesOptions, type GitExec, type Move,
 } from './target.js';
 
-export type { GitExec };
+export type { GitExec, AsyncGitExec };
+
+/**
+ * Git without blocking the daemon: for the background check, which runs every 15 minutes. A timeout
+ * stops a fetch on a dropping network, and the environment stops git from asking for a password or an
+ * SSH confirmation that nobody can answer. A failed command carries its exit code as `status`, the way
+ * execFileSync's error does (target.ts reads it).
+ */
+export function makeAsyncGitExec(repoDir: string): AsyncGitExec {
+  return (args) => new Promise((resolve, reject) => {
+    execFile('git', ['-C', repoDir, ...args], {
+      encoding: 'utf-8',
+      timeout: 20_000,
+      maxBuffer: 8 * 1024 * 1024,
+      env: {
+        ...process.env,
+        GIT_TERMINAL_PROMPT: '0',
+        GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? 'ssh -o BatchMode=yes -o ConnectTimeout=10',
+      },
+    }, (err, stdout) => {
+      if (err) {
+        const code = (err as { code?: unknown }).code;
+        reject(typeof code === 'number' ? Object.assign(err, { status: code }) : err);
+        return;
+      }
+      resolve(stdout);
+    });
+  });
+}
 
 /** Runs git against `repoDir` (this file is the update's one place that spawns git; see tests/privsep/spawn-sites.test.ts). */
 export function makeGitExec(repoDir: string): GitExec {
@@ -73,7 +101,8 @@ export async function preflightUpdate(repoDir: string, gitExec?: GitExec, opts: 
   } catch (err: any) {
     return { ok: false, reason: stepFailed('git status failed', err) };
   }
-  if (status.trim().length > 0 && !opts.force) {
+  const dirty = status.trim().length > 0;
+  const dirtyFailure = (): PreflightResult => {
     const { entries, overflow } = parsePorcelain(status);
     return {
       ok: false,
@@ -82,7 +111,10 @@ export async function preflightUpdate(repoDir: string, gitExec?: GitExec, opts: 
       dirtyOverflow: overflow,
       forceable: true,
     };
-  }
+  };
+  // A move back decides for itself (its own clean-tree message, never forceable), so the forward gate
+  // waits until the plan is known.
+  if (dirty && !opts.force && !opts.switchBack) return dirtyFailure();
 
   let move: Move;
   try {
@@ -93,6 +125,7 @@ export async function preflightUpdate(repoDir: string, gitExec?: GitExec, opts: 
     if (err instanceof ReleaseSourceError) return { ok: false, reason: err.message };
     return { ok: false, reason: stepFailed('could not work out the release to install', err) };
   }
+  if (dirty && !opts.force && move !== 'back') return dirtyFailure();
   return { ok: true, move };
 }
 

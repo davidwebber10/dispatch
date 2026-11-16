@@ -18,6 +18,8 @@ export function useApplyUpdate() {
   const [failDirty, setFailDirty] = useState<{ status: string; path: string }[] | null>(null);
   const [failDirtyOverflow, setFailDirtyOverflow] = useState(0);
   const [canForce, setCanForce] = useState(false);
+  // The daemon refused because this copy is ahead of, or has diverged from, the release: only an explicit switch moves it.
+  const [needsSwitchBack, setNeedsSwitchBack] = useState(false);
   // Set from the server's answer rather than guessed: only the daemon knows
   // whether it is a hosted box, and the failure advice differs entirely.
   const [hosted, setHosted] = useState(false);
@@ -30,6 +32,7 @@ export function useApplyUpdate() {
     setFailDirty(null);
     setFailDirtyOverflow(0);
     setCanForce(false);
+    setNeedsSwitchBack(false);
     try {
       const res = await api.applyUpdate(force, switchBack);
       setHosted(res.hosted === true);
@@ -39,6 +42,7 @@ export function useApplyUpdate() {
         setFailDirty(res.dirty ?? null);
         setFailDirtyOverflow(res.dirtyOverflow ?? 0);
         setCanForce(res.forceable === true);
+        setNeedsSwitchBack(res.needsSwitchBack === true);
       }
     } catch {
       setFailReason('Could not reach the server to apply the update.');
@@ -64,5 +68,5 @@ export function useApplyUpdate() {
     return () => clearInterval(timer);
   }, [inProgress]);
 
-  return { apply, applying, failReason: failReason ?? failure, failDirty, failDirtyOverflow, canForce, inProgress, hosted };
+  return { apply, applying, failReason: failReason ?? failure, failDirty, failDirtyOverflow, canForce, needsSwitchBack, inProgress, hosted };
 }

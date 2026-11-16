@@ -19,6 +19,8 @@ const MAIN_REF = 'refs/remotes/origin/main';
 
 /** Runs a git subcommand against the checkout and returns stdout; throws on non-zero exit. */
 export type GitExec = (args: string[]) => string;
+/** The same, without blocking the caller: the daemon's background check uses this one. */
+export type AsyncGitExec = (args: string[]) => Promise<string>;
 
 /** A failure the person can read: no folder, remote or home path in the text. The detail goes to the log. */
 export class ReleaseSourceError extends Error {}
@@ -41,30 +43,44 @@ export function stepFailed(what: string, err: unknown): string {
 export interface FetchReleasesOptions {
   repo?: string;
   fetchImpl?: typeof fetch;
-  /** How many releases to ask for (default 30). */
+  /** Page size (default 100). */
   perPage?: number;
   timeoutMs?: number;
 }
 
-/** GitHub's release list for the repo, as sent (drafts and prereleases are dropped later, in one place). */
+const PAGE_SIZE = 100;
+const MAX_PAGES = 3;
+
+/**
+ * GitHub's release list for the repo, as sent (drafts and prereleases are dropped later, in one place).
+ * It follows up to three pages of 100: one short page cannot show the newest eligible release when
+ * newer prereleases or off-main releases fill it. A page that fails stops the whole read, so a target is
+ * never chosen from half a list.
+ */
 export async function fetchReleaseList(opts: FetchReleasesOptions = {}): Promise<GitHubRelease[]> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const repo = opts.repo ?? RELEASE_REPO;
-  let res: Response;
-  try {
-    res = await fetchImpl(`https://api.github.com/repos/${repo}/releases?per_page=${opts.perPage ?? 30}`, {
-      headers: { Accept: 'application/vnd.github+json' },
-      signal: AbortSignal.timeout(opts.timeoutMs ?? 15_000),
-    });
-  } catch (err) {
-    console.error('[update] release list request failed:', (err as Error)?.message ?? err);
-    throw new ReleaseSourceError('Could not reach GitHub to find the latest release, so nothing was changed.');
+  const perPage = opts.perPage ?? PAGE_SIZE;
+  const all: GitHubRelease[] = [];
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    let res: Response;
+    try {
+      res = await fetchImpl(`https://api.github.com/repos/${repo}/releases?per_page=${perPage}&page=${page}`, {
+        headers: { Accept: 'application/vnd.github+json' },
+        signal: AbortSignal.timeout(opts.timeoutMs ?? 15_000),
+      });
+    } catch (err) {
+      console.error('[update] release list request failed:', (err as Error)?.message ?? err);
+      throw new ReleaseSourceError('Could not reach GitHub to find the latest release, so nothing was changed.');
+    }
+    if (!res.ok) throw new ReleaseSourceError(`GitHub answered ${res.status} when asked for the latest release, so nothing was changed.`);
+    let body: unknown;
+    try { body = await res.json(); } catch { body = null; }
+    if (!Array.isArray(body)) throw new ReleaseSourceError('GitHub sent an answer that is not a release list, so nothing was changed.');
+    all.push(...(body as GitHubRelease[]));
+    if (body.length < perPage) break;
   }
-  if (!res.ok) throw new ReleaseSourceError(`GitHub answered ${res.status} when asked for the latest release, so nothing was changed.`);
-  let body: unknown;
-  try { body = await res.json(); } catch { body = null; }
-  if (!Array.isArray(body)) throw new ReleaseSourceError('GitHub sent an answer that is not a release list, so nothing was changed.');
-  return body as GitHubRelease[];
+  return all;
 }
 
 /** What origin says about tags and main. */
@@ -72,7 +88,7 @@ export interface MainView {
   /** tag name -> the commit it points at, from origin's own list. */
   tagCommits: Map<string, string>;
   /** Is this commit reachable from origin/main? */
-  onMain: (commit: string) => boolean;
+  onMain: (commit: string) => Promise<boolean>;
 }
 
 /**
@@ -80,11 +96,11 @@ export interface MainView {
  * Origin's list is the truth: a tag that exists only in this checkout never counts. A peeled line
  * (`NAME^{}`) is the commit of an annotated tag and wins over the tag object's own line.
  */
-export function readMainView(git: GitExec): MainView {
+export async function readMainView(git: GitExec | AsyncGitExec): Promise<MainView> {
   let listing: string;
   try {
-    git(['fetch', 'origin', `+refs/heads/main:${MAIN_REF}`]);
-    listing = git(['ls-remote', '--tags', 'origin']);
+    await git(['fetch', 'origin', `+refs/heads/main:${MAIN_REF}`]);
+    listing = await git(['ls-remote', '--tags', 'origin']);
   } catch (err) {
     throw new ReleaseSourceError(stepFailed('Could not read the release tags from origin, so nothing was changed', err));
   }
@@ -98,10 +114,11 @@ export function readMainView(git: GitExec): MainView {
   const tagCommits = new Map(plain);
   for (const [tag, commit] of peeled) tagCommits.set(tag, commit);
   const cache = new Map<string, boolean>();
-  const onMain = (commit: string): boolean => {
+  const onMain = async (commit: string): Promise<boolean> => {
     const hit = cache.get(commit);
     if (hit !== undefined) return hit;
-    const answer = isAncestor(git, commit, MAIN_REF);
+    let answer: boolean;
+    try { await git(['merge-base', '--is-ancestor', commit, MAIN_REF]); answer = true; } catch (err) { answer = ancestorNo(err); }
     cache.set(commit, answer);
     return answer;
   };
@@ -113,11 +130,14 @@ export function readMainView(git: GitExec): MainView {
  * which for "is it on main" is also a no (main is fully fetched). Anything else is a real failure.
  */
 function isAncestor(git: GitExec, a: string, b: string): boolean {
-  try { git(['merge-base', '--is-ancestor', a, b]); return true; } catch (err) {
-    const status = (err as { status?: number })?.status;
-    if (status === 1 || status === 128) return false;
-    throw err;
-  }
+  try { git(['merge-base', '--is-ancestor', a, b]); return true; } catch (err) { return ancestorNo(err); }
+}
+
+/** A failed `merge-base --is-ancestor`: 1 and 128 are "no"; anything else is rethrown. */
+function ancestorNo(err: unknown): false {
+  const status = (err as { status?: number })?.status;
+  if (status === 1 || status === 128) return false;
+  throw err;
 }
 
 export interface EligibleRelease extends GitHubRelease {
@@ -126,21 +146,21 @@ export interface EligibleRelease extends GitHubRelease {
 }
 
 /** The published releases whose tag commit is on main, newest first. The whole rule, in one place. */
-export function eligibleReleases(releases: GitHubRelease[], view: MainView): EligibleRelease[] {
+export async function eligibleReleases(releases: GitHubRelease[], view: MainView): Promise<EligibleRelease[]> {
   const out: EligibleRelease[] = [];
   for (const r of releases) {
     if (!r || r.draft || r.prerelease || typeof r.tag_name !== 'string' || !TAG_SHAPE.test(r.tag_name)) continue;
     const commit = view.tagCommits.get(r.tag_name);
-    if (!commit || !view.onMain(commit)) continue;
+    if (!commit || !(await view.onMain(commit))) continue;
     out.push({ ...r, commit });
   }
   return out.sort((a, b) => (isNewerVersion(a.tag_name, b.tag_name) ? -1 : isNewerVersion(b.tag_name, a.tag_name) ? 1 : 0));
 }
 
 /** Asks GitHub and origin, and returns the eligible releases, newest first. Throws ReleaseSourceError. */
-export async function loadEligibleReleases(git: GitExec, opts: FetchReleasesOptions = {}): Promise<EligibleRelease[]> {
+export async function loadEligibleReleases(git: GitExec | AsyncGitExec, opts: FetchReleasesOptions = {}): Promise<EligibleRelease[]> {
   const releases = await fetchReleaseList(opts);
-  return eligibleReleases(releases, readMainView(git));
+  return eligibleReleases(releases, await readMainView(git));
 }
 
 export interface ReleaseTarget {
@@ -158,7 +178,7 @@ export function targetOf(r: EligibleRelease): ReleaseTarget {
 }
 
 /** The release to install. Throws ReleaseSourceError, so an install stops instead of guessing. */
-export async function resolveTarget(git: GitExec, opts: FetchReleasesOptions = {}): Promise<ReleaseTarget> {
+export async function resolveTarget(git: GitExec | AsyncGitExec, opts: FetchReleasesOptions = {}): Promise<ReleaseTarget> {
   const list = await loadEligibleReleases(git, opts);
   if (list.length === 0) {
     throw new ReleaseSourceError('No published release on main was found, so there is nothing to update to.');
@@ -173,13 +193,19 @@ const aheadMessage = (version: string, target: ReleaseTarget) =>
   + `To move back to it, run "dispatch update --switch-back" or choose Switch in the app. `
   + `Your current commit is kept on a backup branch.`;
 
+const divergedMessage = (version: string, target: ReleaseTarget) =>
+  `This copy (v${version}) has diverged from release ${target.tag}: it has commits the release does not contain, so it cannot move forward. `
+  + `To move to the release anyway, run "dispatch update --switch-back" or choose Switch in the app. `
+  + `Your current commit is kept on a backup branch.`;
+
 /**
  * Decides, without changing anything, how this checkout gets to the target, or why it cannot.
  *
  * "Ahead" is the running version being strictly higher than the target's: a dev checkout of main a
- * few commits past the release, with the same version, is not ahead. Moving back is never a
- * fast-forward and never automatic: it needs `allowBack`, a clean tree, and `main` (or a detached
- * HEAD) checked out. The caller that executes the move is `moveToTarget`.
+ * few commits past the release, with the same version, is not ahead. A checkout that has diverged
+ * from the release (its commits are not in the release, whatever its version) needs the same switch.
+ * Moving there is never a fast-forward and never automatic: it needs `allowBack`, a clean tree, and
+ * `main` (or a detached HEAD) checked out. The caller that executes the move is `moveToTarget`.
  */
 export function planMove(git: GitExec, target: ReleaseTarget, o: { version: string; allowBack: boolean }): Move {
   let head: string;
@@ -198,16 +224,20 @@ export function planMove(git: GitExec, target: ReleaseTarget, o: { version: stri
     throw new MoveRefused(stepFailed(`Could not compare this checkout with ${target.tag}`, err));
   }
   if (headBehind) return 'forward';
-  if (!isNewerVersion(o.version, target.version)) {
-    if (headAhead) return 'current';
-    throw new MoveRefused(`This checkout has diverged from release ${target.tag}, so it cannot move forward. Resolve that by hand, then run dispatch update again.`);
+  const ahead = isNewerVersion(o.version, target.version);
+  // A dev checkout of main past the release, with the same (or an older) version, is not ahead and stays.
+  if (!ahead && headAhead) return 'current';
+  // Two situations need the explicit switch: the version is HIGHER than the release (ahead), or this
+  // checkout has commits the release does not contain (diverged: an unreleased branch). Neither is a
+  // fast-forward, so neither happens by itself.
+  if (!o.allowBack) {
+    throw new MoveRefused(ahead ? aheadMessage(o.version, target) : divergedMessage(o.version, target), { needsSwitchBack: true });
   }
-  // Ahead of the newest release.
-  if (!o.allowBack) throw new MoveRefused(aheadMessage(o.version, target), { needsSwitchBack: true });
   let dirty: string;
   let branch: string;
   try {
-    dirty = git(['status', '--porcelain']);
+    // --untracked-files=all: a status.showUntrackedFiles=no setting must not hide a file that reset would overwrite.
+    dirty = git(['status', '--porcelain', '--untracked-files=all']);
     branch = git(['rev-parse', '--abbrev-ref', 'HEAD']).trim();
   } catch (err) {
     throw new MoveRefused(stepFailed('Could not read this checkout', err));
@@ -219,6 +249,23 @@ export function planMove(git: GitExec, target: ReleaseTarget, o: { version: stri
     throw new MoveRefused(`Moving back works from the main branch, and this checkout is on ${branch}. Switch to main first.`);
   }
   return 'back';
+}
+
+/**
+ * The branch that keeps the old HEAD: `dispatch-backup/vOLD-SHA7`. An existing branch of that name is
+ * reused only when it points at exactly this HEAD (the full commit, not the short one); if it points
+ * elsewhere (moved by hand, or a short-SHA collision), the next free name `-2`, `-3`, ... is used.
+ */
+function backupBranchFor(git: GitExec, head: string, version: string): { name: string; create: boolean } {
+  const base = `dispatch-backup/v${version}-${head.slice(0, 7)}`;
+  for (let n = 1; n <= 50; n++) {
+    const name = n === 1 ? base : `${base}-${n}`;
+    let at: string | null = null;
+    try { at = git(['rev-parse', '--verify', '--quiet', `refs/heads/${name}`]).trim() || null; } catch { at = null; }
+    if (at === null) return { name, create: true };
+    if (at === head) return { name, create: false };
+  }
+  throw new MoveRefused('Too many backup branches already exist for this commit. Delete the old dispatch-backup branches, then try again.');
 }
 
 /**
@@ -234,12 +281,10 @@ export function moveToTarget(git: GitExec, target: ReleaseTarget, o: { version: 
   }
   if (move === 'back') {
     const head = git(['rev-parse', 'HEAD']).trim();
-    const backup = `dispatch-backup/v${o.version}-${head.slice(0, 7)}`;
-    let exists = true;
-    try { git(['rev-parse', '--verify', '--quiet', `refs/heads/${backup}`]); } catch { exists = false; }
-    if (!exists) git(['branch', backup, head]);
+    const backup = backupBranchFor(git, head, o.version);
+    if (backup.create) git(['branch', backup.name, head]);
     git(['reset', '--hard', target.commit]);
-    return { move, backup };
+    return { move, backup: backup.name };
   }
   return { move };
 }

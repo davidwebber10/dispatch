@@ -78,6 +78,8 @@ export type AuthRequestEvent = { type: 'auth:request'; request: ServerEventPaylo
 export type AuthUpdatedEvent = { type: 'auth:updated'; request: ServerEventPayload };
 export type UpdateAvailableEvent = { type: 'update:available'; version: string; url?: string | null; publishedAt?: string | null };
 export type UpdateInProgressEvent = { type: 'update:in-progress' };
+/** A check changed what is stored (an "ahead" state, a removed target, an error) without a new release to announce: clients reload the state quietly. */
+export type UpdateCheckedEvent = { type: 'update:checked' };
 export type UpdateFailedEvent = { type: 'update:failed'; reason?: string };
 export type AnalyticsDirtyEvent = { type: 'analytics-dirty' };
 export type LedgerChangedEvent = { type: 'ledger:changed'; sessionId: string };
@@ -122,7 +124,7 @@ export type KnownServerEvent =
   | AgentScheduleCreatedEvent | AgentScheduleUpdatedEvent | AgentScheduleRemovedEvent
   | AgentRunCreatedEvent | AgentRunUpdatedEvent | AgentRunStepEvent
   | AuthRequestEvent | AuthUpdatedEvent
-  | UpdateAvailableEvent | UpdateInProgressEvent | UpdateFailedEvent
+  | UpdateAvailableEvent | UpdateInProgressEvent | UpdateCheckedEvent | UpdateFailedEvent
   | AnalyticsDirtyEvent | LedgerChangedEvent | UsageLimitsEvent
   | EndlessMessageEvent | EndlessDeltaEvent | EndlessSettingsEvent | EndlessTurnEvent
   | PluginChangedEvent | PluginDataEvent | PluginUpdatesEvent;

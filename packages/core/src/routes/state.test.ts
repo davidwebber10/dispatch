@@ -39,6 +39,7 @@ describe('GET /api/state/update', () => {
       url: null,
       publishedAt: null,
       ahead: null,
+      checkError: null,
       currentVersion: getRunningVersion(),
       notes: [],
       currentNotes: readLocalReleaseNote(getRunningVersion()),

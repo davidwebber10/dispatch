@@ -16,7 +16,7 @@ import { UpdatesSection } from './UpdatesSection';
 import { useUpdate } from '../../stores/update';
 
 beforeEach(() => {
-  useUpdate.setState({ available: null, ahead: null, currentVersion: '2.10.0', dismissedVersion: null, inProgress: false, notes: [], currentNotes: null });
+  useUpdate.setState({ available: null, ahead: null, checkError: null, currentVersion: '2.10.0', dismissedVersion: null, inProgress: false, notes: [], currentNotes: null });
   applyUpdate.mockReset();
   applySwitchBack.mockReset();
   getUpdateState.mockReset();
@@ -84,4 +84,13 @@ test('a copy above the newest release is not "up to date": a row offers the swit
   fireEvent.click(within(group).getByRole('button', { name: 'Switch to v4.7.8' }));
   await vi.waitFor(() => expect(applySwitchBack).toHaveBeenCalledOnce());
   expect(applyUpdate).not.toHaveBeenCalled();
+});
+
+test('a check that could not tell is never "up to date": the reason shows instead', async () => {
+  useUpdate.setState({ checkError: 'Could not reach GitHub to find the latest release, so nothing was changed.' });
+  getUpdateState.mockResolvedValue({ available: false, version: null, url: null, publishedAt: null, currentVersion: '2.10.0', checkError: 'Could not reach GitHub to find the latest release, so nothing was changed.' });
+  render(<UpdatesSection />);
+  fireEvent.click(within(versionGroup()).getByRole('button', { name: 'Check now' }));
+  expect(await within(versionGroup()).findByText(/could not tell if an update is available/)).toBeInTheDocument();
+  expect(within(versionGroup()).queryByText("You're up to date.")).toBeNull();
 });

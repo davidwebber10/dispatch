@@ -50,6 +50,24 @@ test('load() clears ahead when the endpoint reports none (or an older daemon sen
   expect(useUpdate.getState().ahead).toBeNull();
 });
 
+test('load() hydrates checkError: why the last check could not tell', async () => {
+  getUpdateState.mockResolvedValue({ available: false, version: null, url: null, publishedAt: null, currentVersion: '1.2.0', checkError: 'Could not reach GitHub.' });
+  await useUpdate.getState().load();
+  expect(useUpdate.getState().checkError).toBe('Could not reach GitHub.');
+  getUpdateState.mockResolvedValue({ available: false, version: null, url: null, publishedAt: null, currentVersion: '1.2.0', checkError: null });
+  await useUpdate.getState().load();
+  expect(useUpdate.getState().checkError).toBeNull();
+});
+
+test('update:checked reloads the state quietly: an ahead state found by the background check reaches an open page', async () => {
+  getUpdateState.mockResolvedValue({ available: false, version: null, url: null, publishedAt: null, currentVersion: '4.8.0', ahead: { version: 'v4.7.8', url: null, publishedAt: null } });
+  useUpdate.getState().applyEvent({ type: 'update:checked' } as any);
+  await vi.waitFor(() => expect(useUpdate.getState().ahead).toEqual({ version: 'v4.7.8', url: null, publishedAt: null }));
+  // No modal: nothing became "available", nothing is in progress.
+  expect(useUpdate.getState().available).toBeNull();
+  expect(useUpdate.getState().inProgress).toBe(false);
+});
+
 test('load() clears available when the endpoint reports none', async () => {
   useUpdate.setState({ available: { version: 'v1.2.0', url: null, publishedAt: null } });
   getUpdateState.mockResolvedValue({ available: false, version: null, url: null, publishedAt: null, currentVersion: '1.2.0' });

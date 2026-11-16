@@ -16,6 +16,11 @@ export interface StoredUpdateView {
    * the release the person can switch back to. Null otherwise. A same-version dev checkout is not ahead.
    */
   ahead: ReleaseRef | null;
+  /**
+   * Why the last check could not tell (GitHub or origin unreadable, or no release on main), as a plain
+   * sentence; null after a check that worked. Settings shows it instead of "up to date".
+   */
+  checkError: string | null;
 }
 
 /**
@@ -36,5 +41,6 @@ export function storedUpdateView(db: Database.Database, currentVersion: string):
     url: available ? url : null,
     publishedAt: available ? publishedAt : null,
     ahead: ahead ? { version: tag!, url: url || null, publishedAt: publishedAt || null } : null,
+    checkError: appState.get(db, 'last_check_error') || null,
   };
 }

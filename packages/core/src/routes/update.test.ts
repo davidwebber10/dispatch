@@ -183,7 +183,16 @@ describe('POST /api/update/apply', () => {
 
     expect(res.status).toBe(409);
     expect(res.body.reason).toMatch(/diverged/i);
+    expect(res.body.needsSwitchBack).toBe(true);
     expect(applyFn).not.toHaveBeenCalled();
+  });
+
+  it('a diverged copy on a LOWER version moves to the release when the request says switchBack', async () => {
+    const applyFn = vi.fn();
+    const git = fakeGit({ ...CLEAN_AND_FF_ABLE, head: 'mine', ancestors: {} });
+    const res = await request(app({ broadcast: () => {} }, git, applyFn)).post('/api/update/apply').send({ switchBack: true });
+    expect(res.status).toBe(200);
+    expect(applyFn).toHaveBeenCalledWith('/repo', { switchBack: true });
   });
 });
 

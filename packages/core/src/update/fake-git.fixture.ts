@@ -19,7 +19,8 @@ export interface World {
   dirty?: string;
   branch?: string;
   fetchFails?: boolean;
-  existingBranches?: string[];
+  /** Existing local branches: name -> the full commit it points at. */
+  existingBranches?: Record<string, string>;
 }
 
 /** A fake git over a tiny world. Every call is recorded. */
@@ -43,7 +44,7 @@ export function fakeGit(w: World): GitExec & { calls: string[][] } {
     if (cmd === 'merge-base') { if (isAnc(args[2], args[3])) return ''; throw exit(1); }
     if (cmd === 'rev-parse' && args[1] === 'HEAD') return `${w.head ?? 'head0'}\n`;
     if (cmd === 'rev-parse' && args[1] === '--abbrev-ref') return `${w.branch ?? 'main'}\n`;
-    if (cmd === 'rev-parse' && args[1] === '--verify') { if ((w.existingBranches ?? []).some((b) => args[3] === `refs/heads/${b}`)) return 'x\n'; throw exit(1); }
+    if (cmd === 'rev-parse' && args[1] === '--verify') { const hit = Object.entries(w.existingBranches ?? {}).find(([b]) => args[3] === `refs/heads/${b}`); if (hit) return `${hit[1]}\n`; throw exit(1); }
     if (cmd === 'status') return w.dirty ?? '';
     return '';
   }) as GitExec & { calls: string[][] };

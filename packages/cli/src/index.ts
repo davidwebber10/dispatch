@@ -5,7 +5,7 @@ import * as path from 'path';
 import { execFileSync, spawnSync } from 'child_process';
 import type { DaemonController, DaemonInstallOptions } from 'dispatch-server/platform';
 import { formatDoctor, type DoctorAnswer } from './doctor.js';
-import { moveToTarget, resolveTarget, type GitExec } from 'dispatch-server/update-target';
+import type { GitExec } from 'dispatch-server/update-target';
 
 const require = createRequire(import.meta.url);
 
@@ -706,15 +706,18 @@ function checkoutVersion(ctx: Ctx): string {
  * commit is on origin/main (core `update/target.ts`, the same rule the update check and the daemon's
  * preflight use). There is no "highest tag" fallback: if GitHub or origin cannot be read, or nothing
  * qualifies, the update stops with a plain message. A checkout behind the release fast-forwards; one that
- * already contains it (same version) stays; one that runs a HIGHER version than the release (stuck on an
- * unreleased tag) moves back only with `--switch-back`, after a backup branch keeps its old commit.
+ * already contains it (same version) stays; one that runs a HIGHER version than the release, or has
+ * diverged from it (stuck on an unreleased branch), moves only with `--switch-back`, after a backup
+ * branch keeps its old commit.
  */
 async function updateToLatestRelease(ctx: Ctx, opts: { switchBack: boolean }): Promise<void> {
+  // Loaded here, not at start-up: the other dispatch-server imports are lazy too, so a command that never updates never needs it.
+  const { moveToTarget, resolveTarget } = await import('dispatch-server/update-target');
   const git = gitOf(ctx);
   const target = await resolveTarget(git, { fetchImpl: ctx.releasesFetch });
   console.log(`Updating to release ${target.tag}`);
   const out = moveToTarget(git, target, { version: checkoutVersion(ctx), allowBack: opts.switchBack });
-  if (out.move === 'back') console.log(`Moved back to release ${target.tag}. The commit you were on is kept on the branch ${out.backup}.`);
+  if (out.move === 'back') console.log(`Moved to release ${target.tag}. The commit you were on is kept on the branch ${out.backup}.`);
 }
 
 // Order is: move to the newest published release on main (fast-forward; or, only with --switch-back, back) → build (pnpm install, since fresh dependencies may be needed

@@ -55,7 +55,7 @@ The new `classifyMove` compares `HEAD`, the target commit and the version this c
 | `HEAD` is an ancestor of the target | fast-forward (`merge --ff-only`) |
 | the target is an ancestor of `HEAD`, same or older version | nothing to do (a dev checkout of `main` past the tag is NOT ahead) |
 | the version is higher than the target version | ahead: switch back |
-| anything else (diverged, version not higher) | refuse, as before |
+| the checkout has diverged from the target (neither contains the other), any version | needs the explicit switch (a move to the release, same gates as switching back) |
 
 "Ahead" is decided by version number, as approved: running version strictly higher than the
 target's version, whatever the git shape (an unreleased tag that is on another branch is diverged
@@ -68,12 +68,27 @@ Moving back is not a fast-forward and it is never automatic.
 - It needs an explicit action: the Switch button in the app (the apply request carries
   `switchBack: true`), or `dispatch update --switch-back`. Without it the update stops and says
   what to run.
-- It needs a clean working tree. "Update anyway" does not apply to it.
+- It also covers a checkout that has DIVERGED from the release on a lower version (an unreleased
+  branch; added after review): without the explicit switch it stops and names the switch.
+- It needs a clean working tree. The check asks git for untracked files explicitly
+  (`--untracked-files=all`), so a `status.showUntrackedFiles=no` setting cannot hide a file that
+  the reset would overwrite. Ignored files are not checked. "Update anyway" does not apply to it.
 - It needs the current branch to be `main` (or a detached `HEAD`). On another branch it refuses
   and tells the person to switch to `main` first.
 - It first creates the branch `dispatch-backup/vOLD-SHA7` at the old `HEAD`, then runs
   `git reset --hard TARGET_COMMIT`. The message names the backup branch so the old state is one
-  `git switch` away.
+  `git switch` away. An existing branch of that name is reused only when it points at exactly the old
+  HEAD; otherwise the next free name (`-2`, `-3`, ...) is used.
+
+## The check, without blocking the daemon
+
+The daemon's 15-minute check reads origin with an asynchronous git (a 20 second timeout, no
+password or SSH prompt), so a slow network cannot stop the event loop. The release list is read
+page by page (up to 3 pages of 100) before a target is chosen. When the check cannot tell (GitHub
+or origin unreadable, or no release on main), it stores a plain reason (`last_check_error`) that
+Settings shows instead of "up to date". When a check changes what is stored without a release to
+announce (an ahead state, a removed target, an error), it sends the quiet event `update:checked`
+and open pages reload the state.
 
 ## What the app shows
 

@@ -326,6 +326,26 @@ describe('cmdUpdate when this copy runs a version above the newest release (stuc
     expect(calls.some((c) => c.startsWith('git reset'))).toBe(false);
   });
 
+  test('a diverged copy on a LOWER version (4.8.2 vs release 4.9.0) needs the switch too, then moves', async () => {
+    const calls: string[] = [];
+    const world = { tags: { 'v4.9.0': 'c490' }, main: ['c490'], head: 'abcdef1234567', ancestors: {}, calls };
+    wireUpdateGit(world);
+    const repoRoot = checkout('4.8.2');
+    await expect(cmdUpdate({ daemon: mkDaemon(), repoRoot, dataDir: repoRoot, releasesFetch: published('v4.9.0') } as any)).rejects.toThrow(/diverged.*--switch-back/s);
+    expect(calls.some((c) => c.startsWith('git reset'))).toBe(false);
+    await cmdUpdate({ daemon: mkDaemon(), repoRoot, dataDir: repoRoot, releasesFetch: published('v4.9.0') } as any, ['--switch-back']);
+    expect(calls).toContain('git branch dispatch-backup/v4.8.2-abcdef1 abcdef1234567');
+    expect(calls).toContain('git reset --hard c490');
+  });
+
+  test('the clean-tree check for a move back asks for untracked files too', async () => {
+    const calls: string[] = [];
+    wireUpdateGit({ ...ahead, calls });
+    const repoRoot = checkout('4.8.0');
+    await cmdUpdate({ daemon: mkDaemon(), repoRoot, dataDir: repoRoot, releasesFetch: published('v4.7.8') } as any, ['--switch-back']);
+    expect(calls).toContain('git status --porcelain --untracked-files=all');
+  });
+
   test('routes `dispatch update --switch-back` to cmdUpdate with the flag', async () => {
     const calls: string[] = [];
     wireUpdateGit({ ...ahead, calls });

@@ -18,7 +18,7 @@ export function UpdateBanner({ compact = false }: { compact?: boolean }) {
   const ahead = useUpdate((s) => s.ahead);
   const currentVersion = useUpdate((s) => s.currentVersion);
   const pluginUpdates = useUpdate((s) => s.pluginUpdates);
-  const { apply, applying, failReason, hosted } = useApplyUpdate();
+  const { apply, applying, failReason, needsSwitchBack, hosted } = useApplyUpdate();
   // One plugin update runs at a time; the buttons wait for it.
   const [updating, setUpdating] = useState<string | null>(null);
   const [pluginFail, setPluginFail] = useState<string | null>(null);
@@ -124,7 +124,12 @@ export function UpdateBanner({ compact = false }: { compact?: boolean }) {
           {usesPlainWording() ? hostDetail(failReason) : <>Couldn't update automatically: {failReason}</>}{' '}
           {hosted || usesPlainWording()
             ? PLAIN['update.failed.hint']
-            : <>Run <code style={{ font: '400 11px var(--font-mono)' }}>dispatch update</code> manually instead.</>}
+            : <>Run <code style={{ font: '400 11px var(--font-mono)' }}>{needsSwitchBack ? 'dispatch update --switch-back' : 'dispatch update'}</code> manually instead.</>}
+          {needsSwitchBack && (
+            <div style={{ marginTop: 6 }}>
+              <button type="button" onClick={() => void apply(false, true)} disabled={applying} style={{ height: 28, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-accent)', borderRadius: 'var(--radius-sm)', color: 'var(--color-accent)', fontWeight: 600, fontSize: 12, cursor: applying ? 'default' : 'pointer' }}>Switch to {next || available.version}</button>
+            </div>
+          )}
         </div>
       )}
     </div>

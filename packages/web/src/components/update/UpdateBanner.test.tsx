@@ -159,3 +159,26 @@ describe('a copy that runs a version above the newest release', () => {
     expect(screen.getByText('dispatch update --switch-back')).toBeInTheDocument();
   });
 });
+
+describe('a refusal that only the explicit switch lifts (a diverged copy on a lower version)', () => {
+  test('the banner offers Switch after the refusal, and Switch sends switchBack', async () => {
+    applyUpdate.mockResolvedValue({ ok: false, reason: 'This copy (v4.8.2) has diverged from release v4.9.0.', needsSwitchBack: true });
+    applySwitchBack.mockResolvedValue({ ok: true });
+    useUpdate.setState(waiting);
+    render(<UpdateBanner />);
+    fireEvent.click(screen.getByRole('button', { name: 'Update now' }));
+    const sw = await screen.findByRole('button', { name: 'Switch to v3.26.1' });
+    expect(screen.getByText('dispatch update --switch-back')).toBeInTheDocument();
+    fireEvent.click(sw);
+    await waitFor(() => expect(applySwitchBack).toHaveBeenCalledOnce());
+  });
+
+  test('an ordinary refusal offers no Switch', async () => {
+    applyUpdate.mockResolvedValue({ ok: false, reason: 'the checkout has local changes' });
+    useUpdate.setState(waiting);
+    render(<UpdateBanner />);
+    fireEvent.click(screen.getByRole('button', { name: 'Update now' }));
+    await screen.findByText(/local changes/);
+    expect(screen.queryByRole('button', { name: /^Switch to/ })).toBeNull();
+  });
+});

@@ -22,14 +22,15 @@ import { Button } from '../ui';
 export function UpdatesSection() {
   const available = useUpdate((s) => s.available);
   const ahead = useUpdate((s) => s.ahead);
+  const checkError = useUpdate((s) => s.checkError);
   const currentVersion = useUpdate((s) => s.currentVersion);
   const notes = useUpdate((s) => s.notes);
   const currentNotes = useUpdate((s) => s.currentNotes);
-  const { apply, applying, failReason, inProgress, hosted } = useApplyUpdate();
+  const { apply, applying, failReason, needsSwitchBack, inProgress, hosted } = useApplyUpdate();
   const progressStep = useUpdate((st) => (st.progressUnreachable ? 'restart' : st.progress?.step ?? null));
   const [checking, setChecking] = useState(false);
   const [checked, setChecked] = useState(false);
-  const [checkError, setCheckError] = useState(false);
+  const [checkFailed, setCheckFailed] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
 
   // Opening Updates refreshes what it shows (2026-11-05): the stored release can be one behind when
@@ -38,9 +39,9 @@ export function UpdatesSection() {
   useEffect(() => { void useUpdate.getState().check().catch(() => {}); }, []);
 
   async function check() {
-    setChecking(true); setChecked(false); setCheckError(false);
+    setChecking(true); setChecked(false); setCheckFailed(false);
     try { await useUpdate.getState().check(); setChecked(true); }
-    catch { setCheckError(true); }
+    catch { setCheckFailed(true); }
     setChecking(false);
   }
 
@@ -80,8 +81,10 @@ export function UpdatesSection() {
       )} />
   ) : (
     <SettingsRow label="Check for updates"
-      hint={checkError
+      hint={checkFailed
         ? <span style={{ color: 'var(--color-status-red)' }}>{hostCopy('update.check.unreachable', "Couldn't reach the server.")}</span>
+        // The last check could not tell: never read "up to date" then.
+        : checkError ? <span style={{ color: 'var(--color-status-red)' }}>{`The last check could not tell if an update is available. ${checkError}`}</span>
         : checked ? "You're up to date." : hostCopy('update.check.hint', 'Looks for a newer release on GitHub.')}
       control={<Button onClick={() => void check()} disabled={checking} variant="ghost" size="sm" style={checking ? { opacity: 0.6 } : undefined}>{checking ? 'Checking…' : 'Check now'}</Button>} />
   );
@@ -100,7 +103,12 @@ export function UpdatesSection() {
                 person who can rebuild the fleet image. */}
             {hosted || usesPlainWording()
               ? PLAIN['update.failed.hint']
-              : <>Run <code style={{ font: '400 11px var(--font-mono)' }}>dispatch update</code> manually instead.</>}
+              : <>Run <code style={{ font: '400 11px var(--font-mono)' }}>{ahead || needsSwitchBack ? 'dispatch update --switch-back' : 'dispatch update'}</code> manually instead.</>}
+            {needsSwitchBack && available && !hosted && (
+              <div style={{ marginTop: 8 }}>
+                <Button variant="ghost" size="sm" onClick={() => void apply(false, true)} disabled={applying}>Switch to {available.version}</Button>
+              </div>
+            )}
           </>
         )} />
       )}

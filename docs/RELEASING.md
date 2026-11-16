@@ -49,7 +49,9 @@ release (for example one stuck on an unreleased tag) is told so, not "up to date
 Updates and the banner offer **Switch to vX.Y.Z**; from a terminal it is
 `dispatch update --switch-back`. Moving back is never automatic and never a fast-forward: it needs
 a clean working tree and `main` (or a detached HEAD) checked out, it keeps the old commit on a
-branch named `dispatch-backup/vOLD-SHA7`, then resets to the release. A dev checkout of `main` a
+branch named `dispatch-backup/vOLD-SHA7`, then resets to the release. A copy that has *diverged* from
+the release (commits the release does not contain, whatever its version) needs the same explicit switch.
+The clean-tree check asks git for untracked files explicitly; ignored files are not checked. A dev checkout of `main` a
 few commits past the latest tag, with the *same* version, is not ahead.
 
 `dispatch release` only ever touches the tag. **You** own the `package.json` bump and the
@@ -228,6 +230,9 @@ leaves every install nagging forever, and it is only visible hours later.
 - **Never cut a release by hand** (`git tag`, `gh release create`, or a version bump in one
   `package.json`). `dispatch release` is the only path. `packages/core/tests/release-versions.test.ts`
   fails when root, cli, core and web differ, so a hand bump shows up in CI.
+- **Give `dispatch release` the version.** With no argument it bumps the highest *local* tag, and old
+  local tags from unreleased work (for example v4.8.x) make it propose the wrong number. Run
+  `./bin/dispatch release 4.9.0`, and delete stale local tags with `git tag -d vX.Y.Z`.
 - **Keep origin's tags clean.** Installs older than 4.9.0 still move to the *highest `vX.Y.Z` tag
   on origin*, published or not. Until people are on 4.9.0 or later, every such tag on origin must be
   a published release on `main`. Delete a stray tag at once: `git push origin :refs/tags/vX.Y.Z`.
