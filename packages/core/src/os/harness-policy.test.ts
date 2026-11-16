@@ -20,8 +20,9 @@ describe('the harness policy of the image', () => {
 
   test('the standard file holds exactly the keys that were measured against the pinned CLI', () => {
     const standard = JSON.parse(fs.readFileSync(path.join(POLICY, 'claude-managed-settings.json'), 'utf8'));
+    // The forced login is NOT here: it is the drop-in below (os/login-policy.ts), so the daemon can lift it
+    // for a company-billed person while every other key of this file stays.
     expect(standard).toEqual({
-      forceLoginMethod: 'claudeai',
       permissions: { disableBypassPermissionsMode: 'disable' },
       allowManagedHooksOnly: true,
       allowManagedPermissionRulesOnly: true,
@@ -33,9 +34,11 @@ describe('the harness policy of the image', () => {
     });
     const developer = JSON.parse(fs.readFileSync(path.join(POLICY, 'claude-managed-settings.developer.json'), 'utf8'));
     expect(developer).toEqual({ forceLoginMethod: 'claudeai', disableClaudeAiConnectors: true, enableArtifact: false, disableArtifact: true });
-    // The gateway mode drops only the login method: approvals are as strict.
+    // The gateway mode: approvals are as strict; the entrypoint writes no login drop-in for it.
     const gateway = JSON.parse(fs.readFileSync(path.join(POLICY, 'claude-managed-settings.gateway.json'), 'utf8'));
-    expect(gateway).toEqual({ ...standard, forceLoginMethod: undefined });
+    expect(gateway).toEqual(standard);
+    // The forced login, as the drop-in the image bakes into Claude Code's managed folder.
+    expect(JSON.parse(fs.readFileSync(path.join(POLICY, 'claude-login-dropin.json'), 'utf8'))).toEqual({ forceLoginMethod: 'claudeai' });
     const codex = fs.readFileSync(path.join(POLICY, 'codex-requirements.toml'), 'utf8');
     expect(codex).toMatch(/^allowed_approval_policies = \["untrusted", "on-request"\]$/m);
     // danger-full-access is allowed (owner decision 2026-11-13: the box is the sandbox; the proof's

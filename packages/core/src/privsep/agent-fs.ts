@@ -83,11 +83,12 @@ export function agentMkdir(dir: string, cfg: PrivsepConfig | null = privsep()): 
 /**
  * Copy a file the daemon holds (an upload in its own scratch space) to a path below the home. The
  * daemon opens the source (never through a link); the agent-side script only receives the bytes.
+ * `wx`: fail with EEXIST when `dest` exists (a name is claimed, never overwritten).
  */
-export function agentCopyFrom(source: string, dest: string, cfg: PrivsepConfig | null = privsep()): void {
-  if (!cfg) { fs.copyFileSync(source, dest); return; }
+export function agentCopyFrom(source: string, dest: string, cfg: PrivsepConfig | null = privsep(), flag: 'w' | 'wx' = 'w'): void {
+  if (!cfg) { fs.copyFileSync(source, dest, flag === 'wx' ? fs.constants.COPYFILE_EXCL : 0); return; }
   const fd = fs.openSync(source, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
-  try { run('write', [dest, 'w', '644'], fd); } finally { fs.closeSync(fd); }
+  try { run('write', [dest, flag, '644'], fd); } finally { fs.closeSync(fd); }
 }
 
 /** Rename within the agent's files, as the agent. */

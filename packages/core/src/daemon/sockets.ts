@@ -18,6 +18,7 @@ import type { StatusService } from '../status/service.js';
 import type { TerminalMonitor } from '../terminal-monitor.js';
 import type { IStructuredManager } from '../structured/manager.js';
 import { stripPrefix } from './base-path.js';
+import { viewMayStart } from '../os/process-reaper.js';
 import type { PtyLike } from './noop-pty.js';
 
 /** The three WebSocket servers of the daemon (noServer mode: `attach` routes the upgrades to them). */
@@ -60,6 +61,15 @@ export interface UpgradeInputs {
  * The handler of the HTTP `upgrade` event. Express middleware never runs for an upgrade, so every check
  * of the HTTP side is repeated here: the mount prefix, the box token, the access gate, and "no key opens a socket".
  */
+/**
+ * What opening a chat does to its thread: start its process when it has none (a daemon restart), except a
+ * thread whose idle process the host stopped (os/process-reaper.ts): viewing it reads the journal only.
+ * Without the reaper (every local install) this is ensureStructuredAlive, as before.
+ */
+export function structuredViewOpener(sessions: Pick<SessionService, 'getTerminal' | 'ensureStructuredAlive'>): (terminalId: string) => boolean {
+  return (tid) => (viewMayStart(sessions.getTerminal(tid)?.config as Record<string, unknown> | undefined, tid) ? sessions.ensureStructuredAlive(tid) : false);
+}
+
 export function createUpgradeHandler(i: UpgradeInputs): (request: http.IncomingMessage, socket: Duplex, head: Buffer) => void {
   const { sockets, accessGate, devices, sessionService } = i;
   // Open WebSockets by device id. A revoke destroys them: the cookie is checked only at connect.
@@ -158,7 +168,7 @@ export function createUpgradeHandler(i: UpgradeInputs): (request: http.IncomingM
         const manager = (id && sessionService.structuredManagerForTerminal(id)) || i.claudeManager;
         handleStructuredConnection(
           ws, request, manager,
-          (tid) => sessionService.ensureStructuredAlive(tid),
+          structuredViewOpener(sessionService),
           (tid) => sessionService.historyOwnedByRest(tid),
           (tid) => sessionService.historyRestPageable(tid),
           // Settled = the daemon's own status row says the thread is not mid-turn. Drives

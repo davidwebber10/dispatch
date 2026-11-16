@@ -72,6 +72,18 @@ export function daemonTimers(s: DaemonServices, opts: { network: boolean }): Dae
         return () => clearInterval(t);
       },
     },
+    {
+      // Idle thread processes (os/process-reaper.ts): only on a host that set the variables; otherwise no interval.
+      name: 'process-reaper',
+      start: () => {
+        const reaper = s.processReaper;
+        if (!reaper) return () => {};
+        const every = Math.min(30_000, Math.max(1_000, Math.floor((reaper.settings.idleMs || 120_000) / 4)));
+        const t = setInterval(() => { try { reaper.tick(); } catch (err) { console.error('[reaper] tick failed:', err); } }, every);
+        t.unref?.();
+        return () => clearInterval(t);
+      },
+    },
     // Auto-archive sweep — prunes opted-in threads that have gone idle past their
     // deadline. Cheap: a full scan of a small table (terminals) once a minute — no
     // index backs this, but the table stays small enough that it doesn't matter.

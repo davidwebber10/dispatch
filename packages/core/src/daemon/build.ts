@@ -19,6 +19,8 @@ import express from 'express';
 import type Database from 'better-sqlite3';
 import * as pendingQuestionsDb from '../db/pending-questions.js';
 import * as terminalsDb from '../db/terminals.js';
+import * as sessionsDb from '../db/sessions.js';
+import { expandHome } from '../sessions/project-dir.js';
 import * as appState from '../db/app-state.js';
 import * as usageDb from '../db/usage.js';
 import type { SessionService } from '../sessions/service.js';
@@ -55,10 +57,15 @@ import { createOsToolsRouter, OsToolCatalog, osSystemServerSpecs, systemsForSpaw
 import { ClaudeCliLogin, planOf } from '../auth/claude-cli-login.js';
 import { useCleanClaudeLogin, isHostedBox } from '../os/hosted-mode.js';
 import { boxLog } from '../os/box-log.js';
+import { createProcessReaper, type ProcessReaper } from '../os/process-reaper.js';
 import { wireStopOnAuthFailure } from '../os/auth-stop.js';
 import { createApprovalsRouter } from '../os/approvals-routes.js';
 import { createContinuityRouter } from '../os/continuity.js';
 import { setProfileSource, resolveProfile } from '../os/profile.js';
+import { setCompanyModelSource } from '../os/company-model.js';
+import { createModelRelayRouter } from '../os/model-relay.js';
+import { syncLoginPolicy } from '../os/login-policy.js';
+import { detectProvider } from '../setup/detect.js';
 import { IntegrationsService, type IntegrationLauncher } from '../integrations/service.js';
 import { HeartbeatService } from '../platform/heartbeat.js';
 import { bestEffort, compactLimits, diskUse } from '../platform/fleet-stats.js';
@@ -203,6 +210,8 @@ export interface DaemonServices {
   terminalMonitor: TerminalMonitor;
   threadAutoNamer: ThreadAutoNamer;
   stallWatchdog: StallWatchdog;
+  /** Stops idle thread processes on a host that asks for it (os/process-reaper.ts). Null on every local install. */
+  processReaper: ProcessReaper | null;
   // Agents and roles
   agentService: AgentService;
   rolesService: RolesService;
@@ -481,6 +490,15 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     });
   }
   const journalWiring = wireJournal(db, harnesses.managers.values()); // W3-D: the message journal
+  // Idle thread processes (os/process-reaper.ts): only when the host sets DISPATCH_IDLE_PROCESS_MINUTES or
+  // DISPATCH_MAX_LIVE_PROCESSES. A local install sets neither: no reaper, no hook, nothing changes.
+  const processReaper = createProcessReaper({
+    db, managers: harnesses.managers,
+    stop: (id) => sessionService.stopTerminal(id),
+    log: (event, fields, level) => { if (isHostedBox(env)) boxLog(event, fields, level); else console.log(`[reaper] ${event} ${JSON.stringify(fields)}`); },
+    ...(opts.clock ? { now: opts.clock } : {}),
+  });
+  processReaper?.attach();
   wireRestoredQuestions(db, sessionService, harnesses.managers.values(), statusService); // a pending question survives a restart (W2-C)
   agentService.setLifecycleService(statusService);
   statusService.onHarnessCommitted((event) => { if (event.type === 'process.exited') rolesService.handleTerminalExit(event.terminalId); });
@@ -562,10 +580,44 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   // OS's tool list: which company systems get a server (os/tools-proxy.ts). Follows every change of OS's answer.
   const osToolCatalog = new OsToolCatalog({ provider: osConnections });
   if (osConnections.enabled) osToolCatalog.start();
+  // Claude Code's forced login (os/login-policy.ts): a root-owned drop-in, present unless the platform's
+  // CURRENT answer grants a company Claude model and turns the person's own login off. Fail closed: it is
+  // written at start, before the platform answers. Hosted boxes only; a daemon that is not root changes nothing.
+  if (isHostedBox(env)) {
+    const gateway = env.DISPATCH_ALLOW_MODEL_GATEWAY?.trim() === '1';
+    let lastForced: boolean | null = null;
+    let lastProblem: string | null = null;
+    const followLogin = () => {
+      const r = syncLoginPolicy(osConnections.modelAccess(), { gateway });
+      if (r.forced !== lastForced || r.problem !== lastProblem) boxLog('claude.login-policy', { forced: r.forced, ...(r.problem ? { problem: r.problem } : {}) }, r.problem ? 'warn' : 'info');
+      lastForced = r.forced;
+      lastProblem = r.problem;
+    };
+    followLogin();
+    osConnections.onChange(followLogin);
+  }
   // ONE profile for this daemon: OS's live answer (kept while OS is unreachable), else DISPATCH_PROFILE,
   // else business on a hosted box / developer locally. The gate, the sockets, the page and every spawn read it.
   const profileNow = () => resolveProfile(osConnections.snapshot().profile, env);
   setProfileSource(profileNow);
+  // Company models (os/company-model.ts): what the platform grants now, and whether the person has a
+  // Claude login of their own a thread could use (the account the thread names, else the default).
+  setCompanyModelSource({
+    access: () => osConnections.modelAccess(),
+    proxy: () => osConnections.modelProxy(),
+    personalClaudeSignedIn: async (config) => {
+      const wanted = typeof config.accountId === 'string' && config.accountId ? config.accountId : accounts.defaultId('claude');
+      const id = accounts.has('claude', wanted) ? wanted : accounts.defaultId('claude');
+      if (id !== 'cli') {
+        const dir = accounts.claudeConfigDir(id);
+        if (dir) return (await claudeLogin.cliStatus({ configDir: dir }).catch(() => null))?.loggedIn === true;
+        return accounts.claudeToken(id) !== null;
+      }
+      if (claudeLogin.usesCleanLogin) return (await claudeLogin.cliStatus().catch(() => null))?.loggedIn === true;
+      if (claudeLogin.isAuthenticated()) return true;
+      return (await detectProvider('claude').catch(() => null))?.signedIn === true;
+    },
+  });
   profileRef = profileNow;
   const hostContext = () => liveHostContext(bootHostContext, { profile: profileNow(), osPublicUrl: osConnections.snapshot().osPublicUrl });
   // The business profile's table and what its guard may ask (profile/business-gate.ts). The guard is the
@@ -678,6 +730,27 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
       onUnreachable: (terminalId, message) => {
         sessionService.structuredManagerForTerminal(terminalId)?.postEvent?.(terminalId, { type: 'system', subtype: 'dispatch_notice', level: 'warning', message });
       },
+      // An export result is saved into the thread's working folder (os/export-download.ts), the folder its process runs in.
+      workspaceFor: (terminalId) => {
+        const row = terminalsDb.getById(db, terminalId);
+        if (!row || row.archived_at) return null;
+        const dir = row.working_dir || sessionsDb.getById(db, row.session_id)?.working_dir;
+        return dir ? expandHome(dir) : null;
+      },
+      exportScratchDir: path.join(dataDir, 'export-downloads'),
+    }),
+    // Company models (os/model-relay.ts): a company-model Claude thread's Messages traffic, to the platform's proxy.
+    createModelRelayRouter({
+      access: () => osConnections.modelAccess(),
+      proxy: () => osConnections.modelProxy(),
+      boxHeaders: () => osConnections.boxHeaders(),
+      thread: (id) => {
+        const row = terminalsDb.getById(db, id);
+        if (!row || row.archived_at) return null;
+        let config: Record<string, unknown> = {};
+        try { const parsed = JSON.parse(row.config || '{}'); if (parsed && typeof parsed === 'object') config = parsed; } catch { /* an unreadable config is an empty one */ }
+        return { type: row.type, config };
+      },
     }),
     createApprovalsRouter(db, sessionService),
     createContinuityRouter(db, sessionService),
@@ -710,7 +783,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   const services: DaemonServices = {
     db, dataDir, keys, noCredentialStats: auth.noCredentialStats, accessGate: auth.accessGate, pairCodes: auth.pairCodes, devices: auth.devices,
     authRequestService, claudeLogin, codexLogin, accounts, sockets, broadcaster, ptyManager, sessionService, statusService,
-    harnessManagers: harnesses.managers, structuredManager: harnesses.claude, terminalMonitor, threadAutoNamer, stallWatchdog,
+    harnessManagers: harnesses.managers, structuredManager: harnesses.claude, terminalMonitor, threadAutoNamer, stallWatchdog, processReaper,
     agentService, rolesService, outbox, watchDispatcher, ledgerService, pushService, endless, endlessManager,
     usageLimits, limitSnapshots, usageGauge, usage, boxHeartbeat, secretsService, integrationsService, osConnections, toolsAuth,
     refreshSpawnEnv: spawnEnv.refresh, plugins, marketplaces, installer, skills, threadEvents, pluginHooks, pluginWorkers, assistRunner,
