@@ -457,7 +457,7 @@ stored in this repository.
 
 1. Cut the release as `docs/RELEASING.md` describes. The tag is `v<version>`, for example `v4.7.0`.
    A tag with a label (`v4.7.0-os.1`) is also accepted. The `X.Y.Z` part of the tag must equal the
-   version in `packages/core/package.json` on the tagged commit.
+   version in the root `package.json` on the tagged commit.
 2. The tag push starts `hosted-image`. Watch it: `gh run watch` on the run in the Actions tab.
 3. When the run is green, copy the digest from the run summary (`sha256:…`).
 4. To build again for a tag that exists (for example after a runner failure), run the workflow

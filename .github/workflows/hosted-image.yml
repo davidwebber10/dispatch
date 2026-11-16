@@ -12,6 +12,9 @@
 #      never moved), check that the pushed image is the image that was proved (same layers and config),
 #      and sign a provenance attestation for the image index digest (actions/attest-build-provenance).
 #
+# It is its own workflow: a failure here never blocks the desktop release (`dispatch release` tags and
+# publishes without waiting for it); rebuild the image with a manual run on the tag (below).
+#
 # A push happens only on a version tag: the tag push itself, or a manual run on a tag ref with
 # `push` ticked. A manual run on a branch builds and proves, and pushes nothing.
 # There is no pull_request trigger: this workflow never runs code from a fork.
@@ -68,10 +71,11 @@ jobs:
             if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
               echo "::error::tag $REF_NAME is not v<major>.<minor>.<patch>[-label]"; exit 1
             fi
-            # The tag must sit on the commit whose package.json carries the same release.
-            PKG="$(node -p 'require("./packages/core/package.json").version')"
+            # The tag must sit on the commit whose root package.json carries the same release (the file
+            # `dispatch release` reads; a release may leave packages/*/package.json behind).
+            PKG="$(node -p 'require("./package.json").version')"
             if [ "${VERSION%%-*}" != "${PKG%%-*}" ]; then
-              echo "::error::tag $REF_NAME does not match packages/core/package.json ($PKG)"; exit 1
+              echo "::error::tag $REF_NAME does not match package.json ($PKG)"; exit 1
             fi
             if [ "$EVENT" = push ] || [ "$PUSH_INPUT" = true ]; then PUSH=true; fi
           else
