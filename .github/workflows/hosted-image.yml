@@ -14,7 +14,7 @@
 #
 # A push happens only on a box tag: the tag push itself, or a manual run on a tag ref with
 # `push` ticked. A box tag is `box-v<base>-<n>` (for example box-v4.7.8-1) and the image version is
-# `<base>-box.<n>` (4.7.8-box.1). <base> is the normal Dispatch version in packages/core/package.json.
+# `<base>-box.<n>` (4.7.8-box.1). <base> is the normal Dispatch version in the root package.json.
 # The desktop updater offers only `v<major>.<minor>.<patch>` tags, so a box tag is never offered
 # as a desktop update. See docs/BOX-RELEASES.md. A manual run on a branch builds and proves, and pushes nothing.
 # There is no pull_request trigger: this workflow never runs code from a fork.
