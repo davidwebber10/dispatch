@@ -23,7 +23,8 @@ function viewport(phone: boolean) {
 }
 
 const open = (t: Terminal = tab(), onClose = () => {}) => render(<ThreadMenu at={{ tab: t, x: 40, y: 60 }} onClose={onClose} onBranched={() => {}} />);
-const openMore = () => fireEvent.click(screen.getByRole('button', { name: 'More' }));
+// The rows show without a More fold (owner, 2026-11-13); nothing to open.
+const openMore = () => {};
 
 beforeEach(() => {
   usePluginRegistry.setState({ views: [], settings: [], threadMenu: [], projectMenu: [], composerActions: [], slots: [], promoted: [], manifests: [], status: {} });
@@ -59,7 +60,7 @@ describe('the thread menu Doppler token switch', () => {
     expect(screen.queryByRole('switch', { name: NAME })).toBeNull();
   });
 
-  it('with scope opted-in it shows in More, off, with a Phosphor icon and a plain line', async () => {
+  it('with scope opted-in it shows in the menu, off, with a Phosphor icon and a plain line', async () => {
     vi.spyOn(api, 'getSecretsStatus').mockResolvedValue(status('opted-in'));
     open();
     openMore();

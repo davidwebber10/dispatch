@@ -87,11 +87,11 @@ describe('Switch account… in the thread menu', () => {
 });
 
 describe('DetailsPane account row', () => {
-  it('names the account the thread runs on, "(default)" when unpinned, and offers Switch Account', async () => {
+  it('names the account the thread runs on, "(default)" when unpinned, and its Account tile switches', async () => {
     useProjects.setState({ sessions: [{ id: 's1', name: 'Proj', workingDir: '/tmp/p', provider: 'claude-code', status: 'idle' }] } as any);
     render(<DetailsPane projectId="s1" terminalId="t1" />);
     expect(await screen.findByText('CLI login (this computer) (default)')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Switch Account' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Switch account…' }));
     expect(await screen.findByRole('radio', { name: /Work/ })).toBeInTheDocument();
   });
 

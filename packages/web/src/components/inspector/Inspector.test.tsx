@@ -83,3 +83,20 @@ describe('Inspector plugin tabs', () => {
     expect(screen.getByText('notes for null in null')).toBeInTheDocument();
   });
 });
+
+// Owner, 2026-11-13: the desktop right column's Details tab mirrors the right-click menu.
+describe('Details tab: the thread actions', () => {
+  it('shows the right-click menu\'s tiles and rows for the open thread', async () => {
+    const { useTabs } = await import('../../stores/tabs');
+    const { useProjects } = await import('../../stores/projects');
+    useProjects.setState({ sessions: [{ id: 's1', name: 'Proj', workingDir: '/tmp/x', provider: 'claude-code', status: 'waiting' } as any] });
+    useTabs.setState({ byProject: { s1: [{ id: 't1', sessionId: 's1', type: 'claude-code', label: 'Fix login', status: 'idle', config: {}, createdAt: '' } as any] } } as any);
+    vi.spyOn(api, 'getTerminal').mockResolvedValue({ id: 't1', workingDir: '/tmp/x', pid: 1, status: 'idle' } as any);
+    vi.spyOn(api, 'getGitInfo').mockResolvedValue({ branch: 'main' } as any);
+    vi.spyOn(api, 'getUsageLimits').mockResolvedValue(null as any);
+    useUI.setState({ inspectorTab: 'details' } as any);
+    render(<Inspector projectId="s1" terminalId="t1" onOpenFile={() => {}} />);
+    expect(await screen.findByRole('group', { name: 'Quick actions' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Download thread' })).toBeInTheDocument();
+  });
+});
