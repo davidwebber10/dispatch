@@ -1,32 +1,25 @@
-import { describe, it, expect } from 'vitest';
-import { preflightUpdate, parsePorcelain, latestReleaseTag, type GitExec } from './apply.js';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { preflightUpdate, parsePorcelain, type GitExec } from './apply.js';
+import { fakeGit, release, exit } from './fake-git.fixture.js';
 
-/** Builds a fake `git` runner from a map of `args.join(' ')` -> stdout (or a thrown Error). */
-function fakeGit(responses: Record<string, string | Error>): GitExec {
-  return (args) => {
-    const key = args.join(' ');
-    const res = responses[key];
-    if (res === undefined) throw new Error(`unexpected git invocation: ${key}`);
-    if (res instanceof Error) throw res;
-    return res;
-  };
-}
+afterEach(() => { vi.restoreAllMocks(); });
 
-const CLEAN_AND_FF_ABLE = {
-  'status --porcelain': '',
-  'fetch origin --tags': '',
-  'ls-remote --tags --refs origin': 'a1\trefs/tags/v3.4.0\nb2\trefs/tags/v3.5.0\n',
-  'rev-parse HEAD': 'abc123\n',
-  'rev-parse v3.5.0^{commit}': 'def456\n',
-  'merge-base --is-ancestor abc123 def456': '',
-};
+/** GitHub's answer: the releases published. */
+const github = (...tags: string[]) => vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => tags.map((t) => release(t)) }) as any;
+
+/** v3.5.0 is released and on main at def456; this checkout (abc123) is one commit behind it. */
+const world = { tags: { 'v3.4.0': 'old340', 'v3.5.0': 'def456', 'v3.6.0': 'unreleased' }, main: ['old340', 'def456', 'abc123'], head: 'abc123', ancestors: { def456: ['abc123'] } };
+const RELEASES = ['v3.4.0', 'v3.5.0'];
 
 describe('preflightUpdate: the reason never carries a path (SEC sweep)', () => {
   // execFileSync's message is "Command failed: git -C <repo> <args>" plus git's stderr: both name folders.
-  const leaky = new Error("Command failed: git -C /Users/someone/dispatch fetch origin --tags\nfatal: '/Users/someone/remote.git' does not appear to be a git repository\n");
-  for (const step of ['status --porcelain', 'fetch origin --tags', 'ls-remote --tags --refs origin', 'rev-parse HEAD']) {
-    it(`a failed "git ${step}" gives a plain reason`, () => {
-      const result = preflightUpdate('/Users/someone/dispatch', fakeGit({ ...CLEAN_AND_FF_ABLE, [step]: leaky }));
+  const leaky = new Error("Command failed: git -C /Users/someone/dispatch fetch origin\nfatal: '/Users/someone/remote.git' does not appear to be a git repository\n");
+  for (const step of ['status', 'fetch', 'ls-remote', 'rev-parse']) {
+    it(`a failed "git ${step}" gives a plain reason`, async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const inner = fakeGit(world);
+      const git: GitExec = (args) => { if (args[0] === step) throw leaky; return inner(args); };
+      const result = await preflightUpdate('/Users/someone/dispatch', git, { version: '3.4.0', fetchImpl: github(...RELEASES) });
       expect(result.ok).toBe(false);
       expect(result.reason).toMatch(/failed|could not/i);
       expect(result.reason).not.toMatch(/\/Users|someone|Command failed/);
@@ -35,55 +28,39 @@ describe('preflightUpdate: the reason never carries a path (SEC sweep)', () => {
 });
 
 describe('preflightUpdate', () => {
-  it('fails when the working tree is dirty', () => {
-    const git = fakeGit({ ...CLEAN_AND_FF_ABLE, 'status --porcelain': ' M packages/core/src/server.ts\n' });
-    const result = preflightUpdate('/repo', git);
+  const run = (w: object, o: object = {}, tags: string[] = RELEASES) =>
+    preflightUpdate('/repo', fakeGit({ ...world, ...w }), { version: '3.4.0', fetchImpl: github(...tags), ...o });
+
+  it('fails when the working tree is dirty', async () => {
+    const result = await run({ dirty: ' M packages/core/src/server.ts\n' });
     expect(result.ok).toBe(false);
     expect(result.reason).toMatch(/uncommitted changes/i);
   });
 
-  it('succeeds on a clean, fast-forwardable tree', () => {
-    const git = fakeGit(CLEAN_AND_FF_ABLE);
-    const result = preflightUpdate('/repo', git);
-    expect(result).toEqual({ ok: true });
+  it('succeeds on a clean, fast-forwardable tree', async () => {
+    expect(await run({})).toEqual({ ok: true, move: 'forward' });
   });
 
-  it('fails when the local branch has diverged from origin (cannot fast-forward)', () => {
-    const git = fakeGit({
-      ...CLEAN_AND_FF_ABLE,
-      'merge-base --is-ancestor abc123 def456': new Error('exit code 1'),
-      'merge-base --is-ancestor def456 abc123': new Error('exit code 1'),
-    });
-    const result = preflightUpdate('/repo', git);
+  it('fails when the local branch has diverged from the release (cannot fast-forward)', async () => {
+    const result = await run({ head: 'mine', ancestors: {} });
     expect(result.ok).toBe(false);
     expect(result.reason).toMatch(/diverged/i);
     expect(result.forceable).toBeFalsy();
   });
 
-  it('succeeds when already up to date (local HEAD == origin HEAD, an ancestor of itself)', () => {
-    const git = fakeGit({
-      ...CLEAN_AND_FF_ABLE,
-      'rev-parse HEAD': 'abc123\n',
-      'rev-parse v3.5.0^{commit}': 'abc123\n',
-      'merge-base --is-ancestor abc123 abc123': '',
-    });
-    const result = preflightUpdate('/repo', git);
-    expect(result).toEqual({ ok: true });
+  it('succeeds when already up to date', async () => {
+    expect(await run({ head: 'def456' }, { version: '3.5.0' })).toEqual({ ok: true, move: 'current' });
   });
 
-  it('fails when git fetch itself fails (e.g. offline)', () => {
-    const git = fakeGit({ ...CLEAN_AND_FF_ABLE, 'fetch origin --tags': new Error('could not resolve host') });
-    const result = preflightUpdate('/repo', git);
+  it('fails when git fetch itself fails (e.g. offline)', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const result = await run({ fetchFails: true });
     expect(result.ok).toBe(false);
-    expect(result.reason).toMatch(/git fetch failed/i);
+    expect(result.reason).toMatch(/could not read the release tags/i);
   });
 
-  it('reports parsed dirty entries and marks the failure forceable', () => {
-    const git = fakeGit({
-      ...CLEAN_AND_FF_ABLE,
-      'status --porcelain': ' M packages/core/src/server.ts\n?? scratch.txt\nR  old.ts -> new.ts\n',
-    });
-    const result = preflightUpdate('/repo', git);
+  it('reports parsed dirty entries and marks the failure forceable', async () => {
+    const result = await run({ dirty: ' M packages/core/src/server.ts\n?? scratch.txt\nR  old.ts -> new.ts\n' });
     expect(result.ok).toBe(false);
     expect(result.forceable).toBe(true);
     expect(result.dirty).toEqual([
@@ -94,71 +71,71 @@ describe('preflightUpdate', () => {
     expect(result.dirtyOverflow).toBe(0);
   });
 
-  it('force:true skips the dirty gate and proceeds through fetch/branch/ancestor checks', () => {
-    const calls: string[][] = [];
-    const git: GitExec = (args) => {
-      calls.push(args);
-      const key = args.join(' ');
-      if (key === 'status --porcelain') return ' M packages/core/src/server.ts\n';
-      return (CLEAN_AND_FF_ABLE as Record<string, string>)[key] ?? '';
-    };
-    const result = preflightUpdate('/repo', git, { force: true });
-    expect(result.ok).toBe(true);
-    expect(calls.some((c) => c.join(' ') === 'fetch origin --tags')).toBe(true);
+  it('force:true skips the dirty gate of a forward update', async () => {
+    expect(await run({ dirty: ' M a.ts\n' }, { force: true })).toEqual({ ok: true, move: 'forward' });
   });
 
-  it('force:true does NOT skip the fast-forward/ancestor check — a diverged branch is never forceable', () => {
-    const git = fakeGit({
-      ...CLEAN_AND_FF_ABLE,
-      'status --porcelain': ' M packages/core/src/server.ts\n',
-      'merge-base --is-ancestor abc123 def456': new Error('exit code 1'),
-      'merge-base --is-ancestor def456 abc123': new Error('exit code 1'),
-    });
-    const result = preflightUpdate('/repo', git, { force: true });
+  it('force:true does NOT skip the move check — a diverged branch is never forceable', async () => {
+    const result = await run({ dirty: ' M a.ts\n', head: 'mine', ancestors: {} }, { force: true });
     expect(result.ok).toBe(false);
     expect(result.forceable).toBeFalsy();
     expect(result.reason).toMatch(/diverged/i);
   });
 
-  it('updates to the newest release tag, never to the tip of main', () => {
-    // fakeGit throws on any unexpected invocation, so this passing proves the check ran against the
-    // tag (and never resolved origin/main or an upstream).
-    const git = fakeGit({
-      ...CLEAN_AND_FF_ABLE,
-      'ls-remote --tags --refs origin': 'a1\trefs/tags/v3.9.2\nb2\trefs/tags/v3.10.0\n',
-      'rev-parse v3.10.0^{commit}': 'def456\n',
-    });
-    expect(preflightUpdate('/repo', git)).toEqual({ ok: true });
+  it('updates to the newest PUBLISHED release, never a higher tag nobody released', async () => {
+    // v3.6.0 is a tag on origin with no release: it must not be the target. Had it been, this checkout
+    // (running 3.4.0, behind v3.5.0 only) could not fast-forward to it and the preflight would refuse.
+    expect(await run({})).toEqual({ ok: true, move: 'forward' });
   });
 
-  it('ignores prerelease and non-release tags when picking the newest', () => {
-    const git = fakeGit({
-      ...CLEAN_AND_FF_ABLE,
-      'ls-remote --tags --refs origin': 'a\trefs/tags/v3.6.0-rc1\nb\trefs/tags/vnext\nc\trefs/tags/v3.5.0\n',
-    });
-    expect(preflightUpdate('/repo', git)).toEqual({ ok: true });
+  it('ignores drafts and prereleases', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => [release('v3.5.0'), release('v3.6.0', { draft: true }), release('v3.7.0', { prerelease: true })] }) as any;
+    expect(await preflightUpdate('/repo', fakeGit({ ...world, tags: { ...world.tags, 'v3.7.0': 'x' }, main: [...world.main, 'unreleased', 'x'] }), { version: '3.4.0', fetchImpl })).toEqual({ ok: true, move: 'forward' });
   });
 
-  it('fails clearly when origin has no release tag', () => {
-    const git = fakeGit({ ...CLEAN_AND_FF_ABLE, 'ls-remote --tags --refs origin': '' });
-    const result = preflightUpdate('/repo', git);
+  it('stops clearly when GitHub cannot be reached, and does not pick the highest tag', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const result = await run({}, { fetchImpl: vi.fn().mockRejectedValue(new Error('offline')) });
     expect(result.ok).toBe(false);
-    expect(result.reason).toMatch(/No release tag/);
+    expect(result.reason).toMatch(/reach GitHub/);
+  });
+
+  it('stops clearly when no release is on main', async () => {
+    const result = await run({ main: ['abc123'] });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/No published release on main/);
     expect(result.forceable).toBeFalsy();
   });
 
-  it('is fine when the checkout already contains the newest release (ahead of the tag)', () => {
-    const git = fakeGit({
-      ...CLEAN_AND_FF_ABLE,
-      'merge-base --is-ancestor abc123 def456': new Error('exit code 1'),
-      'merge-base --is-ancestor def456 abc123': '',
-    });
-    expect(preflightUpdate('/repo', git)).toEqual({ ok: true });
+  it('is fine when the checkout is a dev checkout of main past the release (same version)', async () => {
+    const result = await run({ head: 'tip', ancestors: { tip: ['def456'] } }, { version: '3.5.0' });
+    expect(result).toEqual({ ok: true, move: 'current' });
   });
 
-  it('an untracked-only tree parses correctly', () => {
-    const git = fakeGit({ ...CLEAN_AND_FF_ABLE, 'status --porcelain': '?? scratch.txt\n?? notes.md\n' });
-    const result = preflightUpdate('/repo', git);
+  describe('running ahead of the newest release (stuck on an unreleased tag)', () => {
+    const ahead = { head: 'x40', ancestors: {} };
+
+    it('is refused without the explicit switch, and says so', async () => {
+      const result = await run(ahead, { version: '3.6.0' });
+      expect(result.ok).toBe(false);
+      expect(result.needsSwitchBack).toBe(true);
+      expect(result.reason).toMatch(/3\.6\.0.*3\.5\.0/s);
+    });
+
+    it('passes with the explicit switch and says the move is back', async () => {
+      expect(await run(ahead, { version: '3.6.0', switchBack: true })).toEqual({ ok: true, move: 'back' });
+    });
+
+    it('a dirty tree is never forceable for a move back', async () => {
+      const result = await run({ ...ahead, dirty: ' M a.ts\n' }, { version: '3.6.0', switchBack: true, force: true });
+      expect(result.ok).toBe(false);
+      expect(result.reason).toMatch(/clean working tree/);
+      expect(result.forceable).toBeFalsy();
+    });
+  });
+
+  it('an untracked-only tree parses correctly', async () => {
+    const result = await run({ dirty: '?? scratch.txt\n?? notes.md\n' });
     expect(result.ok).toBe(false);
     expect(result.forceable).toBe(true);
     expect(result.dirty).toEqual([
@@ -185,14 +162,5 @@ describe('parsePorcelain', () => {
     const { entries, overflow } = parsePorcelain(many);
     expect(entries).toHaveLength(50);
     expect(overflow).toBe(10);
-  });
-});
-
-describe('latestReleaseTag', () => {
-  const lines = (...t: string[]) => t.map((x, i) => `sha${i}\trefs/tags/${x}`).join('\n');
-  it('takes the highest plain vX.Y.Z by number, not by text', () => {
-    expect(latestReleaseTag(lines('v3.9.2', 'v3.10.0', 'v3.2.11'))).toBe('v3.10.0');
-    expect(latestReleaseTag(lines('v1.3.0-beta', 'v1.2.3', 'nightly'))).toBe('v1.2.3');
-    expect(latestReleaseTag('')).toBeNull();
   });
 });

@@ -21,6 +21,7 @@ import { Button } from '../ui';
  */
 export function UpdatesSection() {
   const available = useUpdate((s) => s.available);
+  const ahead = useUpdate((s) => s.ahead);
   const currentVersion = useUpdate((s) => s.currentVersion);
   const notes = useUpdate((s) => s.notes);
   const currentNotes = useUpdate((s) => s.currentNotes);
@@ -65,6 +66,16 @@ export function UpdatesSection() {
       control={(
         <Button variant="primary" size="sm" onClick={() => void apply()} disabled={applying} style={applying ? { opacity: 0.7 } : undefined}>
           {applying ? 'Updating…' : 'Update now'}
+        </Button>
+      )} />
+  ) : ahead ? (
+    // Running a version above the newest release (stuck on an unreleased version): never "up to date".
+    // Moving back is an explicit choice; the old commit stays on a backup branch.
+    <SettingsRow label={<span style={{ color: 'var(--color-accent)', fontWeight: 600 }}>{`This version is not a published release`}</span>}
+      hint={`The latest release is ${ahead.version}. Switching moves Dispatch back to it, restarts it, and keeps your current version on a backup branch.`}
+      control={(
+        <Button variant="primary" size="sm" onClick={() => void apply(false, true)} disabled={applying} style={applying ? { opacity: 0.7 } : undefined}>
+          {applying ? 'Switching…' : `Switch to ${ahead.version}`}
         </Button>
       )} />
   ) : (

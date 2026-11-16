@@ -2,10 +2,11 @@ import { render, screen, fireEvent, within } from '@testing-library/react';
 import { test, expect, beforeEach, vi } from 'vitest';
 
 const applyUpdate = vi.fn();
+const applySwitchBack = vi.fn();
 const getUpdateState = vi.fn();
 vi.mock('../../api/client', () => ({
   api: {
-    applyUpdate: (force?: boolean) => applyUpdate(force),
+    applyUpdate: (force?: boolean, switchBack?: boolean) => (switchBack ? applySwitchBack(force) : applyUpdate(force)),
     getUpdateState: () => getUpdateState(),
     checkUpdate: () => getUpdateState(),
   },
@@ -15,8 +16,9 @@ import { UpdatesSection } from './UpdatesSection';
 import { useUpdate } from '../../stores/update';
 
 beforeEach(() => {
-  useUpdate.setState({ available: null, currentVersion: '2.10.0', dismissedVersion: null, inProgress: false, notes: [], currentNotes: null });
+  useUpdate.setState({ available: null, ahead: null, currentVersion: '2.10.0', dismissedVersion: null, inProgress: false, notes: [], currentNotes: null });
   applyUpdate.mockReset();
+  applySwitchBack.mockReset();
   getUpdateState.mockReset();
   getUpdateState.mockResolvedValue({ available: false, version: null, url: null, publishedAt: null, currentVersion: '2.10.0' });
 });
@@ -69,4 +71,17 @@ test("shows the pending update's notes instead, once one is available", () => {
 test('shows no notes row at all when the daemon reported none', () => {
   render(<UpdatesSection />);
   expect(screen.queryByText(/Release notes|What's new/)).not.toBeInTheDocument();
+});
+
+test('a copy above the newest release is not "up to date": a row offers the switch back', async () => {
+  applySwitchBack.mockResolvedValue({ ok: true });
+  useUpdate.setState({ currentVersion: '4.8.0', ahead: { version: 'v4.7.8', url: null, publishedAt: null } });
+  render(<UpdatesSection />);
+  const group = versionGroup();
+  expect(within(group).getByText('This version is not a published release')).toBeInTheDocument();
+  expect(within(group).queryByText("You're up to date.")).toBeNull();
+  expect(within(group).queryByRole('button', { name: 'Update now' })).toBeNull();
+  fireEvent.click(within(group).getByRole('button', { name: 'Switch to v4.7.8' }));
+  await vi.waitFor(() => expect(applySwitchBack).toHaveBeenCalledOnce());
+  expect(applyUpdate).not.toHaveBeenCalled();
 });

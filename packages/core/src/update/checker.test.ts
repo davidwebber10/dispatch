@@ -7,6 +7,8 @@ import { createDatabase } from '../db/connection.js';
 import * as appState from '../db/app-state.js';
 import type { EventBroadcaster } from '../ws/events.js';
 import { checkForUpdateOnce } from './checker.js';
+import { fakeGit } from './fake-git.fixture.js';
+import { storedUpdateView } from './stored.js';
 
 let dir: string;
 let db: Database.Database;
@@ -33,6 +35,10 @@ function release(tag: string, extra: Record<string, unknown> = {}) {
   };
 }
 
+/** Every tag these tests use is on main, unless a test builds its own world. */
+const TAGS = ['v1.0.0', 'v1.1.0', 'v1.2.0', 'v1.3.0', 'v1.9.0', 'v2.0.0'];
+const onMain = () => fakeGit({ tags: Object.fromEntries(TAGS.map((t) => [t, `c-${t}`])), main: TAGS.map((t) => `c-${t}`) });
+
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-update-'));
   db = createDatabase(path.join(dir, 'test.db'));
@@ -48,7 +54,7 @@ describe('checkForUpdateOnce', () => {
     const broadcaster = fakeBroadcaster();
     const fetchImpl = vi.fn().mockResolvedValue(releaseResponse([release('v1.2.0')]));
 
-    await checkForUpdateOnce(db, broadcaster, { currentVersion: '1.0.0', fetchImpl });
+    await checkForUpdateOnce(db, broadcaster, { currentVersion: '1.0.0', fetchImpl, git: onMain() });
 
     expect(broadcaster.events).toEqual([{
       type: 'update:available',
@@ -67,7 +73,7 @@ describe('checkForUpdateOnce', () => {
       release('v1.0.0'), release('v1.3.0'), release('v1.1.0'), release('v1.2.0'),
     ]));
 
-    await checkForUpdateOnce(db, broadcaster, { currentVersion: '1.1.0', fetchImpl });
+    await checkForUpdateOnce(db, broadcaster, { currentVersion: '1.1.0', fetchImpl, git: onMain() });
 
     expect(fetchImpl.mock.calls[0][0]).toMatch(/\/releases\?per_page=\d+$/);
     const stored = JSON.parse(appState.get(db, 'latest_release_notes')!);
@@ -85,7 +91,7 @@ describe('checkForUpdateOnce', () => {
       release('v1.2.0'),
     ]));
 
-    await checkForUpdateOnce(db, broadcaster, { currentVersion: '1.0.0', fetchImpl });
+    await checkForUpdateOnce(db, broadcaster, { currentVersion: '1.0.0', fetchImpl, git: onMain() });
 
     expect(appState.get(db, 'latest_release_tag')).toBe('v1.2.0');
     expect(broadcaster.events).toHaveLength(1);
@@ -95,11 +101,12 @@ describe('checkForUpdateOnce', () => {
     const broadcaster = fakeBroadcaster();
     const fetchImpl = vi.fn().mockResolvedValue(releaseResponse([release('v1.0.0')]));
 
-    await checkForUpdateOnce(db, broadcaster, { currentVersion: '1.0.0', fetchImpl });
+    await checkForUpdateOnce(db, broadcaster, { currentVersion: '1.0.0', fetchImpl, git: onMain() });
 
     expect(broadcaster.events).toEqual([]);
-    expect(appState.get(db, 'latest_release_tag')).toBeNull();
-    expect(appState.get(db, 'latest_release_notes')).toBeNull();
+    // The target is stored even when it is not newer: that is how "up to date" differs from "ahead".
+    expect(appState.get(db, 'latest_release_tag')).toBe('v1.0.0');
+    expect(appState.get(db, 'latest_release_notes')).toBe('[]');
     // Still records that a check happened, for observability.
     expect(appState.get(db, 'last_checked_ts')).not.toBeNull();
   });
@@ -108,16 +115,60 @@ describe('checkForUpdateOnce', () => {
     const broadcaster = fakeBroadcaster();
     const fetchImpl = vi.fn().mockResolvedValue(releaseResponse([release('v1.0.0')]));
 
-    await checkForUpdateOnce(db, broadcaster, { currentVersion: '1.1.0', fetchImpl });
+    await checkForUpdateOnce(db, broadcaster, { currentVersion: '1.1.0', fetchImpl, git: onMain() });
 
     expect(broadcaster.events).toEqual([]);
+    // ...and it is reported as ahead, not as up to date.
+    expect(storedUpdateView(db, '1.1.0')).toMatchObject({ available: false, ahead: { version: 'v1.0.0' } });
+  });
+
+  it('a running version equal to the newest release is neither available nor ahead', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(releaseResponse([release('v1.0.0')]));
+    await checkForUpdateOnce(db, fakeBroadcaster(), { currentVersion: '1.0.0', fetchImpl, git: onMain() });
+    expect(storedUpdateView(db, '1.0.0')).toEqual({ available: false, version: null, url: null, publishedAt: null, ahead: null });
+  });
+
+  it('ignores a release whose tag is not on main, even though it is the newest published', async () => {
+    const broadcaster = fakeBroadcaster();
+    const fetchImpl = vi.fn().mockResolvedValue(releaseResponse([release('v2.0.0'), release('v1.2.0')]));
+    const git = fakeGit({ tags: { 'v1.2.0': 'c12', 'v2.0.0': 'c20' }, main: ['c12'] });
+
+    await checkForUpdateOnce(db, broadcaster, { currentVersion: '1.0.0', fetchImpl, git });
+
+    expect(appState.get(db, 'latest_release_tag')).toBe('v1.2.0');
+    expect(broadcaster.events).toHaveLength(1);
+  });
+
+  it('a tag that is higher but has no published release is never the target (the 4.8.0 case)', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(releaseResponse([release('v1.0.0')]));
+    const git = fakeGit({ tags: { 'v1.0.0': 'c10', 'v1.1.0': 'c11' }, main: ['c10', 'c11'] });
+    await checkForUpdateOnce(db, fakeBroadcaster(), { currentVersion: '1.0.0', fetchImpl, git });
+    expect(appState.get(db, 'latest_release_tag')).toBe('v1.0.0');
+  });
+
+  it('forgets a stored target when no release qualifies any more', async () => {
+    appState.set(db, 'latest_release_tag', 'v1.2.0');
+    const fetchImpl = vi.fn().mockResolvedValue(releaseResponse([release('v1.2.0')]));
+    const git = fakeGit({ tags: { 'v1.2.0': 'c12' }, main: [] });
+    await checkForUpdateOnce(db, fakeBroadcaster(), { currentVersion: '1.0.0', fetchImpl, git });
+    expect(storedUpdateView(db, '1.0.0').available).toBe(false);
+  });
+
+  it('leaves what is stored when git cannot read origin', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    appState.set(db, 'latest_release_tag', 'v1.2.0');
+    const fetchImpl = vi.fn().mockResolvedValue(releaseResponse([release('v1.2.0')]));
+    await checkForUpdateOnce(db, fakeBroadcaster(), { currentVersion: '1.0.0', fetchImpl, git: fakeGit({ fetchFails: true }) });
+    expect(appState.get(db, 'latest_release_tag')).toBe('v1.2.0');
+    expect(appState.get(db, 'last_checked_ts')).toBeNull();
   });
 
   it('does not throw and does not touch app_state when the GitHub API errors', async () => {
     const broadcaster = fakeBroadcaster();
     const fetchImpl = vi.fn().mockResolvedValue(releaseResponse({}, false, 404));
 
-    await expect(checkForUpdateOnce(db, broadcaster, { currentVersion: '1.0.0', fetchImpl })).resolves.toBeUndefined();
+    await expect(checkForUpdateOnce(db, broadcaster, { currentVersion: '1.0.0', fetchImpl, git: onMain() })).resolves.toBeUndefined();
 
     expect(broadcaster.events).toEqual([]);
     expect(appState.get(db, 'last_checked_ts')).toBeNull();
@@ -127,7 +178,7 @@ describe('checkForUpdateOnce', () => {
     const broadcaster = fakeBroadcaster();
     const fetchImpl = vi.fn().mockResolvedValue(releaseResponse({ message: 'rate limited' }));
 
-    await expect(checkForUpdateOnce(db, broadcaster, { currentVersion: '1.0.0', fetchImpl })).resolves.toBeUndefined();
+    await expect(checkForUpdateOnce(db, broadcaster, { currentVersion: '1.0.0', fetchImpl, git: onMain() })).resolves.toBeUndefined();
     expect(broadcaster.events).toEqual([]);
     expect(appState.get(db, 'last_checked_ts')).toBeNull();
   });
@@ -136,7 +187,7 @@ describe('checkForUpdateOnce', () => {
     const broadcaster = fakeBroadcaster();
     const fetchImpl = vi.fn().mockRejectedValue(new Error('network down'));
 
-    await expect(checkForUpdateOnce(db, broadcaster, { currentVersion: '1.0.0', fetchImpl })).resolves.toBeUndefined();
+    await expect(checkForUpdateOnce(db, broadcaster, { currentVersion: '1.0.0', fetchImpl, git: onMain() })).resolves.toBeUndefined();
     expect(broadcaster.events).toEqual([]);
   });
 });

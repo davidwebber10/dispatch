@@ -21,9 +21,19 @@ The auto-updater reads three things:
 | **The running version** | `version` in the four `package.json` files | the daemon reads its own `packages/core/package.json` (`getRunningVersion()`, `packages/core/src/update/version.ts`) | a hand-authored `chore(release)` commit |
 | **The release note** | `docs/releases/vX.Y.Z.md`, copied into the GitHub Release body | the same poll, then the update prompt shows it | you, before you tag — `dispatch release` refuses without it |
 
-The daemon polls GitHub roughly every 45 minutes and shows the update prompt **only when the
-newest release tag is strictly newer than the version it was built from**
+The daemon polls GitHub roughly every 15 minutes and shows the update prompt **only when the
+newest eligible release is strictly newer than the version it was built from**
 (`isNewerVersion(tag, running)`).
+
+"Eligible" is one rule, in one place (`packages/core/src/update/target.ts`), used by the poll,
+by the daemon's preflight and by `dispatch update`:
+
+> The target is the newest **published** GitHub release (not a draft, not a prerelease, tag
+> shaped `vX.Y.Z`) whose **tag commit is reachable from `origin/main`**.
+
+A tag with no published release is ignored. A release whose tag is on another branch is ignored.
+If GitHub cannot be read, the update stops with a plain message; it never falls back to "the
+highest tag". (On 2026-11-13 that fallback moved an install onto an unreleased tag.)
 
 So:
 
@@ -33,6 +43,14 @@ So:
   install is ever notified**.
 - **No release note** → nobody can see what the update contains before installing it.
   (`dispatch release` now refuses outright.)
+
+**Ahead of the newest release.** A copy that runs a version *higher* than the newest eligible
+release (for example one stuck on an unreleased tag) is told so, not "up to date". Settings →
+Updates and the banner offer **Switch to vX.Y.Z**; from a terminal it is
+`dispatch update --switch-back`. Moving back is never automatic and never a fast-forward: it needs
+a clean working tree and `main` (or a detached HEAD) checked out, it keeps the old commit on a
+branch named `dispatch-backup/vOLD-SHA7`, then resets to the release. A dev checkout of `main` a
+few commits past the latest tag, with the *same* version, is not ahead.
 
 `dispatch release` only ever touches the tag. **You** own the `package.json` bump and the
 note, and both have to be committed and pushed to `main` *before* you tag.
@@ -207,6 +225,13 @@ leaves every install nagging forever, and it is only visible hours later.
 
 ## Gotchas
 
+- **Never cut a release by hand** (`git tag`, `gh release create`, or a version bump in one
+  `package.json`). `dispatch release` is the only path. `packages/core/tests/release-versions.test.ts`
+  fails when root, cli, core and web differ, so a hand bump shows up in CI.
+- **Keep origin's tags clean.** Installs older than 4.9.0 still move to the *highest `vX.Y.Z` tag
+  on origin*, published or not. Until people are on 4.9.0 or later, every such tag on origin must be
+  a published release on `main`. Delete a stray tag at once: `git push origin :refs/tags/vX.Y.Z`.
+
 - **Working from a git worktree?** `dispatch release` requires `HEAD` to be *on the branch
   `main`* — a worktree checked out on a feature branch will fail guard #3, and you can't check
   `main` out in two worktrees at once. Either cut the release from the primary `main` checkout,
@@ -245,7 +270,7 @@ git checkout main && git pull
 git commit -am "chore(release): X.Y.Z — <headline>"
 git push origin main
 
-# 5. tag + GitHub Release (publishes the note as the release body)
+# 5. tag + GitHub Release (publishes the note as the release body) — the ONLY way to release
 ./bin/dispatch release            # auto-bumps patch, or: ./bin/dispatch release X.Y.Z
 ```
 
@@ -254,6 +279,7 @@ Where the pieces live, if you need to change how any of this behaves:
 | Concern | File |
 | --- | --- |
 | The guards + `--notes-file` | `packages/cli/src/index.ts` (`cmdRelease`) |
+| Which release an install moves to (the one rule) | `packages/core/src/update/target.ts` |
 | Polling GitHub, keeping the notes | `packages/core/src/update/checker.ts` |
 | Note parsing, caps, reading from disk | `packages/core/src/update/notes.ts` |
 | Serving them to the browser | `packages/core/src/routes/state.ts` (`GET /update`) |

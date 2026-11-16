@@ -7,7 +7,7 @@ vi.mock('../api/client', () => ({ api: { getUpdateState: () => getUpdateState(),
 import { useUpdate } from './update';
 
 beforeEach(() => {
-  useUpdate.setState({ available: null, currentVersion: null, dismissedVersion: null, inProgress: false, notes: [], currentNotes: null });
+  useUpdate.setState({ available: null, ahead: null, currentVersion: null, dismissedVersion: null, inProgress: false, notes: [], currentNotes: null });
   getUpdateState.mockReset();
 });
 
@@ -34,6 +34,20 @@ test('load() hydrates available + currentVersion from the late-joiner REST endpo
   await useUpdate.getState().load();
   expect(useUpdate.getState().available).toEqual({ version: 'v1.3.0', url: 'https://x', publishedAt: '2026-02-01' });
   expect(useUpdate.getState().currentVersion).toBe('1.2.0');
+});
+
+test('load() hydrates ahead: the release to switch back to when this copy runs an unreleased version', async () => {
+  getUpdateState.mockResolvedValue({ available: false, version: null, url: null, publishedAt: null, currentVersion: '4.8.0', ahead: { version: 'v4.7.8', url: 'https://x', publishedAt: '2026-11-15' } });
+  await useUpdate.getState().load();
+  expect(useUpdate.getState().ahead).toEqual({ version: 'v4.7.8', url: 'https://x', publishedAt: '2026-11-15' });
+  expect(useUpdate.getState().available).toBeNull();
+});
+
+test('load() clears ahead when the endpoint reports none (or an older daemon sends no field)', async () => {
+  useUpdate.setState({ ahead: { version: 'v4.7.8', url: null, publishedAt: null } });
+  getUpdateState.mockResolvedValue({ available: false, version: null, url: null, publishedAt: null, currentVersion: '4.7.8' });
+  await useUpdate.getState().load();
+  expect(useUpdate.getState().ahead).toBeNull();
 });
 
 test('load() clears available when the endpoint reports none', async () => {

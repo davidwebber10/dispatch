@@ -38,6 +38,7 @@ describe('GET /api/state/update', () => {
       version: null,
       url: null,
       publishedAt: null,
+      ahead: null,
       currentVersion: getRunningVersion(),
       notes: [],
       currentNotes: readLocalReleaseNote(getRunningVersion()),
@@ -67,6 +68,22 @@ describe('GET /api/state/update', () => {
     const res = await request(app()).get('/api/state/update');
     expect(res.body.available).toBe(false);
     expect(res.body.version).toBeNull();
+  });
+
+  it('reports ahead, not "up to date", when the running version is above the newest release', async () => {
+    appState.set(db, 'latest_release_tag', 'v0.0.1');
+    appState.set(db, 'latest_release_url', 'https://example.com/v0.0.1');
+    appState.set(db, 'latest_release_published_at', '2026-01-01T00:00:00Z');
+
+    const res = await request(app()).get('/api/state/update');
+    expect(res.body).toMatchObject({ available: false, version: null, ahead: { version: 'v0.0.1', url: 'https://example.com/v0.0.1', publishedAt: '2026-01-01T00:00:00Z' } });
+    expect(res.body.notes).toEqual([]);
+  });
+
+  it('a stored release equal to the running version is not ahead (a dev checkout past the tag)', async () => {
+    appState.set(db, 'latest_release_tag', getRunningVersion());
+    const res = await request(app()).get('/api/state/update');
+    expect(res.body.ahead).toBeNull();
   });
 
   it('returns the release notes for every version between the running one and the newest', async () => {

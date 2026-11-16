@@ -2,9 +2,10 @@ import type Database from 'better-sqlite3';
 import * as appState from '../db/app-state.js';
 import type { EventBroadcaster } from '../ws/events.js';
 import { getRunningVersion } from './version.js';
-import { collectPendingNotes, MAX_NOTES, type GitHubRelease } from './notes.js';
+import { collectPendingNotes } from './notes.js';
+import { makeGitExec } from './apply.js';
+import { loadEligibleReleases, ReleaseSourceError, type GitExec } from './target.js';
 
-const DEFAULT_REPO = 'davidwebber10/dispatch';
 // 15 min (was 45): a release that lands soon after the last check is not shown as the latest for
 // long. Four unauthenticated calls an hour, well inside GitHub's 60.
 const DEFAULT_INTERVAL_MS = 15 * 60 * 1000;
@@ -13,6 +14,10 @@ export interface CheckForUpdateOptions {
   currentVersion?: string;
   fetchImpl?: typeof fetch;
   repo?: string;
+  /** The checkout the rule reads origin's main and tags from. */
+  repoDir?: string;
+  /** Test seam: a git runner in place of real git on `repoDir`. */
+  git?: GitExec;
 }
 
 /**
@@ -21,9 +26,13 @@ export interface CheckForUpdateOptions {
  * genuinely newer than what's running — exported standalone (rather than only reachable
  * via the interval) so tests can drive a single tick deterministically.
  *
+ * Which releases count is the shared rule in `target.ts` (published, on origin/main), the same one the
+ * install uses, so the version shown is the version installed. The stored target is the newest such
+ * release even when it is NOT newer than the running version: that is how a copy that runs an
+ * unreleased version is told apart from one that is up to date (`storedUpdateView`).
+ *
  * This reads the release *list*, not `/releases/latest`, so an install that skipped
  * versions can show the notes for every version it skipped, not only the target's.
- * Drafts and prereleases are filtered out, which `/releases/latest` used to do for us.
  */
 export async function checkForUpdateOnce(
   db: Database.Database,
@@ -31,53 +40,56 @@ export async function checkForUpdateOnce(
   opts?: CheckForUpdateOptions,
 ): Promise<void> {
   const currentVersion = opts?.currentVersion ?? getRunningVersion();
-  const fetchImpl = opts?.fetchImpl ?? fetch;
-  const repo = opts?.repo ?? DEFAULT_REPO;
+  const git = opts?.git ?? (opts?.repoDir ? makeGitExec(opts.repoDir) : null);
+  if (!git) { console.warn('update check: no checkout to read origin from'); return; }
 
-  let releases: GitHubRelease[] | null = null;
+  let eligible;
   try {
-    const res = await fetchImpl(`https://api.github.com/repos/${repo}/releases?per_page=${MAX_NOTES * 3}`, {
-      headers: { Accept: 'application/vnd.github+json' },
-    });
-    if (res.ok) {
-      const body = await res.json();
-      if (Array.isArray(body)) releases = body as GitHubRelease[];
-      else console.warn('update check: GitHub API returned a non-array release list');
-    } else console.warn(`update check: GitHub API returned ${res.status}`);
+    eligible = await loadEligibleReleases(git, { fetchImpl: opts?.fetchImpl, repo: opts?.repo, perPage: 30 });
   } catch (err) {
-    console.error('update check failed', err);
+    // A plain reason (GitHub or origin could not be read) is already logged by the rule; leave what is stored.
+    if (err instanceof ReleaseSourceError) console.warn(`update check: ${err.message}`);
+    else console.error('update check failed', err);
     return;
   }
-  if (!releases) return;
 
   appState.set(db, 'last_checked_ts', new Date().toISOString());
 
-  const pending = collectPendingNotes(releases, currentVersion);
-  if (pending.length === 0) return;
-  const newest = pending[0];
+  const newest = eligible[0];
+  if (!newest) {
+    // Nothing published on main: forget a stale target rather than keep offering it.
+    appState.set(db, 'latest_release_tag', '');
+    appState.set(db, 'latest_release_url', '');
+    appState.set(db, 'latest_release_published_at', '');
+    appState.set(db, 'latest_release_notes', '[]');
+    return;
+  }
 
-  appState.set(db, 'latest_release_tag', newest.version);
-  appState.set(db, 'latest_release_url', newest.url);
-  appState.set(db, 'latest_release_published_at', newest.publishedAt);
+  const pending = collectPendingNotes(eligible, currentVersion);
+  appState.set(db, 'latest_release_tag', newest.tag_name);
+  appState.set(db, 'latest_release_url', newest.html_url ?? '');
+  appState.set(db, 'latest_release_published_at', newest.published_at ?? '');
   appState.set(db, 'latest_release_notes', JSON.stringify(pending));
+  if (pending.length === 0) return;
 
   // The event keeps its original shape. Notes travel over REST instead of the socket:
   // they can run to tens of kilobytes, and every client refetches `/api/state/update`
   // when this arrives anyway.
   broadcaster.broadcast({
     type: 'update:available',
-    version: newest.version,
-    url: newest.url,
-    publishedAt: newest.publishedAt,
+    version: newest.tag_name,
+    url: newest.html_url ?? '',
+    publishedAt: newest.published_at ?? '',
   });
 }
 
-/** Checks immediately, then every `intervalMs` (default ~45 min). */
+/** Checks immediately, then every `intervalMs` (default 15 min). */
 export function startUpdateCheckLoop(
   db: Database.Database,
   broadcaster: EventBroadcaster,
+  repoDir: string,
   intervalMs: number = DEFAULT_INTERVAL_MS,
 ): NodeJS.Timeout {
-  void checkForUpdateOnce(db, broadcaster);
-  return setInterval(() => { void checkForUpdateOnce(db, broadcaster); }, intervalMs);
+  void checkForUpdateOnce(db, broadcaster, { repoDir });
+  return setInterval(() => { void checkForUpdateOnce(db, broadcaster, { repoDir }); }, intervalMs);
 }

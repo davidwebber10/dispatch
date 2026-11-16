@@ -5,6 +5,7 @@ import * as path from 'path';
 import { execFileSync, spawnSync } from 'child_process';
 import type { DaemonController, DaemonInstallOptions } from 'dispatch-server/platform';
 import { formatDoctor, type DoctorAnswer } from './doctor.js';
+import { moveToTarget, resolveTarget, type GitExec } from 'dispatch-server/update-target';
 
 const require = createRequire(import.meta.url);
 
@@ -36,6 +37,8 @@ export interface Ctx {
   accessLib?: AccessLib;
   /** Test seam: the process environment that decides thread mode and the key. Defaults to `process.env`. */
   processEnv?: NodeJS.ProcessEnv;
+  /** Test seam: the GitHub release list `dispatch update` asks for the release to install. Defaults to `fetch`. */
+  releasesFetch?: typeof fetch;
   /** Test seam: read the owner token without creating it. Defaults to the access module on `dataDir`. */
   readOwnerToken?: () => string | null;
   /** Test seam: HTTP client for `dispatch api` and the `status` counts. Defaults to the global `fetch`. */
@@ -135,8 +138,7 @@ export function runCommand(argv: string[], ctx: Ctx): void | Promise<void> {
       cmdBuild(ctx);
       return;
     case 'update':
-      cmdUpdate(ctx);
-      return;
+      return cmdUpdate(ctx, rest);
     case 'run':
       cmdRun(ctx);
       return;
@@ -686,50 +688,48 @@ async function rolesSetEnabled(ctx: Ctx, name: string, enabled: boolean): Promis
   console.log(`${entry.def.name}: ${action}d${suffix ? ' ' + suffix : ''}`);
 }
 
-/**
- * The newest plain release tag (vX.Y.Z) among the tags ORIGIN advertises: the output of
- * `git ls-remote --tags --refs origin`, lines of `sha<TAB>refs/tags/NAME`. Reading origin's list, not
- * the local one, keeps a local-only tag from standing in for a release. Prerelease and other tag shapes
- * are ignored; versions compare as numbers. Keep in step with the same function in packages/cli/src/index.ts.
- */
-export function latestReleaseTag(lsRemote: string): string | null {
-  let best: { tag: string; v: number[] } | null = null;
-  for (const line of lsRemote.split('\n')) {
-    const m = /refs\/tags\/(v(\d+)\.(\d+)\.(\d+))\s*$/.exec(line.trim());
-    if (!m) continue;
-    const v = [Number(m[2]), Number(m[3]), Number(m[4])];
-    if (!best || v[0] > best.v[0] || (v[0] === best.v[0] && (v[1] > best.v[1] || (v[1] === best.v[1] && v[2] > best.v[2])))) best = { tag: m[1], v };
-  }
-  return best?.tag ?? null;
+/** git against this checkout, for the shared update rule (dispatch-server/update-target). */
+function gitOf(ctx: Ctx): GitExec {
+  return (args) => String(execFileSync('git', args, { encoding: 'utf8', ...(ctx.repoRoot ? { cwd: ctx.repoRoot } : {}), ...shellOf(ctx) }) ?? '');
+}
+
+/** The version this checkout runs: packages/core/package.json, which the daemon reports too. '0.0.0' if unreadable (never "ahead"). */
+function checkoutVersion(ctx: Ctx): string {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(ctx.repoRoot ?? process.cwd(), 'packages', 'core', 'package.json'), 'utf8')) as { version?: string };
+    return String(pkg.version || '0.0.0');
+  } catch { return '0.0.0'; }
 }
 
 /**
- * Move this checkout to the newest release tag with a fast-forward, instead of pulling the tip of
- * main: a release is the unit a person read the notes for, and main can hold unreleased commits.
- * A checkout that already contains the tag is left where it is; a diverged one fails.
+ * Move this checkout to the release the shared rule names: the newest PUBLISHED GitHub release whose tag
+ * commit is on origin/main (core `update/target.ts`, the same rule the update check and the daemon's
+ * preflight use). There is no "highest tag" fallback: if GitHub or origin cannot be read, or nothing
+ * qualifies, the update stops with a plain message. A checkout behind the release fast-forwards; one that
+ * already contains it (same version) stays; one that runs a HIGHER version than the release (stuck on an
+ * unreleased tag) moves back only with `--switch-back`, after a backup branch keeps its old commit.
  */
-function updateToLatestRelease(ctx: Ctx): void {
-  execFileSync('git', ['fetch', 'origin', '--tags'], { stdio: 'inherit', ...shellOf(ctx) });
-  const list = String(execFileSync('git', ['ls-remote', '--tags', '--refs', 'origin'], { encoding: 'utf8', ...shellOf(ctx) }) ?? '');
-  const tag = latestReleaseTag(list);
-  if (!tag) throw new Error('No release tag (vX.Y.Z) was found on origin, so there is nothing to update to.');
-  console.log(`Updating to release ${tag}`);
-  // refs/tags/ form, not tag^{commit}: the caret is an escape character in cmd.exe.
-  execFileSync('git', ['merge', '--ff-only', `refs/tags/${tag}`], { stdio: 'inherit', ...shellOf(ctx) });
+async function updateToLatestRelease(ctx: Ctx, opts: { switchBack: boolean }): Promise<void> {
+  const git = gitOf(ctx);
+  const target = await resolveTarget(git, { fetchImpl: ctx.releasesFetch });
+  console.log(`Updating to release ${target.tag}`);
+  const out = moveToTarget(git, target, { version: checkoutVersion(ctx), allowBack: opts.switchBack });
+  if (out.move === 'back') console.log(`Moved back to release ${target.tag}. The commit you were on is kept on the branch ${out.backup}.`);
 }
 
-// Order is: fast-forward to the newest release tag → build (pnpm install, since fresh dependencies may be needed
+// Order is: move to the newest published release on main (fast-forward; or, only with --switch-back, back) → build (pnpm install, since fresh dependencies may be needed
 // post-pull, then `pnpm -r run build`) → restart. Restart goes through the platform
 // daemon controller unconditionally — darwin wraps launchctl kickstart, wsl kills and
 // respawns the pidfile-tracked process, and linux throws "not implemented" (headless
 // linux runs foreground; an update that can't restart must surface that error, not
 // swallow it — so this deliberately does not wrap ctx.daemon.restart() in try/catch).
-export function cmdUpdate(ctx: Ctx): void {
+export async function cmdUpdate(ctx: Ctx, args: string[] = []): Promise<void> {
+  const switchBack = args.includes('--switch-back');
   const progress = progressWriter(ctx.dataDir);
   try {
     progress.step('pull');
     const lockBefore = lockfileHash(ctx);
-    updateToLatestRelease(ctx);
+    await updateToLatestRelease(ctx, { switchBack });
     const lockAfter = lockfileHash(ctx);
     progress.step('install');
     // Unchanged dependencies need no install: this saves 10-20 s on most updates.

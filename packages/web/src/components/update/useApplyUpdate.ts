@@ -22,7 +22,8 @@ export function useApplyUpdate() {
   // whether it is a hosted box, and the failure advice differs entirely.
   const [hosted, setHosted] = useState(false);
 
-  const apply = async (force?: boolean) => {
+  /** `switchBack` is the explicit "move me back to the latest release" (a copy that runs an unreleased version). */
+  const apply = async (force?: boolean, switchBack?: boolean) => {
     setApplying(true);
     setFailReason(null);
     useUpdate.setState({ failure: null });
@@ -30,7 +31,7 @@ export function useApplyUpdate() {
     setFailDirtyOverflow(0);
     setCanForce(false);
     try {
-      const res = await api.applyUpdate(force);
+      const res = await api.applyUpdate(force, switchBack);
       setHosted(res.hosted === true);
       if (res.ok) useUpdate.setState({ inProgress: true });
       else {

@@ -128,6 +128,11 @@ export interface UpdateState {
   notes?: ReleaseNote[];
   /** The note for the version running right now, for "what's new" in Settings. */
   currentNotes?: string | null;
+  /**
+   * Set when this copy runs a version HIGHER than the newest published release (stuck on an unreleased
+   * version): the release it can switch back to. Absent or null otherwise; never set on a hosted box.
+   */
+  ahead?: { version: string; url: string | null; publishedAt: string | null } | null;
 }
 
 export interface SessionStats {
