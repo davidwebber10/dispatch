@@ -92,6 +92,11 @@
   overflow-wrap: anywhere;
   transition: background 0.12s, border-color 0.12s;
 }
+/* A table in the section panel keeps its own sizing and its sideways scroll: the panel's overflow-wrap:
+ * anywhere would shrink its columns to one letter. */
+.overseer-root .ledger-source-body table {
+  overflow-wrap: normal;
+}
 /* The item's row in the section panel (titles and source panel spec 2026-10-09, Unit 10). */
 .overseer-root [data-source-mark],
 .overseer-root tr[data-source-mark] > td {

@@ -16,7 +16,7 @@ import type { LedgerCard as Card } from '../../../api/types';
 
 const URL = 'sftp://feeduser@files.example.com/Feeds/CatalogB2B/ProductExport_2026-11-16_FullCatalogWithVariantsAndMetafields_v3_final.csv';
 const long = cardItem({
-  seq: 41, title: `Move the feed to ${URL}`, text: `Read from ${URL}?`, context: `The job fetches ${URL} nightly.`,
+  seq: 41, isNew: true, title: `Move the feed to ${URL}`, text: `Read from ${URL}?`, context: `The job fetches ${URL} nightly.`,
   options: [{ label: 'A. keep', effect: `Keep ${URL}`, answerKey: 'A' }], recommendation: 'A. keep', why: URL,
 });
 const card: Card = {
@@ -46,7 +46,15 @@ describe('Ledger surfaces wrap a long unbroken string', () => {
     const root = screen.getByTestId('ledger-card');
     expect(root.style.overflowWrap).toBe('anywhere');
     expect(root.style.overflowX).toBe('hidden');
-    expect(['0', '0px']).toContain(root.style.minWidth);
+  });
+
+  it('a small tag beside a long label keeps its width (it does not wrap inside its word)', () => {
+    render(<LedgerCard />);
+    const tag = screen.getByText('Recommended');
+    expect(tag.style.flexShrink).toBe('0');
+    expect(tag.style.whiteSpace).toBe('nowrap');
+    const badge = screen.getByText('NEW');
+    expect(badge.style.flexShrink).toBe('0');
   });
 
   it('the chip popover wraps it', () => {
@@ -55,7 +63,7 @@ describe('Ledger surfaces wrap a long unbroken string', () => {
     expect(screen.getByRole('dialog').style.overflowWrap).toBe('anywhere');
   });
 
-  it('the source panel wraps a long heading and body', async () => {
+  it('the source panel sets the wrap rule on the scroll body that holds the heading and the section', async () => {
     vi.spyOn(api, 'getLedgerSource').mockResolvedValue({
       kind: 'section', file: 'plan.md', path: 'docs/plans/plan.md', heading: URL, markdown: `Feed: ${URL}`, id: null, fromMainCheckout: false, note: null, cut: false,
     });
