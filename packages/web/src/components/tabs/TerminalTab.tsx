@@ -16,6 +16,7 @@ import { useSettings } from '../../stores/settings';
 import { useDictation } from '../../hooks/useDictation';
 import { inputMenuRow } from '../dictation/InputActionsMenu';
 import { PillComposer } from '../composer/PillComposer';
+import { useActivationSignal } from '../composer/useActivationSignal';
 import { Modal } from '../common/Modal';
 import { UploadTray, useInboxUploads } from '../composer/UploadTray';
 import { createWriteGate, suppressReplayedQueries } from '../../lib/replayQueries';
@@ -262,6 +263,8 @@ function keysFor(type?: string): { actions: SoftKey[]; slash: SlashCmd[] } {
  *  outcome card — see TurnFooter). */
 export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, footer }: { terminalId: string; socketFactory?: typeof openTerminalSocket; footer?: ReactNode }) {
   const hostRef = useRef<HTMLDivElement>(null);
+  // The open tab's composer takes the focus and pulses on the desktop (2026-11-16).
+  const focusSignal = useActivationSignal(terminalId);
   const scrollOverlayRef = useRef<HTMLDivElement>(null);
   const sockRef = useRef<ReturnType<typeof openTerminalSocket> | null>(null);
   const termRef = useRef<XTerm | null>(null);
@@ -1120,6 +1123,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
           {keysOpen && <KeysPager pages={keyPages(sheetKeysFor(meta?.type))} onKey={(seq) => sockRef.current?.send(seq)} onClose={() => setKeysOpen(false)} />}
           <input ref={termFileInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => { onFiles(e.target.files); e.currentTarget.value = ''; }} />
           <PillComposer
+            focusSignal={focusSignal}
             pluginContext={{ surface: 'terminal', terminalId: terminalId }}
             floating={tall}
             handle={tall ? (

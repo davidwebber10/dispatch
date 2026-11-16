@@ -66,16 +66,34 @@ export interface PillComposerProps {
    *  controls and layout; the box is drawn like an OS input (the --input border, rounded-lg, 14px text, a focus
    *  ring) and the keys like OS buttons (size-9, rounded-md, the primary fill for Send). */
   look?: 'os';
+  /**
+   * A number that goes up when this thread's tab becomes the open one (useActivationSignal; owner,
+   * 2026-11-16). A new value above 0 focuses the text box and gives the ring one pulse. 0: nothing.
+   */
+  focusSignal?: number;
 }
 
 const MAX_FRACTION = 0.5;
 
+/** The ring of the pulse when a tab opens (2026-11-16): stronger than the focus ring, then it fades. */
+const FLASH_RING = '0 0 0 3px color-mix(in srgb, var(--color-accent) 35%, transparent)';
+
 export function PillComposer({
   value, onChange, onSend, canSend, stopMode = false, onStop, placeholder, onAddFile, menuExtra, afterPlus, pluginContext,
   dictation, sttConfigured, textareaRef, textareaProps, dragActive = false, mobile = false, sendLabel = 'Send',
-  maxLines, maxHeight, onTallChange, handle, floating, slash, look,
+  maxLines, maxHeight, onTallChange, handle, floating, slash, look, focusSignal = 0,
 }: PillComposerProps) {
   const own = useRef<HTMLTextAreaElement | null>(null);
+  // The open tab's composer takes the focus and pulses once (2026-11-16). Two frames late: a CLI view
+  // gives its terminal the focus one frame after it opens, and the composer must be the last to take it.
+  const [flash, setFlash] = useState(false);
+  useEffect(() => {
+    if (!focusSignal) return;
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => { raf2 = requestAnimationFrame(() => { own.current?.focus({ preventScroll: true }); setFlash(true); }); });
+    const t = setTimeout(() => setFlash(false), 700);
+    return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2); clearTimeout(t); };
+  }, [focusSignal]);
   const ask = look === 'os';
   // The OS focus ring: focus-within cannot be written inline, so the box follows focus itself.
   const [focused, setFocused] = useState(false);
@@ -200,7 +218,7 @@ export function PillComposer({
     <RecordingsSheet open={recordingsOpen} onClose={() => setRecordingsOpen(false)} onInsert={(t) => { dictation.insert(t); dictation.reset(); }} />
     <div style={{ position: 'relative' }}>
     {slash}
-    <div ref={boxRef} data-testid="pill-composer" data-stacked={stacked || undefined} data-look={look}
+    <div ref={boxRef} data-testid="pill-composer" data-stacked={stacked || undefined} data-look={look} data-flash={flash || undefined}
       onFocusCapture={ask ? () => setFocused(true) : undefined}
       onBlurCapture={ask ? (e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false); } : undefined}
       style={ask ? {
@@ -210,17 +228,17 @@ export function PillComposer({
       // OS input: the card fill, the --input border (border-hover), rounded-lg; focus: the ring color and a 3px ring.
       padding: mobile ? 8 : 5, borderRadius: 'var(--radius-lg)',
       background: dragActive ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-pane))' : 'var(--color-pane)',
-      border: `1px solid ${dragActive || focused ? 'var(--color-accent)' : 'var(--color-border-hover)'}`,
-      boxShadow: [focused ? '0 0 0 3px color-mix(in srgb, var(--color-accent) 20%, transparent)' : '', floating ? '0 10px 30px -12px var(--color-shadow)' : ''].filter(Boolean).join(', ') || undefined,
-      transition: 'border-color .12s, background .12s, box-shadow .12s',
+      border: `1px solid ${dragActive || focused || flash ? 'var(--color-accent)' : 'var(--color-border-hover)'}`,
+      boxShadow: [flash ? FLASH_RING : focused ? '0 0 0 3px color-mix(in srgb, var(--color-accent) 20%, transparent)' : '', floating ? '0 10px 30px -12px var(--color-shadow)' : ''].filter(Boolean).join(', ') || undefined,
+      transition: 'border-color .12s, background .12s, box-shadow .35s ease-out',
     } : {
-      position: 'relative', boxShadow: floating ? '0 10px 30px -12px var(--color-shadow)' : undefined,
+      position: 'relative', boxShadow: [flash ? FLASH_RING : '', floating ? '0 10px 30px -12px var(--color-shadow)' : ''].filter(Boolean).join(', ') || undefined,
       paddingTop: handle ? 14 : undefined,
       display: 'grid', gridTemplateColumns: 'auto 1fr auto auto', alignItems: 'end', columnGap: 4, rowGap: 2,
       gridTemplateAreas: stacked ? '"text text text text" "plus . mic send"' : recording ? '"plus text text send"' : '"plus text mic send"',
       padding: mobile ? 8 : 5, borderRadius: 'var(--radius-xl)', // the terminal card's radius, so the two line up
       background: dragActive ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-elevated))' : 'var(--color-elevated)',
-      border: `1px solid ${dragActive ? 'var(--color-accent)' : 'var(--color-border)'}`, transition: 'border-color .12s, background .12s',
+      border: `1px solid ${dragActive || flash ? 'var(--color-accent)' : 'var(--color-border)'}`, transition: 'border-color .35s ease-out, background .12s, box-shadow .35s ease-out',
     }}>
       <div style={{ gridArea: 'plus', display: 'flex', alignItems: 'center', gap: 2 }}>
         <InputActionsMenu

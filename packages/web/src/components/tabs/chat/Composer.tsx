@@ -7,6 +7,7 @@ import { useIsMobile } from '../../../hooks/useIsMobile';
 import { useSettings } from '../../../stores/settings';
 import { useDictation } from '../../../hooks/useDictation';
 import { PillComposer } from '../../composer/PillComposer';
+import { useActivationSignal } from '../../composer/useActivationSignal';
 import { UploadTray, useInboxUploads } from '../../composer/UploadTray';
 import { useThreadModelControls } from './modelControls';
 import { useSlashMenu, runModelEffortCommand } from '../../composer/slash/useSlashMenu';
@@ -43,6 +44,8 @@ export interface ComposerProps {
  */
 export const Composer = memo(function Composer({ terminalId, sessionId, tab, busy, turnRuns, onSend, footer }: ComposerProps) {
   const [draft, setDraft, clearDraft] = useDraft(terminalId);
+  // The open tab's composer takes the focus and pulses on the desktop (2026-11-16).
+  const focusSignal = useActivationSignal(terminalId);
   const taRef = useRef<HTMLTextAreaElement>(null);
   // Mirror the draft in a ref so the async upload loop appends to the latest value
   // (across awaits / multiple files) without clobbering what's already there.
@@ -216,6 +219,7 @@ export const Composer = memo(function Composer({ terminalId, sessionId, tab, bus
         <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }} />
         <div style={{ maxWidth: 768, margin: '0 auto' }}>
           <PillComposer
+            focusSignal={focusSignal}
             value={draft}
             onChange={setDraft}
             onSend={doSend}
