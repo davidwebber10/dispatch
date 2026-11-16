@@ -74,6 +74,8 @@ interface CreateAppOptions {
    * managers (test seam: no CLI runs). Must include `claude-code`.
    */
   managers?: Map<string, IStructuredManager>;
+  /** Test seam: the daemon's clock (the idle-process reaper reads it). */
+  clock?: () => number;
 }
 
 /**
@@ -88,7 +90,7 @@ export function createApp(options: CreateAppOptions): express.Express {
     managers: managers ? Object.fromEntries(managers) : undefined,
   });
   // Internals that some tests read.
-  Object.assign(app, { _ptyManager: services.ptyManager, _sessionService: services.sessionService, _pushService: services.pushService, _structuredManager: services.structuredManager });
+  Object.assign(app, { _ptyManager: services.ptyManager, _sessionService: services.sessionService, _pushService: services.pushService, _structuredManager: services.structuredManager, _processReaper: services.processReaper });
   return app;
 }
 

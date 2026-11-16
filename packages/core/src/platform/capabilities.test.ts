@@ -6,6 +6,7 @@ import { createOsToolsRouter } from '../os/tools-proxy.js';
 describe('the advertised capabilities are true of this tree', () => {
   test('the list', () => {
     expect([...BOX_CAPABILITIES]).toEqual(['base-path', 'os-tools-proxy', 'profile', 'headless-v1', 'idle-info', 'gate-v2', 'inbox-v1', 'live-tools-v1', 'subagents-v1', 'codex-signout-v1']);
+    // company-claude-v1 is a fact of the moment (os/login-policy.ts, login-policy.test.ts), like privsep-v1.
   });
   test('inbox-v1: the Inbox routes exist, each has a row in the business table, and the secret value is refused there', async () => {
     const { createInboxRouter } = await import('../routes/inbox.js');
@@ -45,6 +46,16 @@ describe('the advertised capabilities are true of this tree', () => {
       expect(typeof M.prototype.stopSubagent).toBe('function');
       expect(typeof M.prototype.stopAllSubagents).toBe('function');
     }
+  });
+  test('company-claude-v1: the relay routes exist for thread keys only, and a company thread gets the relay env', async () => {
+    const { createModelRelayRouter } = await import('../os/model-relay.js');
+    const { companyClaudeEnv } = await import('../os/company-model.js');
+    const { BUSINESS_ROUTES } = await import('../profile/business-routes.js');
+    expect(typeof createModelRelayRouter).toBe('function');
+    for (const id of ['POST /api/os-model/anthropic/v1/messages', 'POST /api/os-model/anthropic/v1/messages/count_tokens']) {
+      expect(BUSINESS_ROUTES[id]?.keys, id).toEqual(['thread']);
+    }
+    expect(companyClaudeEnv('http://127.0.0.1:3456', 'dtk_x', 'claude-x').ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:3456/api/os-model/anthropic');
   });
   test('base-path', () => {
     expect(normalizeBasePath('/dispatch/')).toBe('/dispatch');

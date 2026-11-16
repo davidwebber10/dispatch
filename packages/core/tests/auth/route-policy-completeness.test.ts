@@ -20,6 +20,9 @@ const EXPECTED_KEY_ROUTES: string[] = [
   'POST /api/os/mcp/:system',
   'GET /api/os/mcp/:system',
   'DELETE /api/os/mcp/:system',
+  // The company model relay (os/model-relay.ts): a company-model thread's own key on loopback only.
+  'POST /api/os-model/anthropic/v1/messages',
+  'POST /api/os-model/anthropic/v1/messages/count_tokens',
   'POST /api/plugins/:id/assist',
   // Coach plan (2026-11-07): the assist meter and share for a plugin's own key; push; usage and analytics reads.
   'GET /api/plugins/:id/assist/usage',

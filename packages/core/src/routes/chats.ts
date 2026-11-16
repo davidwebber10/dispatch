@@ -23,6 +23,8 @@ export interface ChatSummary {
   lastActivityAt: string;
   createdAt: string;
   model: string | null;
+  /** `company`: the thread runs on a company model (os/company-model.ts); `subscription`: the person's own login was asked for. Null: today's default. */
+  modelSource: 'company' | 'subscription' | null;
 }
 
 export function chatStatus(raw: string | null | undefined): ChatStatus {
@@ -45,6 +47,7 @@ export function listChats(db: Database.Database): ChatSummary[] {
       id: r.id, title: r.label, projectId: r.project_id, projectName: r.project_name, harness: r.type,
       status: chatStatus(r.status), lastActivityAt: r.last_activity_at ?? r.created_at, createdAt: r.created_at,
       model: typeof c.model === 'string' ? c.model : null,
+      modelSource: c.modelSource === 'company' || c.modelSource === 'subscription' ? c.modelSource : null,
     });
   }
   return out.sort((a, b) => Date.parse(b.lastActivityAt) - Date.parse(a.lastActivityAt) || b.createdAt.localeCompare(a.createdAt));

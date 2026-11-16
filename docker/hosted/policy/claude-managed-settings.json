@@ -1,5 +1,4 @@
 {
-  "forceLoginMethod": "claudeai",
   "permissions": {
     "disableBypassPermissionsMode": "disable"
   },

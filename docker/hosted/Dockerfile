@@ -193,6 +193,8 @@ COPY --from=build --chown=root:root /out/policy/ /opt/dispatch/policy/
 # managed-settings.d: Claude Code's drop-in folder, a link to a root-owned folder on the run volume. The
 # daemon (root, with privilege separation) writes the business MCP allow-list there
 # (packages/core/src/os/hosted-mcp-policy.ts); nobody else can write it. A missing target is no policy.
+# The forced Claude login (`forceLoginMethod`) is a drop-in there too, baked in below and written again
+# by the entrypoint; the daemon lifts it only for a company-billed person (packages/core/src/os/login-policy.ts).
 RUN install -d -m 755 /etc/claude-code /etc/codex \
     && install -m 644 /opt/dispatch/policy/claude-managed-settings.json /etc/claude-code/managed-settings.json \
     && install -m 644 /opt/dispatch/policy/codex-requirements.toml /etc/codex/requirements.toml \
@@ -219,7 +221,8 @@ RUN find / -xdev -type f -perm /6000 -exec chmod a-s {} + \
 # system) takes these folders' owner and mode.
 RUN install -d -o root -g root -m 0700 /var/lib/dispatch /var/lib/dispatch/state \
     && install -d -o root -g root -m 0755 /run/dispatch /run/dispatch/agent /run/dispatch/claude-policy \
-    && install -d -o root -g root -m 0700 /run/dispatch/private
+    && install -d -o root -g root -m 0700 /run/dispatch/private \
+    && install -m 644 /opt/dispatch/policy/claude-login-dropin.json /run/dispatch/claude-policy/10-dispatch-login.json
 VOLUME ["/run/dispatch"]
 
 # A read-only root file system works: the daemon and the harnesses write only under $HOME (the EFS

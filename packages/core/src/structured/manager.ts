@@ -154,6 +154,8 @@ interface Session {
   requestedModel?: string | null;
   /** The `thread.model` line was written for this process (once, at its first init frame). */
   modelLogged?: boolean;
+  /** StructuredSpawnOpts.modelSource: the thread runs on the company model (os/company-model.ts). */
+  modelSource?: 'company' | 'subscription' | null;
   /** True once an init frame was checked (the first one always logs its servers). */
   mcpChecked?: boolean;
   /** Names already warned about, so a frame each turn does not repeat the same warning. */
@@ -197,6 +199,8 @@ export interface StructuredSpawnOpts {
   args: string[];
   workDir: string;
   env?: Record<string, string>;
+  /** `company`: the thread runs on a company model through the daemon's relay (os/company-model.ts). Shown on the `system/model` frame. */
+  modelSource?: 'company' | 'subscription';
   escalate?: boolean;
   /** Optional per-session tool policy consulted before auto-allow; a deny is written straight
    *  back to the CLI with the policy's message (no pending, no human involvement). */
@@ -524,7 +528,7 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
 
     const counterScope = randomUUID(); // Claude result counters restart with each CLI invocation.
     const rl = readline.createInterface({ input: child.stdout });
-    const session: Session = { child, rl, ring: new EventRing(), compactor: new ClaudeStreamCompactor(), escalate: opts.escalate ?? false, toolPolicy: opts.toolPolicy, pending: null, accountId: opts.accountId, smart: opts.approvals === 'smart', blocked: [], mcpExpected: opts.mcpExpected ?? null, requestedModel: opts.model ?? null };
+    const session: Session = { child, rl, ring: new EventRing(), compactor: new ClaudeStreamCompactor(), escalate: opts.escalate ?? false, toolPolicy: opts.toolPolicy, pending: null, accountId: opts.accountId, smart: opts.approvals === 'smart', blocked: [], mcpExpected: opts.mcpExpected ?? null, requestedModel: opts.model ?? null, modelSource: opts.modelSource ?? null };
     // subagents-v1: each state change of a subagent is one frame in the thread. The CLI wakes its main
     // agent by itself when a background agent ends; the release delay gives that turn time to start.
     session.subagents = new SubagentTracker('claude-code', {
@@ -991,7 +995,7 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
       const resolved = typeof r?.model === 'string' && r.model ? r.model : model;
       if (!s || this.sessions.get(terminalId) !== s) return resolved;
       s.model = resolved;
-      const notice = { type: 'system', subtype: 'model', model: resolved, switched: true };
+      const notice = { type: 'system', subtype: 'model', model: resolved, switched: true, ...(s.modelSource ? { modelSource: s.modelSource } : {}) };
       s.ring.push(notice, { quiet: true });
       this.fire('event', terminalId, notice);
       return resolved;
