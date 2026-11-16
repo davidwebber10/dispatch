@@ -448,20 +448,22 @@ docker buildx imagetools inspect --raw ghcr.io/davidwebber10/dispatch-box@<diges
   | jq '.manifests[] | {digest, artifactType, platform, annotations}'
 ```
 
-It pushes only on a version tag. A manual run on a branch builds and proves the image and pushes
+It pushes only on a box tag. A manual run on a branch builds and proves the image and pushes
 nothing. It has no `pull_request` trigger, so code from a fork never runs in it, and the job does not
 run in a fork. The workflow uses only the repository's own `GITHUB_TOKEN`; no cloud credential is
 stored in this repository.
 
 **How to release an image.**
 
-1. Cut the release as `docs/RELEASING.md` describes. The tag is `v<version>`, for example `v4.7.0`.
-   A tag with a label (`v4.7.0-os.1`) is also accepted. The `X.Y.Z` part of the tag must equal the
-   version in `packages/core/package.json` on the tagged commit.
+1. Push a box tag on the commit to build: `box-v<base>-<n>`, for example `box-v4.7.4-1`. `<base>`
+   must equal the version in `packages/core/package.json` on that commit (the normal Dispatch
+   version that the branch contains); `<n>` counts box builds of that base from 1. The image version
+   is `<base>-box.<n>`, for example `4.7.4-box.1`. See `docs/BOX-RELEASES.md`. A `v<version>` tag does
+   not start this workflow, and a box build is never a GitHub Release.
 2. The tag push starts `hosted-image`. Watch it: `gh run watch` on the run in the Actions tab.
 3. When the run is green, copy the digest from the run summary (`sha256:…`).
 4. To build again for a tag that exists (for example after a runner failure), run the workflow
-   on the tag with `push` ticked: `gh workflow run hosted-image.yml --ref v4.7.0 -f push=true`.
+   on the tag with `push` ticked: `gh workflow run hosted-image.yml --ref box-v4.7.4-1 -f push=true`.
 
 **How to verify an image.** Anyone can check that a digest came from this workflow, on a tag, from
 this repository:
@@ -470,7 +472,7 @@ this repository:
 gh attestation verify oci://ghcr.io/davidwebber10/dispatch-box@sha256:<digest> \
   --repo davidwebber10/dispatch \
   --signer-workflow davidwebber10/dispatch/.github/workflows/hosted-image.yml \
-  --source-ref refs/tags/v<version> \
+  --source-ref refs/tags/box-v<base>-<n> \
   --deny-self-hosted-runners
 ```
 
