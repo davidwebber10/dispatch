@@ -1593,3 +1593,34 @@ test('a tap outside the key panel closes it; a tap on a key or the keyboard butt
   fireEvent.pointerDown(btn); fireEvent.click(btn);
   expect(screen.queryByRole('dialog', { name: 'Keys' })).toBeNull();
 });
+
+// Owner, 2026-11-16: a CLI thread has no composer on the desktop (you type at the CLI's own prompt), so
+// opening its tab gives the terminal the focus and pulses the terminal's frame. Nothing on a phone.
+describe('opening a CLI tab on the desktop', () => {
+  const frames = async () => { await act(async () => { await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null)))); }); };
+  const sock = () => ({ send: vi.fn(), resize: vi.fn(), close: vi.fn() });
+
+  test('focuses the terminal and pulses its frame', async () => {
+    const { useTabs } = await import('../../stores/tabs');
+    useTabs.setState({ activeTabId: null } as any);
+    render(<TerminalTab terminalId="t1" socketFactory={sock as any} />);
+    await waitFor(() => expect(instances.length).toBe(1));
+    await frames();
+    const before = instances[0].focusCalls;
+    act(() => { useTabs.setState({ activeTabId: 't1' } as any); });
+    await frames();
+    expect(instances[0].focusCalls).toBeGreaterThan(before);
+    expect(screen.getByTestId('term-frame').getAttribute('data-flash')).toBe('true');
+  });
+
+  test('a phone gets no pulse', async () => {
+    isMobileMock.mockReturnValue(true);
+    const { useTabs } = await import('../../stores/tabs');
+    useTabs.setState({ activeTabId: null } as any);
+    render(<TerminalTab terminalId="t1" socketFactory={sock as any} />);
+    await waitFor(() => expect(instances.length).toBe(1));
+    act(() => { useTabs.setState({ activeTabId: 't1' } as any); });
+    await frames();
+    expect(screen.getByTestId('term-frame').getAttribute('data-flash')).toBeNull();
+  });
+});
