@@ -15,9 +15,10 @@ import { useApplyUpdate } from './useApplyUpdate';
 export function UpdateBanner({ compact = false }: { compact?: boolean }) {
   const pending = useUpdate(updatePending);
   const available = useUpdate((s) => s.available);
+  const ahead = useUpdate((s) => s.ahead);
   const currentVersion = useUpdate((s) => s.currentVersion);
   const pluginUpdates = useUpdate((s) => s.pluginUpdates);
-  const { apply, applying, failReason, hosted } = useApplyUpdate();
+  const { apply, applying, failReason, needsSwitchBack, hosted } = useApplyUpdate();
   // One plugin update runs at a time; the buttons wait for it.
   const [updating, setUpdating] = useState<string | null>(null);
   const [pluginFail, setPluginFail] = useState<string | null>(null);
@@ -29,7 +30,8 @@ export function UpdateBanner({ compact = false }: { compact?: boolean }) {
     setUpdating(null);
   };
   const dispatchWaiting = pending && available !== null;
-  if (!dispatchWaiting && pluginUpdates.length === 0) return null;
+  const aheadWaiting = pending && available === null && ahead !== null;
+  if (!dispatchWaiting && !aheadWaiting && pluginUpdates.length === 0) return null;
   // A hosted update state may carry no version, url or date (tolerated: the plain line needs none).
   const next = available?.version ? `v${String(available.version).replace(/^v/, '')}` : '';
 
@@ -52,6 +54,45 @@ export function UpdateBanner({ compact = false }: { compact?: boolean }) {
       {pluginFail && <div style={{ fontSize: 11.5, color: 'var(--color-status-red)', paddingLeft: compact ? 32 : 30 }}>{pluginFail}</div>}
     </div>
   );
+  if (aheadWaiting && ahead) {
+    // This copy runs a version above the newest release. Not an update: a state to fix, by an explicit choice.
+    const target = `v${String(ahead.version).replace(/^v/, '')}`;
+    return (
+      <>
+      <div role="region" aria-label="Not a published release" style={{
+        display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0,
+        padding: compact ? '12px 14px' : '12px 16px',
+        background: 'color-mix(in srgb, var(--color-accent) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--color-accent) 35%, transparent)', borderRadius: 'var(--radius-lg)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <ArrowCircleUp size={compact ? 24 : 22} weight="fill" color="var(--color-accent)" style={{ flexShrink: 0, transform: 'rotate(180deg)' }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: compact ? 15 : 13.5, fontWeight: 600, color: 'var(--color-text-primary)' }}>You run a version that is not a published release</div>
+            <div style={{ marginTop: 2, fontSize: compact ? 12 : 11.5, color: 'var(--color-text-secondary)', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {currentVersion && <span>You run v{currentVersion}.</span>}
+              <span>The latest release is {target}.</span>
+              {ahead.url && <a href={ahead.url} target="_blank" rel="noreferrer" style={{ color: 'var(--color-accent)', textDecoration: 'none' }}>Release notes</a>}
+            </div>
+          </div>
+          <button type="button" onClick={() => void apply(false, true)} disabled={applying} style={{
+            flexShrink: 0, height: compact ? 34 : 30, padding: compact ? '0 16px' : '0 14px',
+            background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-sm)',
+            color: 'var(--color-on-accent)', fontWeight: 600, fontSize: compact ? 13.5 : 12.5, cursor: applying ? 'default' : 'pointer', opacity: applying ? 0.7 : 1,
+          }}>
+            {applying ? 'Switching…' : `Switch to ${target}`}
+          </button>
+        </div>
+        {failReason && (
+          <div style={{ fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
+            Couldn't switch automatically: {failReason}{' '}
+            Run <code style={{ font: '400 11px var(--font-mono)' }}>dispatch update --switch-back</code> manually instead.
+          </div>
+        )}
+      </div>
+      {pluginsBlock}
+      </>
+    );
+  }
   if (!dispatchWaiting || !available) return <>{pluginsBlock}</>;
 
   return (
@@ -83,7 +124,12 @@ export function UpdateBanner({ compact = false }: { compact?: boolean }) {
           {usesPlainWording() ? hostDetail(failReason) : <>Couldn't update automatically: {failReason}</>}{' '}
           {hosted || usesPlainWording()
             ? PLAIN['update.failed.hint']
-            : <>Run <code style={{ font: '400 11px var(--font-mono)' }}>dispatch update</code> manually instead.</>}
+            : <>Run <code style={{ font: '400 11px var(--font-mono)' }}>{needsSwitchBack ? 'dispatch update --switch-back' : 'dispatch update'}</code> manually instead.</>}
+          {needsSwitchBack && (
+            <div style={{ marginTop: 6 }}>
+              <button type="button" onClick={() => void apply(false, true)} disabled={applying} style={{ height: 28, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-accent)', borderRadius: 'var(--radius-sm)', color: 'var(--color-accent)', fontWeight: 600, fontSize: 12, cursor: applying ? 'default' : 'pointer' }}>Switch to {next || available.version}</button>
+            </div>
+          )}
         </div>
       )}
     </div>

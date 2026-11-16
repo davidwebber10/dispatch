@@ -699,11 +699,11 @@ export const api = {
     req<{ ok: boolean; written: string[] }>('/api/appearance/icons', { method: 'PUT', body: body({ icons }) }),
   // Bespoke (not `req()`): a 409 preflight failure is a meaningful { ok: false, reason }
   // payload the banner needs to render, not an exception to throw away.
-  applyUpdate: async (force?: boolean) => {
+  applyUpdate: async (force?: boolean, switchBack?: boolean) => {
     const res = await fetch(apiPath('/api/update/apply'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(force ? { force: true } : {}),
+      body: JSON.stringify({ ...(force ? { force: true } : {}), ...(switchBack ? { switchBack: true } : {}) }),
     });
     return (await res.json()) as {
       ok: boolean;
@@ -711,6 +711,8 @@ export const api = {
       dirty?: { status: string; path: string }[];
       dirtyOverflow?: number;
       forceable?: boolean;
+      /** The copy runs a version above the newest release and the request did not say switchBack. */
+      needsSwitchBack?: boolean;
       /** True on a hosted box, where an update rolls the container onto a new
        *  image. Failure advice differs: there is no checkout to clean up, and
        *  no `dispatch update` to run — the box has no shell for the user. */

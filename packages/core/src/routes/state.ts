@@ -9,7 +9,8 @@ import type Database from 'better-sqlite3';
 import * as appState from '../db/app-state.js';
 import { platform } from '../platform/index.js';
 import { summary } from '../analytics/queries.js';
-import { getRunningVersion, isNewerVersion } from '../update/version.js';
+import { getRunningVersion } from '../update/version.js';
+import { storedUpdateView } from '../update/stored.js';
 import { parseStoredNotes, readLocalReleaseNote } from '../update/notes.js';
 import { revealClientFrom } from '../files/reveal.js';
 import { clientMessage } from '../http/client-message.js';
@@ -133,18 +134,12 @@ export function createStateRouter(db: Database.Database, opts: { policy?: PathPo
         ...(st.error ? { error: st.error } : {}),
       });
     }
-    const tag = appState.get(db, 'latest_release_tag');
-    const url = appState.get(db, 'latest_release_url');
-    const publishedAt = appState.get(db, 'latest_release_published_at');
     const currentVersion = getRunningVersion();
-    const available = !!tag && isNewerVersion(tag, currentVersion);
+    const view = storedUpdateView(db, currentVersion);
     res.json({
-      available,
-      version: available ? tag : null,
-      url: available ? url : null,
-      publishedAt: available ? publishedAt : null,
+      ...view,
       currentVersion,
-      notes: available ? parseStoredNotes(appState.get(db, 'latest_release_notes'), currentVersion) : [],
+      notes: view.available ? parseStoredNotes(appState.get(db, 'latest_release_notes'), currentVersion) : [],
       currentNotes: readLocalReleaseNote(currentVersion),
     });
   });
