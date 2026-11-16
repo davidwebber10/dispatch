@@ -13,8 +13,8 @@
 #      and sign a provenance attestation for the image index digest (actions/attest-build-provenance).
 #
 # A push happens only on a box tag: the tag push itself, or a manual run on a tag ref with
-# `push` ticked. A box tag is `box-v<base>-<n>` (for example box-v4.7.4-1) and the image version is
-# `<base>-box.<n>` (4.7.4-box.1). <base> is the normal Dispatch version in packages/core/package.json.
+# `push` ticked. A box tag is `box-v<base>-<n>` (for example box-v4.7.8-1) and the image version is
+# `<base>-box.<n>` (4.7.8-box.1). <base> is the normal Dispatch version in packages/core/package.json.
 # The desktop updater offers only `v<major>.<minor>.<patch>` tags, so a box tag is never offered
 # as a desktop update. See docs/BOX-RELEASES.md. A manual run on a branch builds and proves, and pushes nothing.
 # There is no pull_request trigger: this workflow never runs code from a fork.
@@ -26,7 +26,7 @@ on:
   workflow_dispatch:
     inputs:
       push:
-        description: 'Push and attest the image (only honored on a box tag ref, e.g. --ref box-v4.7.4-1)'
+        description: 'Push and attest the image (only honored on a box tag ref, e.g. --ref box-v4.7.8-1)'
         type: boolean
         default: false
 
@@ -75,9 +75,9 @@ jobs:
             BUILD="${BASH_REMATCH[2]}"
             VERSION="$BASE-box.$BUILD"
             # The tag must sit on a commit whose package.json carries the same base version.
-            PKG="$(node -p 'require("./packages/core/package.json").version')"
+            PKG="$(node -p 'require("./package.json").version')"
             if [ "$BASE" != "$PKG" ]; then
-              echo "::error::tag $REF_NAME has base $BASE, but packages/core/package.json is $PKG"; exit 1
+              echo "::error::tag $REF_NAME has base $BASE, but package.json is $PKG"; exit 1
             fi
             if [ "$EVENT" = push ] || [ "$PUSH_INPUT" = true ]; then PUSH=true; fi
           else

@@ -455,15 +455,15 @@ stored in this repository.
 
 **How to release an image.**
 
-1. Push a box tag on the commit to build: `box-v<base>-<n>`, for example `box-v4.7.4-1`. `<base>`
-   must equal the version in `packages/core/package.json` on that commit (the normal Dispatch
+1. Push a box tag on the commit to build: `box-v<base>-<n>`, for example `box-v4.7.8-1`. `<base>`
+   must equal the version in the root `package.json` on that commit (the normal Dispatch
    version that the branch contains); `<n>` counts box builds of that base from 1. The image version
-   is `<base>-box.<n>`, for example `4.7.4-box.1`. See `docs/BOX-RELEASES.md`. A `v<version>` tag does
+   is `<base>-box.<n>`, for example `4.7.8-box.1`. See `docs/BOX-RELEASES.md`. A `v<version>` tag does
    not start this workflow, and a box build is never a GitHub Release.
 2. The tag push starts `hosted-image`. Watch it: `gh run watch` on the run in the Actions tab.
 3. When the run is green, copy the digest from the run summary (`sha256:…`).
 4. To build again for a tag that exists (for example after a runner failure), run the workflow
-   on the tag with `push` ticked: `gh workflow run hosted-image.yml --ref box-v4.7.4-1 -f push=true`.
+   on the tag with `push` ticked: `gh workflow run hosted-image.yml --ref box-v4.7.8-1 -f push=true`.
 
 **How to verify an image.** Anyone can check that a digest came from this workflow, on a tag, from
 this repository:
