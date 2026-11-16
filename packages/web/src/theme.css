@@ -56,6 +56,11 @@
   --z-base:0; --z-sticky:10; --z-overlay:100; --z-dropdown:300; --z-modal:400; --z-toast:1000;
 }
 * { box-sizing: border-box; }
+/* iOS WebKit "text autosizing" enlarges text in landscape and, in the installed
+   app, often keeps it enlarged after rotating back to portrait (rows and file
+   names grow, layout breaks until the app is closed). 100% turns autosizing off
+   while still honoring the user's own text size setting. */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 /* Browser: 100dvh tracks Safari's dynamic URL/tab bar so the bottom input isn't
    hidden behind it (100vh is taller than the visible viewport in Safari). The
    leading 100vh is the fallback for engines without dvh.
