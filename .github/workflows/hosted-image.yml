@@ -13,8 +13,8 @@
 #      and sign a provenance attestation for the image index digest (actions/attest-build-provenance).
 #
 # A push happens only on a box tag: the tag push itself, or a manual run on a tag ref with
-# `push` ticked. A box tag is `box-v<base>-<n>` (for example box-v4.7.8-1) and the image version is
-# `<base>-box.<n>` (4.7.8-box.1). <base> is the normal Dispatch version in the root package.json.
+# `push` ticked. A box tag is `<base>-box.<n>` (for example 4.7.8-box.1), and the image version is the
+# tag itself. <base> is the normal Dispatch version in the root package.json.
 # The desktop updater offers only `v<major>.<minor>.<patch>` tags, so a box tag is never offered
 # as a desktop update. See docs/BOX-RELEASES.md. A manual run on a branch builds and proves, and pushes nothing.
 # There is no pull_request trigger: this workflow never runs code from a fork.
@@ -22,11 +22,11 @@ name: hosted-image
 
 on:
   push:
-    tags: ['box-v*']
+    tags: ['*-box.*']
   workflow_dispatch:
     inputs:
       push:
-        description: 'Push and attest the image (only honored on a box tag ref, e.g. --ref box-v4.7.8-1)'
+        description: 'Push and attest the image (only honored on a box tag ref, e.g. --ref 4.7.8-box.1)'
         type: boolean
         default: false
 
@@ -67,13 +67,13 @@ jobs:
           set -euo pipefail
           PUSH=false
           if [ "$REF_TYPE" = tag ]; then
-            # box-v<base>-<n> -> <base>-box.<n>. Nothing else: a v<version> tag is a desktop release.
-            if [[ ! "$REF_NAME" =~ ^box-v([0-9]+\.[0-9]+\.[0-9]+)-([1-9][0-9]*)$ ]]; then
-              echo "::error::tag $REF_NAME is not box-v<major>.<minor>.<patch>-<n> (n >= 1)"; exit 1
+            # <base>-box.<n>, and the image version is the tag. Nothing else: a v<version> tag is a
+            # desktop release.
+            if [[ ! "$REF_NAME" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-box\.[1-9][0-9]*$ ]]; then
+              echo "::error::tag $REF_NAME is not <major>.<minor>.<patch>-box.<n> (n >= 1)"; exit 1
             fi
             BASE="${BASH_REMATCH[1]}"
-            BUILD="${BASH_REMATCH[2]}"
-            VERSION="$BASE-box.$BUILD"
+            VERSION="$REF_NAME"
             # The tag must sit on a commit whose package.json carries the same base version.
             PKG="$(node -p 'require("./package.json").version')"
             if [ "$BASE" != "$PKG" ]; then
