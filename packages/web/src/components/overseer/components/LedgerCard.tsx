@@ -49,7 +49,7 @@ const smallButton: CSSProperties = {
 
 function Badge({ children, color = 'var(--acc)' }: { children: ReactNode; color?: string }) {
   return (
-    <span style={{ fontFamily: 'var(--mono)', fontSize: 9.5, fontWeight: 700, letterSpacing: '.06em', color, border: `1px solid ${color}`, borderRadius: 'var(--radius-xs)', padding: '0 4px', lineHeight: 1.5 }}>
+    <span style={{ fontFamily: 'var(--mono)', fontSize: 9.5, fontWeight: 700, letterSpacing: '.06em', color, border: `1px solid ${color}`, borderRadius: 'var(--radius-xs)', padding: '0 4px', lineHeight: 1.5, flexShrink: 0, whiteSpace: 'nowrap' }}>
       {children}
     </span>
   );
@@ -89,7 +89,7 @@ function OptionRow({ item, option, onAnswer }: { item: CardItem; option: CardOpt
     <>
       <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--tp)' }}>{option.label}</span>
-        {recommended && <span style={{ fontSize: 10.5, color: 'var(--acc)' }}>Recommended</span>}
+        {recommended && <span style={{ fontSize: 10.5, color: 'var(--acc)', flexShrink: 0, whiteSpace: 'nowrap' }}>Recommended</span>}
       </span>
       {option.effect && <span style={{ fontSize: 12, lineHeight: 1.45, color: 'var(--ts)' }}>{option.effect}</span>}
     </>
@@ -299,7 +299,11 @@ function ProjectLedgerCard({ projectId, onAnswer: onAnswerProp }: { projectId: s
       ref={rootRef}
       data-testid="ledger-card"
       aria-label="Needs you"
-      style={{ flex: '0 1 auto', maxHeight: '60%', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10, padding: '13px 16px', borderBottom: '1px solid var(--border)' }}
+      // A long string with no spaces (an sftp address) wraps in place with `overflow-wrap: anywhere`; the
+      // card has overflow-y: auto, which makes overflow-x auto too, so unwrapped text made it scroll sideways.
+      // The rule lowers the min-content width of every flex item below, so a small tag next to a long label
+      // must not shrink (Badge and "Recommended" set flexShrink: 0).
+      style={{ flex: '0 1 auto', maxHeight: '60%', overflowX: 'hidden', overflowY: 'auto', overflowWrap: 'anywhere', display: 'flex', flexDirection: 'column', gap: 10, padding: '13px 16px', borderBottom: '1px solid var(--border)' }}
     >
       <div data-testid="ledger-card-header" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <MonoLabel color="var(--yellow)">Needs you</MonoLabel>
