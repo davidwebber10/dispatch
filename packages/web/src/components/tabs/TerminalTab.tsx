@@ -1075,7 +1075,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
           shows through the 2px margin). */}
       <div data-testid="term-frame" data-flash={flash || undefined} style={{ position: 'relative', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', background: isMobile ? 'var(--color-terminal)' : undefined, ...(isMobile && !grokFlush ? { margin: '2px 8px', borderRadius: 'var(--radius-xl)' } : {}) }}>
         {/* The pulse when the tab opens: a ring on the inside edge, over the terminal, then it fades. */}
-        {!isMobile && <div aria-hidden style={{ position: 'absolute', inset: 0, zIndex: 4, pointerEvents: 'none', boxShadow: `inset 0 0 0 2px color-mix(in srgb, var(--color-accent) ${flash ? 55 : 0}%, transparent)`, transition: 'box-shadow .35s ease-out' }} />}
+        {!isMobile && <div aria-hidden style={{ position: 'absolute', inset: 0, zIndex: 4, pointerEvents: 'none', boxShadow: `inset 0 0 0 2px color-mix(in srgb, var(--color-accent) ${flash ? 80 : 0}%, transparent)`, transition: flash ? 'none' : 'box-shadow .5s ease-out' }} />}
         {/* inset (not padding): FitAddon measures the host's width, and padding on
             the host makes it over-count columns so the right edge clips. On mobile
             the right inset is trimmed: xterm's column quantization + scrollbar leave

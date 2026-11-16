@@ -76,7 +76,7 @@ export interface PillComposerProps {
 const MAX_FRACTION = 0.5;
 
 /** The ring of the pulse when a tab opens (2026-11-16): stronger than the focus ring, then it fades. */
-const FLASH_RING = '0 0 0 3px color-mix(in srgb, var(--color-accent) 35%, transparent)';
+const FLASH_RING = '0 0 0 3px color-mix(in srgb, var(--color-accent) 45%, transparent)';
 
 export function PillComposer({
   value, onChange, onSend, canSend, stopMode = false, onStop, placeholder, onAddFile, menuExtra, afterPlus, pluginContext,
@@ -230,7 +230,7 @@ export function PillComposer({
       background: dragActive ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-pane))' : 'var(--color-pane)',
       border: `1px solid ${dragActive || focused || flash ? 'var(--color-accent)' : 'var(--color-border-hover)'}`,
       boxShadow: [flash ? FLASH_RING : focused ? '0 0 0 3px color-mix(in srgb, var(--color-accent) 20%, transparent)' : '', floating ? '0 10px 30px -12px var(--color-shadow)' : ''].filter(Boolean).join(', ') || undefined,
-      transition: 'border-color .12s, background .12s, box-shadow .35s ease-out',
+      transition: flash ? 'none' : 'border-color .12s, background .12s, box-shadow .5s ease-out',
     } : {
       position: 'relative', boxShadow: [flash ? FLASH_RING : '', floating ? '0 10px 30px -12px var(--color-shadow)' : ''].filter(Boolean).join(', ') || undefined,
       paddingTop: handle ? 14 : undefined,
@@ -238,7 +238,7 @@ export function PillComposer({
       gridTemplateAreas: stacked ? '"text text text text" "plus . mic send"' : recording ? '"plus text text send"' : '"plus text mic send"',
       padding: mobile ? 8 : 5, borderRadius: 'var(--radius-xl)', // the terminal card's radius, so the two line up
       background: dragActive ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-elevated))' : 'var(--color-elevated)',
-      border: `1px solid ${dragActive || flash ? 'var(--color-accent)' : 'var(--color-border)'}`, transition: 'border-color .35s ease-out, background .12s, box-shadow .35s ease-out',
+      border: `1px solid ${dragActive || flash ? 'var(--color-accent)' : 'var(--color-border)'}`, transition: flash ? 'none' : 'border-color .5s ease-out, background .12s, box-shadow .5s ease-out',
     }}>
       <div style={{ gridArea: 'plus', display: 'flex', alignItems: 'center', gap: 2 }}>
         <InputActionsMenu
