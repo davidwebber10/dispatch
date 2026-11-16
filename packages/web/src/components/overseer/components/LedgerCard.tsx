@@ -299,7 +299,10 @@ function ProjectLedgerCard({ projectId, onAnswer: onAnswerProp }: { projectId: s
       ref={rootRef}
       data-testid="ledger-card"
       aria-label="Needs you"
-      style={{ flex: '0 1 auto', maxHeight: '60%', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10, padding: '13px 16px', borderBottom: '1px solid var(--border)' }}
+      // A long string with no spaces (an sftp address) wraps in place: `overflow-wrap: anywhere` lowers the
+      // min-content width that the flex children measure, so the card never grows past its pane and
+      // never scrolls sideways.
+      style={{ flex: '0 1 auto', minWidth: 0, maxHeight: '60%', overflowX: 'hidden', overflowY: 'auto', overflowWrap: 'anywhere', display: 'flex', flexDirection: 'column', gap: 10, padding: '13px 16px', borderBottom: '1px solid var(--border)' }}
     >
       <div data-testid="ledger-card-header" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <MonoLabel color="var(--yellow)">Needs you</MonoLabel>
