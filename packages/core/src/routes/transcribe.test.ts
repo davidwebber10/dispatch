@@ -3,9 +3,9 @@ import express from 'express';
 import request from 'supertest';
 import { createTranscribeRouter } from './transcribe.js';
 
-function app(svc: any) {
+function app(svc: any, opts?: { cleanFillers?: () => boolean }) {
   const a = express();
-  a.use('/api/transcribe', createTranscribeRouter(svc));
+  a.use('/api/transcribe', createTranscribeRouter(svc, opts));
   return a;
 }
 
@@ -42,5 +42,37 @@ describe('POST /api/transcribe', () => {
       .field('provider', 'groq').field('model', 'm').field('secretName', 's').field('mimeType', 'audio/webm')
       .attach('file', Buffer.from('a'), { filename: 'a.webm', contentType: 'audio/webm' });
     expect(res.status).toBe(502);
+  });
+
+  describe('filler cleanup switch', () => {
+    const send = (svc: any, opts?: { cleanFillers?: () => boolean }) => request(app(svc, opts)).post('/api/transcribe')
+      .field('provider', 'groq').field('model', 'm').field('secretName', 's').field('mimeType', 'audio/webm')
+      .attach('file', Buffer.from('a'), { filename: 'a.webm', contentType: 'audio/webm' });
+    const spy = () => { const seen: any[] = []; return { seen, svc: { transcribe: async (o: any) => { seen.push(o); return { text: 'x', raw: {} }; } } }; };
+
+    it('passes cleanFillers true when the setting is on', async () => {
+      const { seen, svc } = spy();
+      await send(svc, { cleanFillers: () => true });
+      expect(seen[0].cleanFillers).toBe(true);
+    });
+    it('passes cleanFillers false when the setting is off', async () => {
+      const { seen, svc } = spy();
+      await send(svc, { cleanFillers: () => false });
+      expect(seen[0].cleanFillers).toBe(false);
+    });
+    it('reads the setting on every request', async () => {
+      const { seen, svc } = spy();
+      let on = true;
+      const a = app(svc, { cleanFillers: () => on });
+      const post = () => request(a).post('/api/transcribe').field('provider', 'g').field('model', 'm').field('secretName', 's')
+        .attach('file', Buffer.from('a'), { filename: 'a.webm', contentType: 'audio/webm' });
+      await post(); on = false; await post();
+      expect(seen.map((o) => o.cleanFillers)).toEqual([true, false]);
+    });
+    it('is on when no setting reader is given', async () => {
+      const { seen, svc } = spy();
+      await send(svc);
+      expect(seen[0].cleanFillers).toBe(true);
+    });
   });
 });

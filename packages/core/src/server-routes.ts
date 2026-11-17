@@ -48,6 +48,7 @@ import { createSecretsRouter } from './routes/secrets.js';
 import { createHarnessSettingsRouter } from './routes/harness-settings.js';
 import { createTelemetrySettingsRouter } from './routes/telemetry-settings.js';
 import { createDictationSettingsRouter, createCoordinatorSettingsRouter } from './routes/shared-settings.js';
+import { fillerCleanupEnabled } from './settings/shared-settings.js';
 import { createUsageLimitSettingsRouter } from './routes/usage-limit-settings.js';
 import { createTranscribeRouter } from './routes/transcribe.js';
 import { createSetupRouter } from './routes/setup.js';
@@ -239,7 +240,7 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   mount('/api/settings/dictation', createDictationSettingsRouter(d.db));
   mount('/api/settings/coordinator', createCoordinatorSettingsRouter(d.db));
   mount('/api/settings/usage-limits', createUsageLimitSettingsRouter(d.db, { onChange: () => d.usageLimits?.onSettingsChange?.() }));
-  mount('/api/transcribe', createTranscribeRouter(new TranscriptionService(d.secretsService)));
+  mount('/api/transcribe', createTranscribeRouter(new TranscriptionService(d.secretsService), { cleanFillers: () => fillerCleanupEnabled(d.db) }));
   mount('/api/setup', createSetupRouter(d.db, d.secretsService));
   mount('/api/sessions/:id/files', createFilesRouter(d.db));
   mount('/api/sessions/:id/git', createGitRouter(d.db));
