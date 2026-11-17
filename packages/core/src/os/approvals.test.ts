@@ -157,7 +157,7 @@ describe('smart approvals — rules and wiring', () => {
   test('the Claude command: auto mode, plus ask rules only when there are rules', () => {
     const smart = claudeCode.buildStructuredCommand!({ workDir: '/w', smartApprovals: { settings: claudeSmartSettings(['mcp__gmail__send']) } });
     expect(smart.args.join(' ')).toContain('--permission-mode auto');
-    expect(smart.args).toContain('{"permissions":{"ask":["mcp__gmail__send"]}}');
+    expect(JSON.parse(smart.args[smart.args.indexOf('--settings') + 1]).permissions).toEqual({ ask: ['mcp__gmail__send'] });
     const plain = claudeCode.buildStructuredCommand!({ workDir: '/w' });
     expect(plain.args.join(' ')).toContain('--permission-mode default');
     expect(claudeSmartSettings([])).toBeNull();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { claudeCodeProvider } from './claude-code.js';
+import { claudeCodeProvider, dispatchClaudeSettings } from './claude-code.js';
 
 describe('claudeCodeProvider.buildStructuredCommand', () => {
   it('appends --disallowedTools with each name when disallowedTools is set', () => {
@@ -24,14 +24,30 @@ describe('claudeCodeProvider.buildStructuredCommand', () => {
       const args = claudeCodeProvider.buildStructuredCommand!({ workDir: '/w', autoMemoryDirectory: '/h/.claude/dispatch-overseer/-w/memory', resumeSessionId }).args;
       const i = args.indexOf('--settings');
       expect(i).toBeGreaterThan(-1);
-      expect(JSON.parse(args[i + 1])).toEqual({ autoMemoryDirectory: '/h/.claude/dispatch-overseer/-w/memory' });
+      expect(JSON.parse(args[i + 1])).toMatchObject({ autoMemoryDirectory: '/h/.claude/dispatch-overseer/-w/memory' });
       expect(args.filter((a) => a === '--settings')).toHaveLength(1);
     }
   });
 
-  it('omits --settings when no memory folder is set', () => {
-    expect(claudeCodeProvider.buildStructuredCommand!({ workDir: '/w' }).args).not.toContain('--settings');
-    expect(claudeCodeProvider.buildStructuredCommand!({ workDir: '/w', autoMemoryDirectory: '' }).args).not.toContain('--settings');
+  it('with no memory folder the one --settings holds only Dispatch\'s floor', () => {
+    for (const autoMemoryDirectory of [undefined, '']) {
+      const args = claudeCodeProvider.buildStructuredCommand!({ workDir: '/w', autoMemoryDirectory }).args;
+      expect(args.filter((a) => a === '--settings')).toHaveLength(1);
+      expect(JSON.parse(args[args.indexOf('--settings') + 1])).toEqual({ env: { MCP_TIMEOUT: '30000' }, cleanupPeriodDays: 3650 });
+    }
+  });
+
+  // One flag, because the CLI may keep only the last: the floor, the memory folder and the smart rules together.
+  it('merges the floor, the memory folder and the smart rules into a single --settings', () => {
+    const args = claudeCodeProvider.buildStructuredCommand!({ workDir: '/w', autoMemoryDirectory: '/m', smartApprovals: { settings: JSON.stringify({ permissions: { ask: ['Bash(rm:*)'] } }) } }).args;
+    expect(args.filter((a) => a === '--settings')).toHaveLength(1);
+    expect(JSON.parse(args[args.indexOf('--settings') + 1])).toEqual({ env: { MCP_TIMEOUT: '30000' }, cleanupPeriodDays: 3650, autoMemoryDirectory: '/m', permissions: { ask: ['Bash(rm:*)'] } });
+  });
+
+  it('DISPATCH_MCP_TIMEOUT_MS changes the timeout; a junk value falls back to 30 seconds', () => {
+    expect(dispatchClaudeSettings({ DISPATCH_MCP_TIMEOUT_MS: '45000' } as any).env.MCP_TIMEOUT).toBe('45000');
+    expect(dispatchClaudeSettings({ DISPATCH_MCP_TIMEOUT_MS: 'abc' } as any).env.MCP_TIMEOUT).toBe('30000');
+    expect(dispatchClaudeSettings({} as any).env.MCP_TIMEOUT).toBe('30000');
   });
 });
 

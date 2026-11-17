@@ -653,6 +653,35 @@ it('a resume whose conversation is gone: conversation-lost with the id, and the 
   expect(detail).toContain('No conversation found with session ID: gone-session');
 });
 
+// A server that did not connect is named in the thread, once.
+it('names an MCP server that failed to connect, once, whether or not the hosted check is on', async () => {
+  const m = new StructuredSessionManager();
+  const notices = (): any[] => m.getEvents('tF').filter((e: any) => e.subtype === 'dispatch_notice');
+  m.spawn('tF', { command: process.execPath, args: [fake], workDir: process.cwd() });
+  await waitForEvent(m, 'tF', (e) => e.type === 'system' && e.subtype === 'init');
+  const frame = JSON.stringify({ mcp_servers: [{ name: 'dispatch', status: 'connected' }, { name: 'monarch', status: 'failed' }] });
+  m.sendMessage('tF', `TRIGGER_INIT:${frame}`);
+  await waitForEvent(m, 'tF', () => notices().length === 1);
+  expect(notices()[0].message).toContain('monarch');
+  expect(notices()[0].message).not.toContain('dispatch,');
+  m.sendMessage('tF', `TRIGGER_INIT:${frame}`);
+  await waitForEvent(m, 'tF', () => m.getEvents('tF').filter((x: any) => x.type === 'result').length >= 2);
+  await new Promise((r) => setTimeout(r, 30));
+  expect(notices()).toHaveLength(1);
+});
+
+// A refused resume never answered the message sent to it. The manager hands that message back, once,
+// so the daemon can send it to a new conversation instead of dropping it.
+it('a refused resume hands back the message it never answered, once', async () => {
+  const m = new StructuredSessionManager();
+  const lost = waitForManagerEvent(m, 'conversation-lost', 'tTake');
+  m.spawn('tTake', { command: process.execPath, args: [fake, '-r', 'gone-session'], workDir: process.cwd() });
+  m.sendMessage('tTake', 'hello again', 'user');
+  await lost;
+  expect(m.takeUnanswered('tTake')).toEqual([{ content: 'hello again', source: 'user' }]);
+  expect(m.takeUnanswered('tTake')).toEqual([]);
+});
+
 // Review finding: Node can fire the child's 'exit' before its stdout is drained. Claude's error
 // frame must still be read when it lands after 'exit', or the doomed resume repeats (#76).
 it('reads a lost-conversation frame that lands after the process exited', async () => {

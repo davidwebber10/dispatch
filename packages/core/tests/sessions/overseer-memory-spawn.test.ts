@@ -14,6 +14,8 @@ import * as sessionsDb from '../../src/db/sessions.js';
 import * as terminalsDb from '../../src/db/terminals.js';
 import { SessionService } from '../../src/sessions/service.js';
 import type { IStructuredManager, StructuredSpawnOpts } from '../../src/structured/manager.js';
+import { encodeClaudeProjectDir } from '../../src/platform/encode.js';
+import { clearTranscriptPathCache } from '../../src/sessions/transcript-path.js';
 import { overseerMemoryDir, sharedProjectMemoryDir } from '../../src/overseer/memory-scope.js';
 
 class FakePty extends EventEmitter {
@@ -75,11 +77,13 @@ afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-/** The parsed `--settings` JSON of a spawn, or null when the flag is absent. */
+/** The parsed `--settings` JSON of a spawn without Dispatch's own floor (MCP timeout, retention), or null when nothing else is in it. */
 function settingsOf(id: string): Record<string, unknown> | null {
   const args = claude.spawnOpts[id]?.args ?? [];
   const i = args.indexOf('--settings');
-  return i === -1 ? null : JSON.parse(args[i + 1]);
+  if (i === -1) return null;
+  const { env: _env, cleanupPeriodDays: _days, ...rest } = JSON.parse(args[i + 1]);
+  return Object.keys(rest).length ? rest : null;
 }
 
 const create = (label: string, config: Record<string, unknown>, externalId?: string) =>
@@ -97,6 +101,11 @@ describe('a Claude overseer start', () => {
 
   it('passes the same --settings on resume', () => {
     terminalsDb.create(db, { id: 'cp', sessionId: 's1', type: 'claude-code', label: 'Control Plane', workingDir: project, externalId: 'sess-cp', config: { transport: 'structured', role: 'coordinator' } });
+    // A resume needs the transcript on disk (a missing one starts a new conversation); os.homedir is mocked to `home`.
+    const tDir = path.join(home, '.claude', 'projects', encodeClaudeProjectDir(project, 'darwin'));
+    fs.mkdirSync(tDir, { recursive: true });
+    fs.writeFileSync(path.join(tDir, 'sess-cp.jsonl'), '{}\n');
+    clearTranscriptPathCache();
     expect(svc.ensureStructuredAlive('cp')).toBe(true);
     const args = claude.spawnOpts.cp.args;
     expect(args.slice(args.indexOf('-r'), args.indexOf('-r') + 2)).toEqual(['-r', 'sess-cp']);

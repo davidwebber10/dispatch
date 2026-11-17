@@ -19,7 +19,7 @@ import { boxLog } from '../os/box-log.js';
 import { logThreadModel } from './model-log.js';
 import { SENT_MARK } from '../conversation/task-notification.js';
 import { isHostedBox } from '../os/hosted-mode.js';
-import { forbiddenInitTools, initServerNames, unexpectedInitMcpTools, unexpectedServers, unexpectedServersNotice, NO_SERVER_LIST_NOTICE } from '../os/hosted-mcp-policy.js';
+import { failedInitServers, forbiddenInitTools, initServerNames, unexpectedInitMcpTools, unexpectedServers, unexpectedServersNotice, NO_SERVER_LIST_NOTICE } from '../os/hosted-mcp-policy.js';
 import { SubagentTracker, stripAgentIdLine, resultText, RUNNING_STATES, type SubagentInfo, type SubagentState, type StopAgentResult } from './shared/subagents.js';
 import { StructuredEmitter, type AnyStructuredListener, type StructuredListener, type StructuredManagerEventName, type StructuredManagerEvents } from './shared/events.js';
 
@@ -91,6 +91,9 @@ interface Session {
   exitCode?: number;
   /** The claude session_id parsed from the init/system event (for resume on restart). */
   sessionId?: string;
+  /** Messages sent since the last turn that ended without an error. A resume that Claude refuses
+   *  ("No conversation found") never answered them, so they are handed back to be sent again. */
+  unanswered?: { content: string | ContentBlock[]; source?: MessageSource }[];
   /**
    * name+input of the most recent can_use_tool request seen in the CURRENT turn, reset
    * after each `result` boundary. Lets the `result` handler tell a turn that ended because
@@ -160,6 +163,8 @@ interface Session {
   mcpChecked?: boolean;
   /** Names already warned about, so a frame each turn does not repeat the same warning. */
   mcpWarned?: Set<string>;
+  /** MCP servers already named in a "did not connect" notice (once per name per process). */
+  mcpFailedNoted?: Set<string>;
 }
 
 /**
@@ -388,6 +393,11 @@ export interface IStructuredManager extends EventEmitter {
    * quiet): a `{type:'system', subtype:…}` notice such as `dispatch_notice` or `permission_blocked`.
    */
   postEvent?(terminalId: string, event: Record<string, unknown>): void;
+  /**
+   * The messages a failed resume never answered (Claude: after 'conversation-lost'), handed over once.
+   * The caller starts a new conversation and sends them to it.
+   */
+  takeUnanswered?(terminalId: string): { content: string | ContentBlock[]; source?: MessageSource }[];
   /** Switch the live thread between auto / ask / smart approvals (os/approvals.ts). */
   setApprovals?(terminalId: string, mode: Approvals): Promise<void>;
   /** The actions the harness blocked by itself and nobody answered yet (the in-thread cards). */
@@ -499,6 +509,8 @@ function wakeActivity(toolName: string, input: unknown): string {
 export class ClaudeStructuredSessionManager extends StructuredEmitter implements IStructuredManager {
   readonly repliesToQuestions = true;
   private sessions = new Map<string, Session>();
+  /** Messages of a thread whose resume was refused, kept past the exit of its process (see takeUnanswered). */
+  private lostUnanswered = new Map<string, { content: string | ContentBlock[]; source?: MessageSource }[]>();
   private defaultEnv: Record<string, string> = {};
   /** The declared-status chain of a turn end (shared/settle-turn.ts). Claude's 'idle' has no summary. */
   private readonly settleDeps: SettleDeps = {
@@ -585,6 +597,8 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
       // answered. A sub-agent's frame (parent_tool_use_id) and a synthetic frame never count.
       if (event?.type === 'system' && event?.subtype === 'init' && typeof event.model === 'string' && event.model) session.model = event.model;
       if (event?.type === 'system' && event?.subtype === 'init' && !session.modelLogged) { session.modelLogged = true; logThreadModel(terminalId, 'claude-code', session.requestedModel ?? null, typeof event.model === 'string' ? event.model : null); }
+      // A server that did not connect (a remote one that stalled or needs a login): say which, once.
+      if (event?.type === 'system' && event?.subtype === 'init') this.noteFailedMcpServers(terminalId, session, event);
       // Every init frame (Claude Code sends one each turn): a connector or server can load after the first.
       if (event?.type === 'system' && event?.subtype === 'init' && session.mcpExpected) this.checkMcpServers(terminalId, session, event);
       if (event?.type === 'assistant' && event?.parent_tool_use_id == null) {
@@ -712,6 +726,7 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
       }
       if (event?.type === 'result') {
         session.turnOpen = false;
+        if (event.is_error !== true) session.unanswered = [];
         // Backstop: a CLI blocked on a request cannot end a turn, so a pending still set here is
         // stale. Cleared before the settle emits below, so the status sees it while the turn is open.
         // A background subagent's request is not: it outlives the main turn (subagents-v1).
@@ -738,7 +753,10 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
           const lost = Array.isArray(event.errors)
             ? event.errors.map((e: unknown) => (typeof e === 'string' ? CONVERSATION_LOST.exec(e)?.[1] : undefined)).find(Boolean)
             : undefined;
-          if (lost) this.fire('conversation-lost', terminalId, lost);
+          if (lost) {
+            if (session.unanswered?.length) this.lostUnanswered.set(terminalId, session.unanswered);
+            this.fire('conversation-lost', terminalId, lost);
+          }
           this.fire('failed', terminalId);
         } else if (wake && declared?.state !== 'needs_you') {
           // A pending timer is an observable FACT; a declaration of done or blocked is only a
@@ -846,6 +864,7 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
     if (source) ev.meta = { source };
     const s = this.sessions.get(terminalId);
     if (s) {
+      (s.unanswered ??= []).push({ content, source });
       s.ring.push(ev, { quiet: true });
       // Always overwritten (even to undefined for an untagged send) so a stale tag from a
       // prior turn can never leak onto this one's `result` resolution.
@@ -1020,6 +1039,19 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
    * a server Dispatch did not pass, an Artifact tool, an MCP tool of a server Dispatch did not pass,
    * and a frame with no server list. Each name is reported once per process.
    */
+  private noteFailedMcpServers(terminalId: string, session: Session, event: unknown): void {
+    const noted = (session.mcpFailedNoted ??= new Set<string>());
+    const fresh = failedInitServers(event).filter((f) => !noted.has(f.name));
+    if (fresh.length === 0) return;
+    for (const f of fresh) noted.add(f.name);
+    const names = fresh.map((f) => (f.status === 'needs-auth' ? `${f.name} (needs sign-in)` : f.name)).join(', ');
+    boxLog('thread.mcp.failed', { thread: terminalId, harness: 'claude-code', servers: fresh.map((f) => f.name) }, 'warn');
+    this.postEvent(terminalId, {
+      type: 'system', subtype: 'dispatch_notice', level: 'warning',
+      message: `${fresh.length === 1 ? 'This tool server' : 'These tool servers'} did not connect: ${names}. The thread carries on without ${fresh.length === 1 ? 'it' : 'them'}. Fix or turn off the integration if you need ${fresh.length === 1 ? 'it' : 'them'}.`,
+    });
+  }
+
   private checkMcpServers(terminalId: string, session: Session, event: unknown): void {
     const NO_LIST_KEY = '(no server list)'; // in `mcpWarned`: the no-list warning was given
     const expected = session.mcpExpected ?? [];
@@ -1234,6 +1266,12 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
       else if (r === 'unsupported') out.unsupported.push(a.id);
     }
     if (s.turnOpen) out.mainInterrupted = this.interrupt(terminalId);
+    return out;
+  }
+
+  takeUnanswered(terminalId: string): { content: string | ContentBlock[]; source?: MessageSource }[] {
+    const out = this.lostUnanswered.get(terminalId) ?? [];
+    this.lostUnanswered.delete(terminalId);
     return out;
   }
 

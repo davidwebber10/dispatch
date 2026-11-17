@@ -13,7 +13,9 @@ import { ThreadConfigStore } from './thread-config.js';
 import { ThreadKeys } from './thread-keys.js';
 import { emptySessionWiring, type SessionWiring } from './session-wiring.js';
 import { SpawnInjection, AGENCY_MCP_SERVER } from './spawn-injection.js';
-import { ThreadSpawner, disallowedToolsFor } from './thread-spawner.js';
+import { ThreadSpawner, disallowedToolsFor, CONVERSATION_LOST_NOTICE } from './thread-spawner.js';
+import { clearTranscriptPathCache } from './transcript-path.js';
+import { encodeClaudeProjectDir } from '../platform/encode.js';
 
 class FakePty {
   alive = new Set<string>();
@@ -64,6 +66,56 @@ afterEach(() => {
   if (savedCap === undefined) delete process.env.DISPATCH_MAX_LIVE_THREADS; else process.env.DISPATCH_MAX_LIVE_THREADS = savedCap;
   try { db.close(); } catch { /* noop */ }
   fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+describe('a saved Claude conversation with no transcript on disk', () => {
+  let home: string;
+  let savedHome: string | undefined;
+  let posted: any[];
+  beforeEach(() => {
+    savedHome = process.env.HOME;
+    home = path.join(tmp, 'home');
+    fs.mkdirSync(path.join(home, '.claude', 'projects'), { recursive: true });
+    process.env.HOME = home;
+    clearTranscriptPathCache();
+    posted = [];
+    (mgr as any).postEvent = (id: string, ev: any) => posted.push({ id, ev });
+  });
+  afterEach(() => {
+    if (savedHome === undefined) delete process.env.HOME; else process.env.HOME = savedHome;
+    clearTranscriptPathCache();
+  });
+
+  it('starts a new conversation (no -r), clears the id, and says so in the thread', () => {
+    terminalsDb.create(db, { id: 'g', sessionId: 's1', type: 'claude-code', label: 'g', externalId: 'ghost-1', config: { transport: 'structured' } });
+    spawner.spawnTerminal('g');
+    expect(mgr.spawns[0].opts.args).not.toContain('-r');
+    expect(mgr.spawns[0].opts.resumeId).toBeUndefined();
+    expect(terminalsDb.getById(db, 'g')!.external_id).toBeNull();
+    expect(JSON.parse(terminalsDb.getById(db, 'g')!.config!).lostConversation.externalId).toBe('ghost-1');
+    expect(posted).toHaveLength(1);
+    expect(posted[0].ev).toMatchObject({ type: 'system', subtype: 'dispatch_notice', level: 'warning', message: CONVERSATION_LOST_NOTICE });
+  });
+
+  it('resumes with -r, and posts nothing, when the transcript is there', () => {
+    const dir = path.join(home, '.claude', 'projects', encodeClaudeProjectDir(path.join(tmp, 'proj'), 'darwin'));
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'real-1.jsonl'), '{}\n');
+    terminalsDb.create(db, { id: 'r', sessionId: 's1', type: 'claude-code', label: 'r', externalId: 'real-1', config: { transport: 'structured' } });
+    spawner.spawnTerminal('r');
+    expect(mgr.spawns[0].opts.args).toContain('-r');
+    expect(mgr.spawns[0].opts.args).toContain('real-1');
+    expect(terminalsDb.getById(db, 'r')!.external_id).toBe('real-1');
+    expect(posted).toEqual([]);
+  });
+
+  it('every Claude thread starts with a 30 second MCP startup timeout in its inline settings', () => {
+    terminalsDb.create(db, { id: 'm', sessionId: 's1', type: 'claude-code', label: 'm', config: { transport: 'structured' } });
+    spawner.spawnTerminal('m');
+    const args: string[] = mgr.spawns[0].opts.args;
+    const inline = args.filter((a, i) => args[i - 1] === '--settings').map((a) => JSON.parse(a));
+    expect(inline.some((j) => j?.env?.MCP_TIMEOUT === '30000')).toBe(true);
+  });
 });
 
 describe('ThreadSpawner', () => {
@@ -117,7 +169,9 @@ describe('ThreadSpawner', () => {
     wiring.threadKeys = null;
     terminalsDb.create(db, { id: 'a', sessionId: 's1', type: 'claude-code', label: 'a' });
     spawner.spawnTerminal('a');
-    expect(pty.spawns[0].env).toEqual({ DISPATCH_TERMINAL_ID: 'a' });
+    expect(pty.spawns[0].env).toEqual({ DISPATCH_TERMINAL_ID: 'a', MCP_TIMEOUT: '30000' });
+    const args = pty.spawns[0].args;
+    expect(JSON.parse(args[args.indexOf('--settings') + 1])).toEqual({ env: { MCP_TIMEOUT: '30000' }, cleanupPeriodDays: 3650 });
     expect(terminalsDb.getById(db, 'a')!.pid).toBe(4242);
   });
 

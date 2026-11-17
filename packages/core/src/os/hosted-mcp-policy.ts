@@ -156,6 +156,20 @@ export function initServerNames(event: unknown): string[] | null {
   return list.map((m) => (m && typeof m === 'object' ? String((m as { name?: unknown }).name ?? '') : String(m))).filter(Boolean);
 }
 
+/** The servers an init frame reports as not connected (`failed`, `needs-auth`), with their status. */
+export function failedInitServers(event: unknown): { name: string; status: string }[] {
+  const list = (event as { mcp_servers?: unknown } | null)?.mcp_servers;
+  if (!Array.isArray(list)) return [];
+  const out: { name: string; status: string }[] = [];
+  for (const m of list) {
+    if (!m || typeof m !== 'object') continue;
+    const name = String((m as { name?: unknown }).name ?? '');
+    const status = String((m as { status?: unknown }).status ?? '');
+    if (name && (status === 'failed' || status === 'needs-auth')) out.push({ name, status });
+  }
+  return out;
+}
+
 /**
  * Built-in tools a hosted thread must not have: the Artifact tools (Artifact, ArtifactComments,
  * ArtifactData) publish to the person's claude.ai account, outside the platform. Off by the image's

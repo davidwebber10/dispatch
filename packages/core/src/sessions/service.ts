@@ -150,7 +150,20 @@ export class SessionService {
     this.transcripts = new ThreadTranscripts(db);
     this.harnesses = new HarnessRegistry({
       db, configStore: this.configStore, wiring: this.wiring,
-      threads: { undoRefusedPick: (id, info) => this.undoRefusedPick(id, info) },
+      threads: {
+        undoRefusedPick: (id, info) => this.undoRefusedPick(id, info),
+        recoverLostConversation: (id, messages) => {
+          // The id is cleared, so this starts a new conversation (with a recap from the journal) and
+          // the thread says so. Then the messages the old one never answered go to it.
+          const texts = messages.map((m) => (typeof m.content === 'string' ? m.content : m.content.map((b: any) => (b?.type === 'text' ? b.text ?? '' : '')).join('')));
+          this.spawner.recoveringMessages.set(id, texts);
+          try {
+            if (!this.ensureStructuredAlive(id)) throw new Error(this.spawner.lastSpawnError.get(id) ?? 'the thread did not start');
+          } finally { this.spawner.recoveringMessages.delete(id); }
+          const manager = this.structuredManagerForTerminal(id);
+          for (const m of messages) manager?.sendMessage(id, m.content, m.source);
+        },
+      },
     });
     // The parts call back through `this`, so a caller that replaces a facade method still reaches every path.
     this.notifier = new CoordinatorNotifier({

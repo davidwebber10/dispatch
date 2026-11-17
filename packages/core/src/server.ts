@@ -27,6 +27,7 @@ import type { ApiRouteDeps } from './server-routes.js';
 import { buildDaemon, NoopPTYManager } from './daemon/build.js';
 import { createDaemonHttpServer } from './daemon/http-server.js';
 import { boxLog } from './os/box-log.js';
+import { ensureClaudeTranscriptRetention } from './providers/claude-retention.js';
 import { prepareSeparationAtStart, proveSeparationAtStart } from './privsep/boot.js';
 import { runDirFor } from './privsep/paths.js';
 import { privsep } from './privsep/config.js';
@@ -142,6 +143,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   lockDownDataDir(dataDir, [platform.logDir()]);
   const db = createDatabase(path.join(dataDir, 'dispatch.db'));
   sessionsDb.clearStalePids(db, new Set<number>(platform.listProcessIds()));
+  keepClaudeTranscripts();
 
   // Build: every service and the app (daemon/build.ts). The browser shim points at the daemon's own address.
   const basePath = normalizeBasePath(process.env.DISPATCH_BASE_PATH);
@@ -202,6 +204,18 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   };
   for (const sig of ['SIGTERM', 'SIGINT'] as const) process.on(sig, exitAfter(cleanup, sig));
   return { port, cleanup, keys };
+}
+
+/**
+ * Claude deletes transcripts older than 30 days by default, whichever claude run does the cleanup: raise it
+ * in the person's own settings (only when they have not set a value). Not under privilege separation: that
+ * home is the agent's, and the thread spawns carry the same value inline.
+ */
+function keepClaudeTranscripts(): void {
+  if (privsep()) return;
+  const retention = ensureClaudeTranscriptRetention();
+  if (retention === 'added' || retention === 'created') console.log('[claude] set cleanupPeriodDays 3650 in the Claude settings, so thread transcripts are kept');
+  else if (retention === 'invalid-file' || retention === 'error') console.warn(`[claude] could not set the transcript retention in the Claude settings (${retention}); Dispatch threads still carry it inline`);
 }
 
 /** Hosted box log (os/box-log.ts): one line that says which build started, and how. Local: no line. */

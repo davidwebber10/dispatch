@@ -32,7 +32,10 @@ class FakeStructured extends EventEmitter implements IStructuredManager {
   setDefaultEnv() {}
   spawnError: Error | null = null;
   spawn(id: string, opts: StructuredSpawnOpts) { if (this.spawnError) throw this.spawnError; this.live.add(id); this.spawns.push(id); this.spawnOpts[id] = opts; return 4321; }
-  sendMessage() {}
+  sent: { id: string; content: unknown }[] = [];
+  unanswered: { content: string; source?: string }[] = [];
+  sendMessage(id: string, content: unknown) { this.sent.push({ id, content }); }
+  takeUnanswered(): any[] { const u = this.unanswered; this.unanswered = []; return u; }
   answerPermission() { return false; }
   setEscalate() { return false; }
   interrupt() { return true; }
@@ -110,6 +113,21 @@ describe('a structured thread whose Claude conversation is gone (#76)', () => {
     expect(structured.spawns).toEqual(['t3']);
     expect(structured.spawnOpts['t3'].args).not.toContain('-r');
     expect(structured.spawnOpts['t3'].args).not.toContain('gone-3');
+  });
+
+  it('a refused resume: once its process exits, a new conversation starts and gets the unanswered message', () => {
+    seed('t5', { config: { transport: 'structured' }, externalId: null });
+    structured.live.add('t5'); // a process that resumed an id that Claude then refused
+    terminalsDb.updateExternalId(db, 't5', 'gone-5');
+    structured.unanswered = [{ content: 'please carry on', source: 'user' }];
+    structured.emit('conversation-lost', 't5', 'gone-5');
+    expect(structured.spawns).toEqual([]); // the old process has not exited yet
+    structured.live.delete('t5');
+    structured.emit('exit', 't5', 1, 'No conversation found with session ID: gone-5');
+    expect(structured.spawns).toEqual(['t5']);
+    expect(structured.spawnOpts['t5'].args).not.toContain('-r');
+    expect(structured.sent).toEqual([{ id: 't5', content: 'please carry on' }]);
+    expect(terminalsDb.getById(db, 't5')!.external_id).toBeNull();
   });
 
   it('a spawn that throws: the send error names the cause instead of a bare "no structured session"', () => {

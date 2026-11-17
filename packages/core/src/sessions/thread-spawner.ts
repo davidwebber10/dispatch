@@ -9,6 +9,7 @@ import * as sessionsDb from '../db/sessions.js';
 import * as terminalsDb from '../db/terminals.js';
 import * as messageSourceDb from '../db/message-source.js';
 import { getProvider } from '../providers/registry.js';
+import { dispatchClaudeSettings } from '../providers/claude-code.js';
 import { PTYManager } from '../pty/manager.js';
 import type { KeyHandle, KeyRegistry } from '../auth/principals.js';
 import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
@@ -29,6 +30,10 @@ import { resolveSpawnModel, isClaudeTierAlias } from '../overseer/spawn-model.js
 import { COORDINATOR_DISALLOWED_TOOLS, makeCoordinatorPolicy } from '../overseer/coordinator-policy.js';
 import { ROLE_DISALLOWED_TOOLS, roleToolPolicy } from '../roles/role-policy.js';
 import { adoptTranscriptSettings as adoptTranscriptSettingsInto, effortFor } from './thread-settings.js';
+import { resolveTranscriptPath } from './transcript-path.js';
+import { privsep } from '../privsep/config.js';
+import { MessageJournal } from '../journal/journal.js';
+import { journalRecap } from '../journal/recap.js';
 import { readSessionBackfill, readSessionSettings, applyDurableSources, resumeAdvice as readResumeAdvice } from './cc-sessions.js';
 import { randomUUID } from 'crypto';
 import { effectiveSpawnDepth } from '../auth/key-scope.js';
@@ -132,6 +137,15 @@ export interface ThreadSpawnerDeps {
     /** The effort a Codex thread starts with, checked against the efforts of its model. */
     codexEffortFor(config: Record<string, any>, model?: string): string | undefined;
   };
+}
+
+/** What the person is told when a thread's earlier conversation could not be loaded. */
+export const CONVERSATION_LOST_NOTICE = 'This thread\'s earlier conversation could not be loaded (Claude no longer has it), so it started a new one. Your message goes to the new conversation. If Dispatch kept the earlier messages, the model was given a short recap of them, but it does not have the full history.';
+
+/** True when Claude's own transcript store has no file for this session. Not checked where the store is another user's (privsep). */
+function transcriptIsGone(workDir: string, sessionId: string): boolean {
+  if (privsep()) return false;
+  return !resolveTranscriptPath(workDir, sessionId);
 }
 
 /**
@@ -330,6 +344,8 @@ export class ThreadSpawner {
       // A company-model thread: no web search (the CLI's options come first, so the list ends at the next option).
       const company = companyDisallowedTools(terminal.type, config, undefined);
       args = hostedClaudeArgs(terminal.type, company ? ['--disallowedTools', ...company, ...cmd.args] : cmd.args);
+      // A CLI (PTY) Claude thread: the same MCP timeout and transcript retention as a Pretty one (see dispatchClaudeSettings).
+      if (terminal.type === 'claude-code' && runnerPrompt === undefined) args = [...args, '--settings', JSON.stringify(dispatchClaudeSettings())];
     }
 
     // GROK_HOME is how Grok's hooks and MCP servers reach the thread — argv cannot carry
@@ -338,7 +354,7 @@ export class ThreadSpawner {
     // (new, resume, relaunch), and the per-process keys below can never be shadowed by it.
     const loginEnv = terminal.type === 'shell' ? (this.wiring.accountEnv?.(terminal.type, config) ?? {})
       : claudeLoginEnv(terminal.type, config, this.wiring.accountEnv?.(terminal.type, config) ?? {}, { daemonApi: this.wiring.daemonApi, key: sk && !sk.keyFile ? sk.key : null });
-    const spawnEnv: Record<string, string> = { ...loginEnv, ...hostedClaudeEnv(terminal.type), [TERMINAL_ID_ENV_VAR]: terminalId };
+    const spawnEnv: Record<string, string> = { ...loginEnv, ...hostedClaudeEnv(terminal.type), ...(terminal.type === 'claude-code' ? { MCP_TIMEOUT: dispatchClaudeSettings().env.MCP_TIMEOUT } : {}), [TERMINAL_ID_ENV_VAR]: terminalId };
     if (grokHomeDir) spawnEnv.GROK_HOME = grokHomeDir;
     // The key travels in the environment of this one process, never in argv and never in the shared
     // default env. The Codex CLI view writes its environment to a snapshot file, so it gets the path
@@ -498,7 +514,27 @@ export class ThreadSpawner {
       } catch { /* best-effort — a thread without injections still runs */ }
     }
 
-    const resumeSessionId = terminal.external_id || undefined;
+    let resumeSessionId = terminal.external_id || undefined;
+    // A saved Claude conversation with no transcript on disk cannot be resumed ("No conversation
+    // found"), and the id is often one that init reported before the first turn ever wrote a file.
+    // Start a new conversation instead, tell the person, and give it a recap from Dispatch's journal.
+    let lostNotice: string | undefined;
+    let recap: string | null = null;
+    if (terminal.type === 'claude-code' && resumeSessionId && !this.wiring.structuredCommandOverride && transcriptIsGone(workDir, resumeSessionId)) {
+      const lostId = resumeSessionId;
+      resumeSessionId = undefined;
+      lostNotice = CONVERSATION_LOST_NOTICE;
+      this.configStore.patch(terminal.id, { lostConversation: { externalId: lostId, at: new Date().toISOString() } });
+      terminalsDb.updateExternalId(this.db, terminal.id, null);
+      console.warn(`[structured] thread ${terminal.id}: conversation ${lostId} has no transcript on disk; starting a new one`);
+      boxLog('thread.conversation_lost', { thread: terminal.id, harness: terminal.type, session: lostId, when: 'spawn' }, 'warn');
+    }
+    // A new conversation that replaces a lost one (here, or after a resume Claude refused).
+    if (terminal.type === 'claude-code' && !resumeSessionId && (lostNotice || config.lostConversation)) {
+      lostNotice ??= CONVERSATION_LOST_NOTICE;
+      const skip = this.recoveringMessages.get(terminal.id) ?? [];
+      recap = journalRecap((this.journal ??= new MessageJournal(this.db)), terminal.id, skip);
+    }
 
     // An overseer may write only to its own memory and to this project's shared memory folder
     // (overseer memory scope spec 2026-10-07, Unit 2), and its persona names those exact folders
@@ -560,7 +596,7 @@ export class ThreadSpawner {
       // toolset is the enforcement; the policy deny remains as a backstop.
       // A Claude overseer loads only its own memory folder (overseer memory scope spec, Unit 1).
       const autoMemoryDirectory = this.overseerMemoryFor(terminal, config, workDir, coordinatorFolders);
-      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: persona, resumeSessionId, model: resolvedModel, effort: terminal.type === 'claude-code' ? effortFor(config) : undefined, grokPluginDir, disallowedTools: companyDisallowedTools(terminal.type, config, disallowedToolsFor(config)), autoMemoryDirectory, ...(smartForCommand ? { smartApprovals: { settings: claudeSmartSettings(claudeSmartAskRules()) } } : {}) });
+      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: [persona, recap].filter(Boolean).join('\n\n') || undefined, resumeSessionId, model: resolvedModel, effort: terminal.type === 'claude-code' ? effortFor(config) : undefined, grokPluginDir, disallowedTools: companyDisallowedTools(terminal.type, config, disallowedToolsFor(config)), autoMemoryDirectory, ...(smartForCommand ? { smartApprovals: { settings: claudeSmartSettings(claudeSmartAskRules()) } } : {}) });
       if (!built) throw new Error('structured transport not supported for this provider');
       sc = built;
     }
@@ -726,7 +762,12 @@ export class ThreadSpawner {
     boxLog('thread.start', { thread: terminal.id, harness: terminal.type, transport: 'structured', resume: !!resumeSessionId, model: resolvedModel ?? null, ...(companyModel ? { modelSource: 'company' } : {}) });
     if (sk) this.wiring.threadKeys?.bindStructured(terminal.id, sk.handle);
     terminalsDb.updatePid(this.db, terminal.id, pid);
+    if (lostNotice) manager.postEvent?.(terminal.id, { type: 'system', subtype: 'dispatch_notice', level: 'warning', message: lostNotice });
   }
+
+  /** Text of the messages being sent again to a new conversation (so the recap leaves them out). */
+  readonly recoveringMessages = new Map<string, string[]>();
+  private journal?: MessageJournal;
 
   /**
    * Lazily revive a structured thread on demand (its ws connects or it receives a

@@ -120,8 +120,9 @@ describe('switchTransport — config merge preserves unrelated keys', () => {
   it('pty → structured adds transport, keeps the rest', async () => {
     seed('t1', { config: { model: 'sonnet', pinned: true }, status: 'waiting' });
     const t = await svc.switchTransport('t1', 'structured');
-    expect(cfg('t1')).toEqual({ model: 'sonnet', pinned: true, transport: 'structured' });
-    expect(t.config).toEqual({ model: 'sonnet', pinned: true, transport: 'structured' });
+    // The seeded id has no transcript on disk, so the start records the lost conversation too (see thread-spawner.ts).
+    expect(cfg('t1')).toMatchObject({ model: 'sonnet', pinned: true, transport: 'structured' });
+    expect(t.config).toMatchObject({ model: 'sonnet', pinned: true, transport: 'structured' });
     expect(structured.spawns).toEqual(['t1']); // respawned structured (resume)
   });
 });
@@ -135,9 +136,9 @@ describe('switchTransport — busy handling', () => {
   it('with force (the user confirmed), a busy PTY thread is stopped and restarted structured (2026-11-06)', async () => {
     seed('t1', { config: { model: 'opus' }, status: 'working' });
     const t = await svc.switchTransport('t1', 'structured', { force: true });
-    expect(cfg('t1')).toEqual({ model: 'opus', transport: 'structured' });
+    expect(cfg('t1')).toMatchObject({ model: 'opus', transport: 'structured' });
     expect(structured.spawns).toEqual(['t1']); // resumed in Pretty
-    expect(t.config).toEqual({ model: 'opus', transport: 'structured' });
+    expect(t.config).toMatchObject({ model: 'opus', transport: 'structured' });
   });
 
   it('interrupts a busy structured thread, awaits the turn boundary, then switches', async () => {
