@@ -382,6 +382,39 @@ describe('removeFillers: capital after a line break', () => {
   });
 });
 
+describe('removeFillers: round 4 edge cases', () => {
+  it('drops the comma when a colon, stop or comma comes right after the filler comma', () => {
+    expect(removeFillers('John, um, : next')).toBe('John: next');
+    expect(removeFillers('John, um, . next')).toBe('John. next');
+    expect(removeFillers('John, um, ; next')).toBe('John; next');
+    expect(removeFillers('John, um, , next')).toBe('John, next');
+  });
+  it('drops the comma when fillers far apart both go and the text ends', () => {
+    expect(removeFillers('John, um,' + ' '.repeat(41) + 'uh')).toBe('John');
+    expect(removeFillers('John, um,' + ' '.repeat(41) + 'uh\nnext')).toBe('John\nnext');
+    expect(removeFillers('John, um,' + ' '.repeat(41) + 'uh,' + ' '.repeat(50) + 'hmm')).toBe('John');
+  });
+  it('keeps the comma when real text follows the later filler', () => {
+    expect(removeFillers('John, um,' + ' '.repeat(41) + 'uh call me')).toBe('John, call me');
+  });
+});
+
+describe('removeFillers: round 4 review notes', () => {
+  it('keeps one stop when the filler comma is followed by an ellipsis', () => {
+    expect(removeFillers('I said, um, ... never mind.')).toBe('I said... never mind.');
+    expect(removeFillers('I said, um, \u2026 never mind.')).toBe('I said\u2026 never mind.');
+  });
+  it('keeps the comma after a capital A (a label) or a quoted a', () => {
+    expect(removeFillers('Pick option A, um, option B.')).toBe('Pick option A, option B.');
+    expect(removeFillers('The key "a", um, is set.')).toBe('The key "a", is set.');
+  });
+  it('still drops the comma after a lowercase a, and after To, The and Of', () => {
+    expect(removeFillers('It is a, um, big deal.')).toBe('It is a big deal.');
+    expect(removeFillers('The, uh, end.')).toBe('The end.');
+    expect(removeFillers('Of, um, course.')).toBe('Of course.');
+  });
+});
+
 describe('shouldCleanLanguage', () => {
   it('cleans when the provider reports English in any common form', () => {
     for (const l of ['en', 'en_us', 'en-GB', 'english', 'English', 'eng', 'EN']) {

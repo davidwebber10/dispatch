@@ -93,11 +93,23 @@ export function removeFillers(text: string): string {
     push(piece);
   };
 
+  // What follows each group, and whether the line or text ends once the groups
+  // after it are gone too (worked out from the last group back, so it is one
+  // step per group however far apart they are).
+  const aheads = clusters.map((c) => lookAhead(text, c.end));
+  const endsLine: boolean[] = new Array(clusters.length);
+  for (let i = clusters.length - 1; i >= 0; i--) {
+    const q = skipHs(text, aheads[i].tailStart);
+    if (q >= text.length || text[q] === '\n' || text[q] === '\r') endsLine[i] = true;
+    else endsLine[i] = i + 1 < clusters.length && clusters[i + 1].start === q && endsLine[i + 1];
+  }
+
   let cursor = 0;
-  for (const c of clusters) {
+  for (let ci = 0; ci < clusters.length; ci++) {
+    const c = clusters[ci];
     const back = lookBack(text, c.start, cursor);
     emit(text.slice(cursor, back.headEnd));
-    const ahead = lookAhead(text, c.end);
+    const ahead = aheads[ci];
     const firstIsCapital = /^\p{Lu}/u.test(text.slice(c.start, c.start + 1));
 
     if (back.sentenceStart) {
@@ -111,7 +123,11 @@ export function removeFillers(text: string): string {
       if (back.commaBefore && ahead.punct !== '' && ahead.punct !== ',') {
         keepComma = false; // a stop or colon follows: it replaces the comma
       } else if (back.commaBefore) {
-        keepComma = !DROP_COMMA_AFTER.has(lastWord(text, back.headEnd)) && !lineEndsAt(text, ahead.tailStart);
+        // The comma goes too when the line ends after the filler, or when a
+        // stop, colon or comma comes next and speaks for the pause.
+        const next = text[skipHs(text, ahead.tailStart)];
+        keepComma = !dropsComma(lastToken(text, back.headEnd)) && !endsLine[ci]
+          && !(next !== undefined && ',;:.!?\u2026'.includes(next));
       }
       if (ahead.punct !== '' && ahead.punct !== ',') {
         // The filler ended a sentence. Keep that stop unless the kept text
@@ -266,18 +282,24 @@ function lastStop(s: string, end: number): string {
   return i >= 0 ? s[i] : '';
 }
 
-function lineEndsAt(s: string, from: number): boolean {
+function skipHs(s: string, from: number): number {
   let q = from;
   while (q < s.length && isHs(s[q])) q++;
-  return q >= s.length || s[q] === '\n' || s[q] === '\r';
+  return q;
 }
 
-// The word that ends at a position, lowercased, letters only.
-function lastWord(s: string, end: number): string {
+// The token that ends at a position, exactly as written.
+function lastToken(s: string, end: number): string {
   let k = end;
   const lim = Math.max(0, end - 40);
   while (k > lim && !isWs(s[k - 1])) k--;
-  return s.slice(k, end).toLowerCase().replace(/[^a-z]/g, '');
+  return s.slice(k, end);
+}
+
+// To, the, a and of lose the comma. The token must be the bare word: a capital
+// A is usually a label ("option A, um, option B"), and a quoted "a" is a name.
+function dropsComma(token: string): boolean {
+  return DROP_COMMA_AFTER.has(token.toLowerCase()) && token !== 'A';
 }
 
 // Capitalize the first word only when it is plain lowercase letters. Paths,

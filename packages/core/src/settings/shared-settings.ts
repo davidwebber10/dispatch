@@ -8,8 +8,9 @@ import * as appState from '../db/app-state.js';
  * once when the daemon has none (`saved: false`), then reads and writes here.
  *
  *   Dictation (`stt_settings`)  provider, model and the Doppler SECRET NAME holding the speech-to-text
- *                               key. The name is stored, never the key: /api/transcribe resolves the
- *                               value from Doppler per request.
+ *                               key, and `cleanFillers` (remove um, uh, er, ah and hmm from a
+ *                               transcript; a missing value means on). The name is stored, never the
+ *                               key: /api/transcribe resolves the value from Doppler per request.
  *   Control Plane name (`coordinator_settings`)  the coordinator's display name. Stored as typed (the
  *                               web trims at display, and blank falls back to "Control Plane").
  */
