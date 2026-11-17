@@ -5,13 +5,14 @@ const MAX_POLLS = 60;
 const POLL_MS = 1000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// Asks the model for a clean transcript. It lists the patterns to leave out
-// and uses soft wording, as AssemblyAI's prompt guidance suggests.
+// Asks the model to leave out filler sounds. It names the sounds and uses
+// soft wording, as AssemblyAI's prompt guidance suggests. It does not ask for
+// stutters, false starts or repeated words: that is a later step.
 // Measured 2026-11-17: universal-3-pro accepts this but still returns um and
 // uh, so the word-list pass in cleanup.ts is what removes them there. The
 // prompt costs one request field, so it stays for the models that honor it.
 export const CLEAN_TRANSCRIPT_PROMPT =
-  'Clean transcript, leaving out filler sounds such as um, uh, er, ah and hmm, false starts, stutters and repeated words.';
+  'Clean transcript, leaving out filler sounds such as um, uh, er, ah and hmm.';
 
 // universal-2 rejects a prompt with HTTP 400, so it gets disfluencies only.
 const supportsPrompt = (model: string) => !/^universal-2/i.test(model);

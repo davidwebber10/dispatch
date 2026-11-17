@@ -34,6 +34,8 @@ describe('TranscriptionService', () => {
   });
 
   describe('filler cleanup', () => {
+    const TEXT = 'So, um, I think we should, uh, go.';
+    const CLEAN = 'So, I think we should go.';
     const run = (text: string, language?: string, reported?: string) => {
       const registry = reg({
         groq: { id: 'groq', label: 'Groq', models: ['m'], status: 'ready',
@@ -43,25 +45,33 @@ describe('TranscriptionService', () => {
         .transcribe({ provider: 'groq', model: 'm', secretName: 'S', audio: Buffer.from('a'), mimeType: 'audio/webm', language });
     };
 
-    it('removes fillers from the provider text and keeps the provider response in raw', async () => {
-      const out = await run('So, um, I think we should, uh, go.');
-      expect(out.text).toBe('So, I think we should go.');
-      expect(out.raw).toEqual({ text: 'So, um, I think we should, uh, go.' });
+    it('removes fillers when the provider reports English, and keeps the provider response in raw', async () => {
+      const out = await run(TEXT, undefined, 'en');
+      expect(out.text).toBe(CLEAN);
+      expect(out.raw).toEqual({ text: TEXT });
+    });
+
+    it.each(['en', 'en_us', 'en-GB', 'english', 'eng'])('cleans when the provider reports %s', async (code) => {
+      expect((await run(TEXT, undefined, code)).text).toBe(CLEAN);
+    });
+
+    it('leaves the text alone when no language comes back and none was asked for', async () => {
+      expect((await run(TEXT)).text).toBe(TEXT);
+      expect((await run('Wo ist er? Um fünf Uhr.')).text).toBe('Wo ist er? Um fünf Uhr.');
+    });
+
+    it('cleans when the provider reports nothing but the caller asked for English', async () => {
+      expect((await run(TEXT, 'en')).text).toBe(CLEAN);
     });
 
     it('leaves the text alone when the caller asked for another language', async () => {
-      const out = await run('Wo ist er? Um fünf Uhr.', 'de');
-      expect(out.text).toBe('Wo ist er? Um fünf Uhr.');
+      expect((await run('Wo ist er? Um fünf Uhr.', 'de')).text).toBe('Wo ist er? Um fünf Uhr.');
+      expect((await run(TEXT, 'de', 'en')).text).toBe(TEXT);
     });
 
     it('leaves the text alone when the provider reports another language', async () => {
-      const out = await run('Wo ist er? Um fünf Uhr.', undefined, 'german');
-      expect(out.text).toBe('Wo ist er? Um fünf Uhr.');
-    });
-
-    it('cleans English when the provider reports it in a long form', async () => {
-      const out = await run('Um, hello there.', undefined, 'english');
-      expect(out.text).toBe('Hello there.');
+      expect((await run('Wo ist er? Um fünf Uhr.', undefined, 'german')).text).toBe('Wo ist er? Um fünf Uhr.');
+      expect((await run('Wo ist er? Um fünf Uhr.', 'en', 'de')).text).toBe('Wo ist er? Um fünf Uhr.');
     });
   });
 });

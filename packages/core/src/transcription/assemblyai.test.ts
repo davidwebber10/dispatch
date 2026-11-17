@@ -42,6 +42,8 @@ async function submittedBody(model: string, keyterms?: string[]): Promise<any> {
   return body;
 }
 
+// Note: TranscriptionService does not pass keyterms to any adapter today, so the
+// two keyterms tests below cover adapter code that production does not reach yet.
 describe('filler request settings', () => {
   it('turns disfluencies off and sends the clean-transcript prompt on universal-3-pro', async () => {
     const b = await submittedBody('universal-3-pro');
@@ -49,6 +51,10 @@ describe('filler request settings', () => {
     expect(b.prompt).toBe(CLEAN_TRANSCRIPT_PROMPT);
     expect(b.prompt).toMatch(/um, uh/);
     expect(b.speech_models).toEqual(['universal-3-pro']);
+  });
+
+  it('keeps stutters, false starts and repeated words out of the prompt (a later step)', () => {
+    expect(CLEAN_TRANSCRIPT_PROMPT).not.toMatch(/stutter|false start|repeat/i);
   });
 
   it('sends the prompt on assemblyai-stt-3-7 too', async () => {
