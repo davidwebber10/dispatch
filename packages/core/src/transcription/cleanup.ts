@@ -35,8 +35,9 @@ const WRAP_CLOSE = ')]}`"\u201D\u2019\'\u2014\u2013-';
 
 // A comma in front of a filler stays, so "Actually, um, no" keeps "Actually, no"
 // and "John, uh, call me" keeps "John, call me". It goes only after these words,
-// where a comma would split a phrase ("port to, um, 4000" gives "port to 4000").
-const DROP_COMMA_AFTER = new Set(['to', 'the', 'a', 'of']);
+// where a comma would split a phrase ("port to, um, 4000" gives "port to 4000",
+// "I, um, think" gives "I think", "and, uh, then" gives "and then").
+const DROP_COMMA_AFTER = new Set(['to', 'the', 'a', 'of', 'and']);
 // Dotted forms that end in a full stop without ending the sentence.
 const ABBREVIATIONS = new Set(['mr.', 'mrs.', 'ms.', 'dr.', 'st.', 'prof.', 'jr.', 'sr.', 'vs.']);
 
@@ -304,9 +305,11 @@ function lastToken(s: string, end: number): string {
   return s.slice(k, end);
 }
 
-// To, the, a and of lose the comma. The token must be the bare word: a capital
-// A is usually a label ("option A, um, option B"), and a quoted "a" is a name.
+// To, the, a, of, and and the pronoun I lose the comma. The token must be the
+// bare word: a capital A is usually a label ("option A, um, option B"), and a
+// quoted "a" or "I" is a name or a quotation.
 function dropsComma(token: string): boolean {
+  if (token === 'I') return true;
   return DROP_COMMA_AFTER.has(token.toLowerCase()) && token !== 'A';
 }
 

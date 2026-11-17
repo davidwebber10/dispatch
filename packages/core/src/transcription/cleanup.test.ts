@@ -4,9 +4,9 @@ import { removeFillers, shouldCleanLanguage } from './cleanup.js';
 describe('removeFillers: basic removal', () => {
   it.each([
     ['So, um, I think we should, uh, update the config file and, um, restart the server.',
-     'So, I think we should, update the config file and, restart the server.'],
+     'So, I think we should, update the config file and restart the server.'],
     ['Please open the, um, package.json file and, uh, change the port to, uh, 4000.',
-     'Please open the package.json file and, change the port to 4000.'],
+     'Please open the package.json file and change the port to 4000.'],
     ['Please open the um package.json file, and uh change the port to uh 4000.',
      'Please open the package.json file, and change the port to 4000.'],
     ['I think, um, we should go.', 'I think, we should go.'],
@@ -99,7 +99,7 @@ describe('removeFillers: real words and phrases stay', () => {
     expect(removeFillers('She said “Ah, I see.”')).toBe('She said “Ah, I see.”');
   });
   it('still removes fillers outside the quotes in the same text', () => {
-    expect(removeFillers('I said, "Ah, that is it," and, um, left.')).toBe('I said, "Ah, that is it," and, left.');
+    expect(removeFillers('I said, "Ah, that is it," and, um, left.')).toBe('I said, "Ah, that is it," and left.');
   });
 });
 
@@ -154,8 +154,8 @@ describe('removeFillers: quotes, brackets and dashes', () => {
 });
 
 describe('removeFillers: one-word openers', () => {
-  it('keeps the comma after a one-word opener', () => {
-    expect(removeFillers('I, um, think so.')).toBe('I, think so.');
+  it('keeps the comma after a one-word opener, except I', () => {
+    expect(removeFillers('I, um, think so.')).toBe('I think so.');
     expect(removeFillers('What, um, is that?')).toBe('What, is that?');
     expect(removeFillers('But, uh, it works.')).toBe('But, it works.');
   });
@@ -173,8 +173,8 @@ describe('removeFillers: lists', () => {
   it('keeps the comma after a one-word clause with an earlier comma', () => {
     expect(removeFillers('Actually, no, um, on Monday.')).toBe('Actually, no, on Monday.');
   });
-  it('keeps the comma that follows a different word, whatever came before it', () => {
-    expect(removeFillers('Open the, um, file and, uh, save it.')).toBe('Open the file and, save it.');
+  it('drops the comma after and, and keeps it after other words', () => {
+    expect(removeFillers('Open the, um, file and, uh, save it.')).toBe('Open the file and save it.');
   });
 });
 
@@ -433,6 +433,40 @@ describe('removeFillers: far-apart fillers and the mark that follows', () => {
     const out = removeFillers(('word, um,' + gap).repeat(5000) + 'end.');
     expect(/\bum\b/.test(out)).toBe(false);
     expect(Date.now() - t0).toBeLessThan(1000);
+  });
+});
+
+describe('removeFillers: no comma after I or and (owner decision, option A)', () => {
+  it('drops the comma after I', () => {
+    expect(removeFillers('I, um, think so.')).toBe('I think so.');
+    expect(removeFillers('Well, I, uh, think so.')).toBe('Well, I think so.');
+    expect(removeFillers('I, um, uh, think so.')).toBe('I think so.');
+  });
+  it('drops the comma after and', () => {
+    expect(removeFillers('We ran it and, uh, then it broke.')).toBe('We ran it and then it broke.');
+    expect(removeFillers('And, um, then it broke.')).toBe('And then it broke.');
+    expect(removeFillers('We ran it AND, uh, then it broke.')).toBe('We ran it AND then it broke.');
+  });
+  it('keeps the comma everywhere else', () => {
+    expect(removeFillers('Pick option A, um, option B.')).toBe('Pick option A, option B.');
+    expect(removeFillers('John, um, : next')).toBe('John: next');
+    expect(removeFillers('John, uh, call me.')).toBe('John, call me.');
+    expect(removeFillers('Actually, um, no.')).toBe('Actually, no.');
+    expect(removeFillers('But, uh, it works.')).toBe('But, it works.');
+    expect(removeFillers('You, um, know.')).toBe('You, know.');
+    expect(removeFillers('We, um, go.')).toBe('We, go.');
+  });
+  it('does not treat a lowercase i, a quoted I or a word ending in I as the pronoun', () => {
+    expect(removeFillers('The i, um, key is set.')).toBe('The i, key is set.');
+    expect(removeFillers('He typed "I", um, and left.')).toBe('He typed "I", and left.');
+    expect(removeFillers('We saw Hawaii, um, last year.')).toBe('We saw Hawaii, last year.');
+  });
+  it('does not drop a comma that has no filler after it', () => {
+    expect(removeFillers('I, think so, and, then left.')).toBe('I, think so, and, then left.');
+  });
+  it('pins "I, um, I mean": the repeated I stays (a stutter fix is out of scope)', () => {
+    expect(removeFillers('I, um, I mean it.')).toBe('I I mean it.');
+    expect(removeFillers('I think, um, I mean it.')).toBe('I think, I mean it.');
   });
 });
 
