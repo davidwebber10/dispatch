@@ -98,10 +98,18 @@ export function removeFillers(text: string): string {
   // step per group however far apart they are).
   const aheads = clusters.map((c) => lookAhead(text, c.end));
   const endsLine: boolean[] = new Array(clusters.length);
+  // The stop, colon or semicolon that comes next once the groups after it are gone.
+  const nextMark: string[] = new Array(clusters.length);
   for (let i = clusters.length - 1; i >= 0; i--) {
     const q = skipHs(text, aheads[i].tailStart);
+    const nextGroup = i + 1 < clusters.length && clusters[i + 1].start === q;
     if (q >= text.length || text[q] === '\n' || text[q] === '\r') endsLine[i] = true;
-    else endsLine[i] = i + 1 < clusters.length && clusters[i + 1].start === q && endsLine[i + 1];
+    else endsLine[i] = nextGroup && endsLine[i + 1];
+    if (nextGroup) {
+      // A comma after the later group is its own, so it says nothing about this one.
+      const own = aheads[i + 1].punct[0];
+      nextMark[i] = own !== undefined && own !== ',' ? own : own === ',' ? '' : nextMark[i + 1];
+    } else nextMark[i] = text[q] ?? '';
   }
 
   let cursor = 0;
@@ -125,9 +133,9 @@ export function removeFillers(text: string): string {
       } else if (back.commaBefore) {
         // The comma goes too when the line ends after the filler, or when a
         // stop, colon or comma comes next and speaks for the pause.
-        const next = text[skipHs(text, ahead.tailStart)];
+        const next = nextMark[ci];
         keepComma = !dropsComma(lastToken(text, back.headEnd)) && !endsLine[ci]
-          && !(next !== undefined && ',;:.!?\u2026'.includes(next));
+          && !(next !== '' && ',;:.!?\u2026'.includes(next));
       }
       if (ahead.punct !== '' && ahead.punct !== ',') {
         // The filler ended a sentence. Keep that stop unless the kept text

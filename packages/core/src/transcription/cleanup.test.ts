@@ -415,6 +415,27 @@ describe('removeFillers: round 4 review notes', () => {
   });
 });
 
+describe('removeFillers: far-apart fillers and the mark that follows', () => {
+  const gap = ' '.repeat(41);
+  it('drops the comma when a colon, stop or ellipsis follows the later filler', () => {
+    expect(removeFillers('John, um,' + gap + 'uh: next')).toBe('John: next');
+    expect(removeFillers('John, um,' + gap + 'uh. next')).toBe('John. Next');
+    expect(removeFillers('John, um,' + gap + 'uh... next')).toBe('John... next');
+  });
+  it('keeps the comma when the later filler has a comma of its own', () => {
+    expect(removeFillers('John, um,' + gap + 'uh, next')).toBe('John, next');
+  });
+  it('keeps the comma when a plain word follows the later filler', () => {
+    expect(removeFillers('John, um,' + gap + 'uh next')).toBe('John, next');
+  });
+  it('handles a long chain of fillers far apart in linear time', () => {
+    const t0 = Date.now();
+    const out = removeFillers(('word, um,' + gap).repeat(5000) + 'end.');
+    expect(/\bum\b/.test(out)).toBe(false);
+    expect(Date.now() - t0).toBeLessThan(1000);
+  });
+});
+
 describe('shouldCleanLanguage', () => {
   it('cleans when the provider reports English in any common form', () => {
     for (const l of ['en', 'en_us', 'en-GB', 'english', 'English', 'eng', 'EN']) {
