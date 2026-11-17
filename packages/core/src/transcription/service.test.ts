@@ -32,4 +32,36 @@ describe('TranscriptionService', () => {
     const svc = new TranscriptionService(secrets(null), reg());
     await expect(svc.transcribe({ provider: 'groq', model: 'whisper-large-v3-turbo', secretName: 'X', audio: Buffer.from('a'), mimeType: 'audio/webm' })).rejects.toThrow(/Secret not found/);
   });
+
+  describe('filler cleanup', () => {
+    const run = (text: string, language?: string, reported?: string) => {
+      const registry = reg({
+        groq: { id: 'groq', label: 'Groq', models: ['m'], status: 'ready',
+          adapter: { id: 'groq', transcribe: vi.fn().mockResolvedValue({ text, language: reported, raw: { text } }) } },
+      });
+      return new TranscriptionService(secrets('k'), registry)
+        .transcribe({ provider: 'groq', model: 'm', secretName: 'S', audio: Buffer.from('a'), mimeType: 'audio/webm', language });
+    };
+
+    it('removes fillers from the provider text and keeps the provider response in raw', async () => {
+      const out = await run('So, um, I think we should, uh, go.');
+      expect(out.text).toBe('So, I think we should go.');
+      expect(out.raw).toEqual({ text: 'So, um, I think we should, uh, go.' });
+    });
+
+    it('leaves the text alone when the caller asked for another language', async () => {
+      const out = await run('Wo ist er? Um fünf Uhr.', 'de');
+      expect(out.text).toBe('Wo ist er? Um fünf Uhr.');
+    });
+
+    it('leaves the text alone when the provider reports another language', async () => {
+      const out = await run('Wo ist er? Um fünf Uhr.', undefined, 'german');
+      expect(out.text).toBe('Wo ist er? Um fünf Uhr.');
+    });
+
+    it('cleans English when the provider reports it in a long form', async () => {
+      const out = await run('Um, hello there.', undefined, 'english');
+      expect(out.text).toBe('Hello there.');
+    });
+  });
 });
