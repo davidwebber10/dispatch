@@ -261,6 +261,55 @@ describe('removeFillers: run time', () => {
   });
 });
 
+describe('removeFillers: review round 2', () => {
+  it.each([
+    'The ( um ) value.',
+    'A [ uh ] test.',
+    'one - um - two',
+    'Say " um " now.',
+    'Run ` um ` now.',
+  ])('leaves a filler wrapped with spaces alone: %s', (text) => {
+    expect(removeFillers(text)).toBe(text);
+  });
+  it('still removes a filler that only follows a closing quote or bracket', () => {
+    expect(removeFillers('He said "hello" um and left.')).toBe('He said "hello" and left.');
+    expect(removeFillers('The (old) um value.')).toBe('The (old) value.');
+  });
+
+  it('capitalizes the next word when the filler ends a sentence with a stop', () => {
+    expect(removeFillers('We go um! now.')).toBe('We go! Now.');
+    expect(removeFillers('Is it done, um? yes.')).toBe('Is it done? Yes.');
+    expect(removeFillers('We ship Friday, um. then we rest.')).toBe('We ship Friday. Then we rest.');
+  });
+  it('does not capitalize after an ellipsis that the filler ended', () => {
+    expect(removeFillers('We go um... now.')).toBe('We go... now.');
+  });
+  it('keeps one ellipsis when the kept text already ends in one', () => {
+    expect(removeFillers('I was... uh... thinking.')).toBe('I was... thinking.');
+    expect(removeFillers('I was\u2026 uh\u2026 thinking.')).toBe('I was\u2026 thinking.');
+  });
+
+  it('leaves one space when a consumed comma had extra spaces after it', () => {
+    expect(removeFillers('We go, um,  now.')).toBe('We go now.');
+    expect(removeFillers('I am, um, \tready.')).toBe('I am ready.');
+    expect(removeFillers('We go um   now.')).toBe('We go now.');
+  });
+
+  it('removes a capitalized filler that starts a sentence after an abbreviation', () => {
+    expect(removeFillers('We left at 3 p.m. Um, then we ate.')).toBe('We left at 3 p.m. then we ate.');
+    expect(removeFillers('In the U.S. Uh, it is fine.')).toBe('In the U.S. it is fine.');
+  });
+
+  it('handles a filler followed by a very long run of spaces in linear time', () => {
+    const t0 = Date.now();
+    const a = removeFillers('a um' + ' '.repeat(100000) + 'x um y');
+    expect(a).toBe('a x y');
+    const b = removeFillers('um' + ' '.repeat(20000) + 'Word Um '.repeat(2000));
+    expect(b.startsWith('Word Um Word Um')).toBe(true);
+    expect(Date.now() - t0).toBeLessThan(1000);
+  });
+});
+
 describe('shouldCleanLanguage', () => {
   it('cleans when the provider reports English in any common form', () => {
     for (const l of ['en', 'en_us', 'en-GB', 'english', 'English', 'eng', 'EN']) {

@@ -23,7 +23,7 @@ const FORMS = 'um+|uh+m?|erm?|ah+|hm+';
 // following "huh" also protects the filler, with or without a comma.
 const NOT_BESIDE = "\\p{L}\\p{N}_'’\\-=/\\\\@#$%&*+<>~|^";
 const FILLER_RE = new RegExp(
-  `(?<![${NOT_BESIDE}.:])(${FORMS})(?![${NOT_BESIDE}]|[.:][\\p{L}\\p{N}])(?![ \\t]*,?[ \\t]*huh\\b)`,
+  `(?<![${NOT_BESIDE}.:])(${FORMS})(?![${NOT_BESIDE}]|[.:][\\p{L}\\p{N}])(?![ \\t]*(?:,[ \\t]*)?huh\\b)`,
   'giu',
 );
 const FILLER_AT_END_RE = new RegExp(`(?<![\\p{L}\\p{N}_'’\\-])(?:${FORMS})$`, 'iu');
@@ -32,6 +32,8 @@ const FILLER_COMMA_AT_END_RE = new RegExp(`(?<![\\p{L}\\p{N}_'’\\-])(?:${FORMS
 // A quote, bracket, backtick or dash touching the filler on either side means
 // the text is quoted, wrapped or part of a phrase. Leave it as it is.
 const PROTECT_BESIDE = '"\u201C\u201D\u2018\u2019\'`([{)]}\u2014\u2013';
+const WRAP_OPEN = '([{`"\u201C\u2018\'\u2014\u2013-';
+const WRAP_CLOSE = ')]}`"\u201D\u2019\'\u2014\u2013-';
 const LOOKBACK = 200;
 
 // First words of a sentence that normally keep a comma after them ("So, I...").
@@ -60,7 +62,7 @@ export function removeFillers(text: string): string {
   const clusters: Hit[] = [];
   for (const h of hits) {
     const last = clusters[clusters.length - 1];
-    if (last && /^[ \t]*[,;]?[ \t]*$/.test(text.slice(last.end, h.start))) last.end = h.end;
+    if (last && isJoinGap(text, last.end, h.start)) last.end = h.end;
     else clusters.push({ start: h.start, end: h.end });
   }
 
@@ -117,8 +119,21 @@ export function removeFillers(text: string): string {
           || isListComma(text, back.headEnd);
         if (keepComma && lineEndsAt(text, ahead.tailStart)) keepComma = false;
       }
-      if (ahead.punct !== '' && ahead.punct !== ',') push(ahead.punct);
-      else { if (keepComma) push(','); wantSpace = true; }
+      if (ahead.punct !== '' && ahead.punct !== ',') {
+        // The filler ended a sentence. Keep that stop unless the kept text
+        // already ends in one ("I was... uh... thinking" keeps one ellipsis).
+        if (!isStop(lastStop(text, back.headEnd))) {
+          push(ahead.punct);
+          // A full stop, ! or ? starts a new sentence; an ellipsis does not.
+          if (/[.!?]$/.test(ahead.punct) && !/\.{3}$|\u2026$/.test(ahead.punct)) wantCapital = true;
+        }
+        wantSpace = true;
+      } else {
+        if (keepComma) push(',');
+        // One space joins the two sides, whatever space the text had.
+        wantSpace = true;
+        skipSpaces = true;
+      }
     }
     cursor = ahead.tailStart;
   }
@@ -134,6 +149,8 @@ function findHits(s: string): Hit[] {
     const start = m.index!;
     const end = start + m[0].length;
     if (PROTECT_BESIDE.includes(s[start - 1] ?? '\u0000') || PROTECT_BESIDE.includes(s[end] ?? '\u0000')) continue;
+    // Wrapped with spaces inside: ( um ), "um", one - um - two.
+    if (WRAP_OPEN.includes(nearLeft(s, start) || '\u0000') && WRAP_CLOSE.includes(nearRight(s, end) || '\u0000')) continue;
     // A short all-caps token is usually an acronym (ER, UM).
     if (token.length < 3 && token === token.toUpperCase()) continue;
     // A capitalized filler in the middle of a sentence is likely a name (Um Kulthum).
@@ -147,9 +164,36 @@ function findHits(s: string): Hit[] {
 // True when a filler stands where a sentence, or a soft restart after an
 // ellipsis, begins, or when it follows another removable filler.
 function opensClause(s: string, start: number, prev?: Hit): boolean {
-  if (prev && /^[ \t]*[,;]?[ \t]*$/.test(s.slice(prev.end, start))) return true;
+  if (prev && isJoinGap(s, prev.end, start)) return true;
   const b = lookBack(s, start, 0);
-  return b.sentenceStart || b.softStart;
+  return b.sentenceStart || b.softStart || b.afterAbbreviation;
+}
+
+// True when only spaces, tabs and at most one comma or semicolon lie between
+// two fillers, so they go as one group. A long gap never qualifies, which keeps
+// the check constant-time however much whitespace the text holds.
+function isJoinGap(s: string, from: number, to: number): boolean {
+  if (to - from > 40) return false;
+  let marks = 0;
+  for (let i = from; i < to; i++) {
+    const c = s[i];
+    if (c === ',' || c === ';') { if (++marks > 1) return false; }
+    else if (!isHs(c)) return false;
+  }
+  return true;
+}
+
+// The nearest character that is not a space or tab, looking left or right
+// (a short distance only). '' when none is near or at the edge of the text.
+function nearLeft(s: string, from: number): string {
+  let i = from - 1;
+  for (let n = 0; i >= 0 && isHs(s[i]) && n < 40; n++) i--;
+  return i >= 0 && !isHs(s[i]) ? s[i] : '';
+}
+function nearRight(s: string, from: number): string {
+  let i = from;
+  for (let n = 0; i < s.length && isHs(s[i]) && n < 40; n++) i++;
+  return i < s.length && !isHs(s[i]) ? s[i] : '';
 }
 
 interface Back {
@@ -159,6 +203,7 @@ interface Back {
   hasContent: boolean;  // there is text before the filler
   sentenceStart: boolean;
   softStart: boolean;   // after an ellipsis
+  afterAbbreviation: boolean; // after p.m., U.S., Dr. and the like
 }
 
 function lookBack(s: string, start: number, floor: number): Back {
@@ -181,7 +226,7 @@ function lookBack(s: string, start: number, floor: number): Back {
   const sentenceStart = !hasContent || hasNewline
     || (!soft && !abbreviation && (lastCh === '.' || lastCh === '!' || lastCh === '?'));
   return {
-    headEnd, commaBefore, hasContent, hasNewline, sentenceStart, softStart: soft,
+    headEnd, commaBefore, hasContent, hasNewline, sentenceStart, softStart: soft, afterAbbreviation: abbreviation,
   };
 }
 
@@ -212,6 +257,13 @@ function lookAhead(s: string, end: number): Ahead {
     return { punct: s.slice(q, e), tailStart: e };
   }
   return { punct: '', tailStart: q };
+}
+
+// The last character before a position, ignoring spaces and tabs.
+function lastStop(s: string, end: number): string {
+  let i = end - 1;
+  while (i >= 0 && isHs(s[i])) i--;
+  return i >= 0 ? s[i] : '';
 }
 
 function lineEndsAt(s: string, from: number): boolean {
@@ -267,12 +319,15 @@ function isListComma(s: string, headEnd: number): boolean {
 
 // Capitalize the first word only when it is plain lowercase letters. Paths,
 // identifiers, camelCase and numbers are left as spoken.
-function capitalizeFirstWord(rest: string): string {
+function capitalizeFirstWord(text: string): string {
+  let lead = 0;
+  while (lead < text.length && isHs(text[lead])) lead++;
+  const rest = text.slice(lead);
   const w = /^[^\s,;:!?]+/.exec(rest);
   // A stop right after the word ("wait.") is sentence punctuation, not part of
   // the word. A dot inside it ("package.json") is, so that word is left alone.
-  if (!w || !/^[a-z]+$/.test(w[0].replace(/[.…]+$/, ''))) return rest;
-  return rest[0].toUpperCase() + rest.slice(1);
+  if (!w || !/^[a-z]+$/.test(w[0].replace(/[.…]+$/, ''))) return text;
+  return text.slice(0, lead) + rest[0].toUpperCase() + rest.slice(1);
 }
 
 // The word list is English only. "er" is "he" in German and "um" is "at" or
