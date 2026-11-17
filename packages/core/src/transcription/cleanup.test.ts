@@ -310,6 +310,27 @@ describe('removeFillers: review round 2', () => {
   });
 });
 
+describe('removeFillers: round 3', () => {
+  it('keeps a question or exclamation mark that follows an ellipsis', () => {
+    expect(removeFillers('I was\u2026 uh? now.')).toBe('I was\u2026? Now.');
+    expect(removeFillers('I was... uh! now.')).toBe('I was...! Now.');
+  });
+  it('does not double a stop that the kept text already ends with', () => {
+    expect(removeFillers('Ask Dr. um.')).toBe('Ask Dr.');
+    expect(removeFillers('I was... uh.')).toBe('I was...');
+  });
+  it('keeps a name after a title abbreviation', () => {
+    expect(removeFillers('We met Dr. Um Kulthum.')).toBe('We met Dr. Um Kulthum.');
+    expect(removeFillers('We met Mr. Ah Beng.')).toBe('We met Mr. Ah Beng.');
+  });
+  it('keeps a name after a dotted abbreviation when no comma or stop follows', () => {
+    expect(removeFillers('At 3 p.m. Um Kulthum sang.')).toBe('At 3 p.m. Um Kulthum sang.');
+  });
+  it('still removes a capital filler after a dotted abbreviation when a comma follows', () => {
+    expect(removeFillers('At 3 p.m. Um, we left.')).toBe('At 3 p.m. we left.');
+  });
+});
+
 describe('shouldCleanLanguage', () => {
   it('cleans when the provider reports English in any common form', () => {
     for (const l of ['en', 'en_us', 'en-GB', 'english', 'English', 'eng', 'EN']) {

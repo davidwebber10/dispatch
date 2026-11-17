@@ -122,7 +122,8 @@ export function removeFillers(text: string): string {
       if (ahead.punct !== '' && ahead.punct !== ',') {
         // The filler ended a sentence. Keep that stop unless the kept text
         // already ends in one ("I was... uh... thinking" keeps one ellipsis).
-        if (!isStop(lastStop(text, back.headEnd))) {
+        // Only a stop made of dots adds nothing after a stop. A "?" or "!" does.
+        if (!(isStop(lastStop(text, back.headEnd)) && /^[.…]+$/.test(ahead.punct))) {
           push(ahead.punct);
           // A full stop, ! or ? starts a new sentence; an ellipsis does not.
           if (/[.!?]$/.test(ahead.punct) && !/\.{3}$|\u2026$/.test(ahead.punct)) wantCapital = true;
@@ -155,7 +156,7 @@ function findHits(s: string): Hit[] {
     if (token.length < 3 && token === token.toUpperCase()) continue;
     // A capitalized filler in the middle of a sentence is likely a name (Um Kulthum).
     const isCapitalized = token === token[0].toUpperCase() + token.slice(1).toLowerCase();
-    if (isCapitalized && !opensClause(s, start, hits[hits.length - 1])) continue;
+    if (isCapitalized && !opensClause(s, start, end, hits[hits.length - 1])) continue;
     hits.push({ start, end });
   }
   return hits;
@@ -163,10 +164,13 @@ function findHits(s: string): Hit[] {
 
 // True when a filler stands where a sentence, or a soft restart after an
 // ellipsis, begins, or when it follows another removable filler.
-function opensClause(s: string, start: number, prev?: Hit): boolean {
+function opensClause(s: string, start: number, end: number, prev?: Hit): boolean {
   if (prev && isJoinGap(s, prev.end, start)) return true;
   const b = lookBack(s, start, 0);
-  return b.sentenceStart || b.softStart || b.afterAbbreviation;
+  if (b.sentenceStart || b.softStart) return true;
+  // After p.m. or U.S., a capital filler that is followed by a comma or a stop
+  // is a pause ("p.m. Um, then"), not a name ("Dr. Um Kulthum").
+  return b.afterAbbreviation && /[,.!?…]/.test(nearRight(s, end) || ' ');
 }
 
 // True when only spaces, tabs and at most one comma or semicolon lie between
@@ -222,11 +226,13 @@ function lookBack(s: string, start: number, floor: number): Back {
   const hasContent = r > 0;
   const lastCh = hasContent ? s[r - 1] : '';
   const soft = lastCh === '…' || s.slice(Math.max(0, r - 3), r) === '...';
-  const abbreviation = lastCh === '.' && isAbbreviation(lastWordBefore(s, r));
+  const lastWordHere = lastCh === '.' ? lastWordBefore(s, r) : '';
+  const abbreviation = lastCh === '.' && isAbbreviation(lastWordHere);
+  const dottedAbbreviation = abbreviation && /^(?:[a-z]\.){2,}$/.test(lastWordHere);
   const sentenceStart = !hasContent || hasNewline
     || (!soft && !abbreviation && (lastCh === '.' || lastCh === '!' || lastCh === '?'));
   return {
-    headEnd, commaBefore, hasContent, hasNewline, sentenceStart, softStart: soft, afterAbbreviation: abbreviation,
+    headEnd, commaBefore, hasContent, hasNewline, sentenceStart, softStart: soft, afterAbbreviation: dottedAbbreviation,
   };
 }
 
