@@ -4,12 +4,12 @@ import { removeFillers, shouldCleanLanguage } from './cleanup.js';
 describe('removeFillers: basic removal', () => {
   it.each([
     ['So, um, I think we should, uh, update the config file and, um, restart the server.',
-     'So, I think we should update the config file and restart the server.'],
+     'So, I think we should, update the config file and, restart the server.'],
     ['Please open the, um, package.json file and, uh, change the port to, uh, 4000.',
-     'Please open the package.json file and change the port to 4000.'],
+     'Please open the package.json file and, change the port to 4000.'],
     ['Please open the um package.json file, and uh change the port to uh 4000.',
      'Please open the package.json file, and change the port to 4000.'],
-    ['I think, um, we should go.', 'I think we should go.'],
+    ['I think, um, we should go.', 'I think, we should go.'],
     ['the umm build failed', 'the build failed'],
     ['the uhh build failed', 'the build failed'],
     ['the uhm build failed', 'the build failed'],
@@ -53,7 +53,7 @@ describe('removeFillers: position and capitalization', () => {
   });
   it('handles two fillers in a row', () => {
     expect(removeFillers('Um, uh, the build failed.')).toBe('The build failed.');
-    expect(removeFillers('We should, um, uh, go.')).toBe('We should go.');
+    expect(removeFillers('We should, um, uh, go.')).toBe('We should, go.');
   });
   it('keeps the comma after a sentence opener such as So or Well', () => {
     expect(removeFillers('Well, um, no.')).toBe('Well, no.');
@@ -99,7 +99,7 @@ describe('removeFillers: real words and phrases stay', () => {
     expect(removeFillers('She said “Ah, I see.”')).toBe('She said “Ah, I see.”');
   });
   it('still removes fillers outside the quotes in the same text', () => {
-    expect(removeFillers('I said, "Ah, that is it," and, um, left.')).toBe('I said, "Ah, that is it," and left.');
+    expect(removeFillers('I said, "Ah, that is it," and, um, left.')).toBe('I said, "Ah, that is it," and, left.');
   });
 });
 
@@ -154,10 +154,10 @@ describe('removeFillers: quotes, brackets and dashes', () => {
 });
 
 describe('removeFillers: one-word openers', () => {
-  it('drops the comma after a one-word opener that does not take one', () => {
-    expect(removeFillers('I, um, think so.')).toBe('I think so.');
-    expect(removeFillers('What, um, is that?')).toBe('What is that?');
-    expect(removeFillers('But, uh, it works.')).toBe('But it works.');
+  it('keeps the comma after a one-word opener', () => {
+    expect(removeFillers('I, um, think so.')).toBe('I, think so.');
+    expect(removeFillers('What, um, is that?')).toBe('What, is that?');
+    expect(removeFillers('But, uh, it works.')).toBe('But, it works.');
   });
   it('keeps the comma after a discourse opener', () => {
     expect(removeFillers('So, um, I think so.')).toBe('So, I think so.');
@@ -173,14 +173,14 @@ describe('removeFillers: lists', () => {
   it('keeps the comma after a one-word clause with an earlier comma', () => {
     expect(removeFillers('Actually, no, um, on Monday.')).toBe('Actually, no, on Monday.');
   });
-  it('does not keep a comma that came from another filler', () => {
-    expect(removeFillers('Open the, um, file and, uh, save it.')).toBe('Open the file and save it.');
+  it('keeps the comma that follows a different word, whatever came before it', () => {
+    expect(removeFillers('Open the, um, file and, uh, save it.')).toBe('Open the file and, save it.');
   });
 });
 
 describe('removeFillers: leftovers', () => {
   it('leaves no double space around spaced commas', () => {
-    expect(removeFillers('x , um , y')).toBe('x y');
+    expect(removeFillers('x , um , y')).toBe('x, y');
   });
   it('leaves no comma at the end of a line', () => {
     expect(removeFillers('Apples, um\nnext line')).toBe('Apples\nnext line');
@@ -250,7 +250,7 @@ describe('removeFillers: run time', () => {
     const t0 = Date.now();
     const out = removeFillers('word, um, '.repeat(30000));
     expect(/\bum\b/.test(out)).toBe(false);
-    expect(out.startsWith('word word')).toBe(true);
+    expect(out.startsWith('word, word,')).toBe(true);
     expect(Date.now() - t0).toBeLessThan(1500);
   });
   it('handles a long text with no stops', () => {
@@ -290,8 +290,8 @@ describe('removeFillers: review round 2', () => {
   });
 
   it('leaves one space when a consumed comma had extra spaces after it', () => {
-    expect(removeFillers('We go, um,  now.')).toBe('We go now.');
-    expect(removeFillers('I am, um, \tready.')).toBe('I am ready.');
+    expect(removeFillers('We go, um,  now.')).toBe('We go, now.');
+    expect(removeFillers('I am, um, \tready.')).toBe('I am, ready.');
     expect(removeFillers('We go um   now.')).toBe('We go now.');
   });
 
@@ -328,6 +328,57 @@ describe('removeFillers: round 3', () => {
   });
   it('still removes a capital filler after a dotted abbreviation when a comma follows', () => {
     expect(removeFillers('At 3 p.m. Um, we left.')).toBe('At 3 p.m. we left.');
+  });
+});
+
+describe('removeFillers: the comma stays by default (owner decision)', () => {
+  it('keeps the comma after an introductory word, clause or name', () => {
+    expect(removeFillers('Actually, um, no.')).toBe('Actually, no.');
+    expect(removeFillers('John, uh, call me.')).toBe('John, call me.');
+    expect(removeFillers('If it fails, um, restart it.')).toBe('If it fails, restart it.');
+    expect(removeFillers('When you are done, um, push the branch.')).toBe('When you are done, push the branch.');
+    expect(removeFillers('Hi John, um, can you check?')).toBe('Hi John, can you check?');
+  });
+  it('keeps list commas, including two fillers in one list', () => {
+    expect(removeFillers('red, blue, um, green, uh, and pink')).toBe('red, blue, green, and pink');
+    expect(removeFillers('red apples, green pears, um, and plums.')).toBe('red apples, green pears, and plums.');
+  });
+  it.each([
+    ['We go to, um, the store.', 'We go to the store.'],
+    ['Open the, uh, file.', 'Open the file.'],
+    ['It is a, um, big deal.', 'It is a big deal.'],
+    ['A lot of, uh, people came.', 'A lot of people came.'],
+    ['Go To, um, the store.', 'Go To the store.'],
+  ])('drops the comma after to, the, a or of: %s', (input, expected) => {
+    expect(removeFillers(input)).toBe(expected);
+  });
+  it('does not drop the comma after other short words', () => {
+    expect(removeFillers('Come in, um, and sit.')).toBe('Come in, and sit.');
+    expect(removeFillers('Is it an, um, owl?')).toBe('Is it an, owl?');
+  });
+  it('still leaves no comma at the end of a line or the text', () => {
+    expect(removeFillers('Apples, um\nnext')).toBe('Apples\nnext');
+    expect(removeFillers('Apples, um')).toBe('Apples');
+  });
+});
+
+describe('removeFillers: capital after a line break', () => {
+  it('capitalizes the first word of the line when a filler ended the sentence before it', () => {
+    expect(removeFillers('We go um.\nnow we eat.')).toBe('We go.\nNow we eat.');
+    expect(removeFillers('Is it done, um?\nyes it is.')).toBe('Is it done?\nYes it is.');
+    expect(removeFillers('We go um.\n\nnow we eat.')).toBe('We go.\n\nNow we eat.');
+  });
+  it('works with Windows line endings', () => {
+    expect(removeFillers('We go um.\r\nnow we eat.')).toBe('We go.\r\nNow we eat.');
+  });
+  it('capitalizes when a filler opens the sentence after a line break', () => {
+    expect(removeFillers('Done.\num, next up.')).toBe('Done.\nNext up.');
+  });
+  it('does not capitalize a path or identifier at the start of the line', () => {
+    expect(removeFillers('We go um.\npackage.json is next.')).toBe('We go.\npackage.json is next.');
+  });
+  it('does not capitalize after an ellipsis that ended the line', () => {
+    expect(removeFillers('We go um...\nnow we eat.')).toBe('We go...\nnow we eat.');
   });
 });
 

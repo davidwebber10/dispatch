@@ -17,7 +17,8 @@ import * as appState from '../db/app-state.js';
 export const STT_STATE_KEY = 'stt_settings';
 export const COORDINATOR_STATE_KEY = 'coordinator_settings';
 
-export interface DictationSettings { provider?: string; model?: string; secretName?: string }
+/** `cleanFillers`: drop um, uh, er, ah and hmm from a transcript. A missing value means ON. */
+export interface DictationSettings { provider?: string; model?: string; secretName?: string; cleanFillers?: boolean }
 export interface CoordinatorSettings { name?: string }
 
 const MAX_ID = 100;
@@ -45,6 +46,7 @@ function sanitizeDictation(raw: unknown): DictationSettings {
   const provider = pickId(r.provider); if (provider) out.provider = provider;
   const model = pickId(r.model); if (model) out.model = model;
   const secretName = pickSecret(r.secretName); if (secretName !== undefined) out.secretName = secretName;
+  if (typeof r.cleanFillers === 'boolean') out.cleanFillers = r.cleanFillers;
   return out;
 }
 
@@ -83,8 +85,13 @@ export function readDictationSettings(db: Database.Database): DictationSettings 
   return { ...value, saved };
 }
 
+/** Filler cleanup is on unless the stored value is exactly false (nothing stored means on). */
+export function fillerCleanupEnabled(db: Database.Database): boolean {
+  return readDictationSettings(db).cleanFillers !== false;
+}
+
 export function updateDictationSettings(db: Database.Database, patch: unknown): DictationSettings & { saved: true } {
-  return { ...mergeBlob(db, STT_STATE_KEY, sanitizeDictation, ['provider', 'model', 'secretName'], patch), saved: true };
+  return { ...mergeBlob(db, STT_STATE_KEY, sanitizeDictation, ['provider', 'model', 'secretName', 'cleanFillers'], patch), saved: true };
 }
 
 export function readCoordinatorSettings(db: Database.Database): CoordinatorSettings & { saved: boolean } {

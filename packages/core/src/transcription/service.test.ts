@@ -35,14 +35,14 @@ describe('TranscriptionService', () => {
 
   describe('filler cleanup', () => {
     const TEXT = 'So, um, I think we should, uh, go.';
-    const CLEAN = 'So, I think we should go.';
-    const run = (text: string, language?: string, reported?: string) => {
+    const CLEAN = 'So, I think we should, go.';
+    const run = (text: string, language?: string, reported?: string, cleanFillers?: boolean) => {
       const registry = reg({
         groq: { id: 'groq', label: 'Groq', models: ['m'], status: 'ready',
           adapter: { id: 'groq', transcribe: vi.fn().mockResolvedValue({ text, language: reported, raw: { text } }) } },
       });
       return new TranscriptionService(secrets('k'), registry)
-        .transcribe({ provider: 'groq', model: 'm', secretName: 'S', audio: Buffer.from('a'), mimeType: 'audio/webm', language });
+        .transcribe({ provider: 'groq', model: 'm', secretName: 'S', audio: Buffer.from('a'), mimeType: 'audio/webm', language, cleanFillers });
     };
 
     it('removes fillers when the provider reports English, and keeps the provider response in raw', async () => {
@@ -67,6 +67,16 @@ describe('TranscriptionService', () => {
     it('leaves the text alone when the caller asked for another language', async () => {
       expect((await run('Wo ist er? Um fünf Uhr.', 'de')).text).toBe('Wo ist er? Um fünf Uhr.');
       expect((await run(TEXT, 'de', 'en')).text).toBe(TEXT);
+    });
+
+    it('passes the provider text through when the switch is off', async () => {
+      const out = await run(TEXT, undefined, 'en', false);
+      expect(out.text).toBe(TEXT);
+    });
+
+    it('cleans when the switch is on, and when it is missing', async () => {
+      expect((await run(TEXT, undefined, 'en', true)).text).toBe(CLEAN);
+      expect((await run(TEXT, undefined, 'en', undefined)).text).toBe(CLEAN);
     });
 
     it('leaves the text alone when the provider reports another language', async () => {

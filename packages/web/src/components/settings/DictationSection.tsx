@@ -4,7 +4,7 @@ import { useUI } from '../../stores/ui';
 import { PROVIDERS, getProvider } from '../../lib/transcription-providers';
 import { listRecordings } from '../../lib/recordings';
 import { api } from '../../api/client';
-import { SettingsPage, SettingsGroup, SettingsRow, StatusMark } from './ui';
+import { SettingsPage, SettingsGroup, SettingsRow, StatusMark, Toggle } from './ui';
 import { RecordingsSheet } from '../dictation/RecordingsSheet';
 import { Select } from '../common/Select';
 
@@ -14,7 +14,8 @@ const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)', fontSize: 12
 
 /**
  * Settings → Dictation: the speech-to-text provider, model and the Doppler secret holding its key,
- * for the mic in every composer (phone and desktop). The same on all devices: the daemon stores them
+ * for the mic in every composer (phone and desktop), and whether to remove filler words from the
+ * transcript. The same on all devices: the daemon stores them
  * (stores/settings.ts loadSharedSettings); the key itself stays in Doppler. The kept recordings are
  * this device's own (IndexedDB).
  */
@@ -22,7 +23,8 @@ export function DictationSection() {
   const sttProvider = useSettings((s) => s.sttProvider);
   const sttModel = useSettings((s) => s.sttModel);
   const sttSecretName = useSettings((s) => s.sttSecretName);
-  const { setSttProvider, setSttModel, setSttSecretName } = useSettings.getState();
+  const sttCleanFillers = useSettings((s) => s.sttCleanFillers);
+  const { setSttProvider, setSttModel, setSttSecretName, setSttCleanFillers } = useSettings.getState();
   const [secrets, setSecrets] = useState<string[]>([]);
   const [secretsLoaded, setSecretsLoaded] = useState(false);
   const [noDoppler, setNoDoppler] = useState(false);
@@ -76,6 +78,12 @@ export function DictationSection() {
             options={(provider?.models ?? []).map((m) => ({ value: m.id, label: m.label }))} />
         } />
         {keyRow}
+      </SettingsGroup>
+
+      <SettingsGroup title="Transcript">
+        <SettingsRow label="Remove filler words (um, uh)"
+          hint="Leaves out um, uh, er, ah and hmm. English only. Turn off to keep the transcript as the provider wrote it."
+          control={<Toggle on={sttCleanFillers} label="Remove filler words (um, uh)" onClick={() => setSttCleanFillers(!sttCleanFillers)} />} />
       </SettingsGroup>
 
       <SettingsGroup title="This device">

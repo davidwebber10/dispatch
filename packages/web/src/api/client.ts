@@ -59,7 +59,7 @@ export class ApiError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
 }
 
-export interface DictationSettings { provider?: string; model?: string; secretName?: string; saved: boolean }
+export interface DictationSettings { provider?: string; model?: string; secretName?: string; /** Missing means on. */ cleanFillers?: boolean; saved: boolean }
 export interface CoordinatorSettings { name?: string; saved: boolean }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -357,7 +357,7 @@ export const api = {
   getHarnessSettings: () => req<HarnessSettingsResponse>('/api/settings/harnesses'),
   // Same on every device (daemon-stored). `saved` is false until the first PUT (stores/settings.ts loadSharedSettings).
   getDictationSettings: () => req<DictationSettings>('/api/settings/dictation'),
-  putDictationSettings: (patch: Partial<Record<'provider' | 'model' | 'secretName', string | null>>) =>
+  putDictationSettings: (patch: Partial<Record<'provider' | 'model' | 'secretName', string | null>> & { cleanFillers?: boolean | null }) =>
     req<DictationSettings>('/api/settings/dictation', { method: 'PUT', body: body(patch) }),
   getCoordinatorSettings: () => req<CoordinatorSettings>('/api/settings/coordinator'),
   putCoordinatorSettings: (patch: { name: string | null }) =>

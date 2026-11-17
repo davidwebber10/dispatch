@@ -4,6 +4,7 @@ import request from 'supertest';
 import Database from 'better-sqlite3';
 import { initSchema } from '../db/schema.js';
 import { createDictationSettingsRouter, createCoordinatorSettingsRouter } from './shared-settings.js';
+import { fillerCleanupEnabled } from '../settings/shared-settings.js';
 import { policyHandlerOf, policyKindOf } from '../auth/route-policy.js';
 import * as appState from '../db/app-state.js';
 
@@ -48,6 +49,49 @@ describe('GET/PUT /api/settings/dictation', () => {
     const { a } = app();
     expect((await request(a).put('/api/settings/dictation').send({ secretName: '' })).body.secretName).toBe('');
     expect((await request(a).put('/api/settings/dictation').send({ secretName: 'rm -rf' })).body.secretName).toBe('');
+  });
+});
+
+describe('dictation filler cleanup switch', () => {
+  it('is on when nothing is stored, and when the blob has no cleanFillers value', async () => {
+    const { a, db } = app();
+    expect(fillerCleanupEnabled(db)).toBe(true);
+    await request(a).put('/api/settings/dictation').send({ provider: 'groq' });
+    expect(fillerCleanupEnabled(db)).toBe(true);
+    expect((await request(a).get('/api/settings/dictation')).body).toEqual({ provider: 'groq', saved: true });
+  });
+
+  it('stores false with the other dictation settings, and reads it back', async () => {
+    const { a, db } = app();
+    await request(a).put('/api/settings/dictation').send({ provider: 'assemblyai', model: 'universal-3-pro', cleanFillers: false });
+    expect(JSON.parse(appState.get(db, 'stt_settings')!)).toEqual({ provider: 'assemblyai', model: 'universal-3-pro', cleanFillers: false });
+    expect(fillerCleanupEnabled(db)).toBe(false);
+    expect((await request(a).get('/api/settings/dictation')).body).toMatchObject({ cleanFillers: false, saved: true });
+  });
+
+  it('turns back on with true, and a later PUT of other fields keeps the switch', async () => {
+    const { a, db } = app();
+    await request(a).put('/api/settings/dictation').send({ cleanFillers: false });
+    await request(a).put('/api/settings/dictation').send({ model: 'universal-2' });
+    expect(fillerCleanupEnabled(db)).toBe(false);
+    await request(a).put('/api/settings/dictation').send({ cleanFillers: true });
+    expect(fillerCleanupEnabled(db)).toBe(true);
+  });
+
+  it('null clears it (back to on), and a value that is not a boolean is ignored', async () => {
+    const { a, db } = app();
+    await request(a).put('/api/settings/dictation').send({ cleanFillers: false });
+    await request(a).put('/api/settings/dictation').send({ cleanFillers: 'no' });
+    expect(fillerCleanupEnabled(db)).toBe(false);
+    await request(a).put('/api/settings/dictation').send({ cleanFillers: null });
+    expect(fillerCleanupEnabled(db)).toBe(true);
+    expect(JSON.parse(appState.get(db, 'stt_settings')!)).toEqual({});
+  });
+
+  it('an old blob with no cleanFillers key still means on', () => {
+    const { db } = app();
+    appState.set(db, 'stt_settings', JSON.stringify({ provider: 'assemblyai', model: 'universal-3-pro', secretName: 'ASSEMBLYAI_API_KEY' }));
+    expect(fillerCleanupEnabled(db)).toBe(true);
   });
 });
 

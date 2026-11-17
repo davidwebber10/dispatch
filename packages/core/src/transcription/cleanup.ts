@@ -26,22 +26,17 @@ const FILLER_RE = new RegExp(
   `(?<![${NOT_BESIDE}.:])(${FORMS})(?![${NOT_BESIDE}]|[.:][\\p{L}\\p{N}])(?![ \\t]*(?:,[ \\t]*)?huh\\b)`,
   'giu',
 );
-const FILLER_AT_END_RE = new RegExp(`(?<![\\p{L}\\p{N}_'’\\-])(?:${FORMS})$`, 'iu');
-const FILLER_COMMA_AT_END_RE = new RegExp(`(?<![\\p{L}\\p{N}_'’\\-])(?:${FORMS}),$`, 'iu');
 
 // A quote, bracket, backtick or dash touching the filler on either side means
 // the text is quoted, wrapped or part of a phrase. Leave it as it is.
 const PROTECT_BESIDE = '"\u201C\u201D\u2018\u2019\'`([{)]}\u2014\u2013';
 const WRAP_OPEN = '([{`"\u201C\u2018\'\u2014\u2013-';
 const WRAP_CLOSE = ')]}`"\u201D\u2019\'\u2014\u2013-';
-const LOOKBACK = 200;
 
-// First words of a sentence that normally keep a comma after them ("So, I...").
-const DISCOURSE = new Set([
-  'so', 'well', 'now', 'okay', 'ok', 'alright', 'yes', 'yeah', 'no', 'right', 'actually',
-  'anyway', 'basically', 'honestly', 'however', 'first', 'then', 'also', 'look', 'listen',
-  'sure', 'oh', 'wait', 'hi', 'hello', 'thanks',
-]);
+// A comma in front of a filler stays, so "Actually, um, no" keeps "Actually, no"
+// and "John, uh, call me" keeps "John, call me". It goes only after these words,
+// where a comma would split a phrase ("port to, um, 4000" gives "port to 4000").
+const DROP_COMMA_AFTER = new Set(['to', 'the', 'a', 'of']);
 // Dotted forms that end in a full stop without ending the sentence.
 const ABBREVIATIONS = new Set(['mr.', 'mrs.', 'ms.', 'dr.', 'st.', 'prof.', 'jr.', 'sr.', 'vs.']);
 
@@ -90,7 +85,8 @@ export function removeFillers(text: string): string {
       wantSpace = false;
       if (lastEmitted && !isWs(lastEmitted) && !isWs(piece[0]) && !/[,.;:!?…)\]}]/.test(piece[0])) push(' ');
     }
-    if (wantCapital) {
+    // A piece of only whitespace keeps the capital waiting for real text.
+    if (wantCapital && piece.trim() !== '') {
       wantCapital = false;
       piece = capitalizeFirstWord(piece);
     }
@@ -115,9 +111,7 @@ export function removeFillers(text: string): string {
       if (back.commaBefore && ahead.punct !== '' && ahead.punct !== ',') {
         keepComma = false; // a stop or colon follows: it replaces the comma
       } else if (back.commaBefore) {
-        keepComma = (startsSentence(text, lastWordStart(text, back.headEnd)) && DISCOURSE.has(lastWord(text, back.headEnd)))
-          || isListComma(text, back.headEnd);
-        if (keepComma && lineEndsAt(text, ahead.tailStart)) keepComma = false;
+        keepComma = !DROP_COMMA_AFTER.has(lastWord(text, back.headEnd)) && !lineEndsAt(text, ahead.tailStart);
       }
       if (ahead.punct !== '' && ahead.punct !== ',') {
         // The filler ended a sentence. Keep that stop unless the kept text
@@ -278,56 +272,19 @@ function lineEndsAt(s: string, from: number): boolean {
   return q >= s.length || s[q] === '\n' || s[q] === '\r';
 }
 
-function lastWordStart(s: string, end: number): number {
+// The word that ends at a position, lowercased, letters only.
+function lastWord(s: string, end: number): string {
   let k = end;
   const lim = Math.max(0, end - 40);
   while (k > lim && !isWs(s[k - 1])) k--;
-  return k;
-}
-
-function lastWord(s: string, end: number): string {
-  return s.slice(lastWordStart(s, end), end).toLowerCase().replace(/[^a-z]/g, '');
-}
-
-// Does the word that starts at k open its sentence? A filler plus a comma in
-// front of it ("Ah, wait") does not count against it.
-function startsSentence(s: string, from: number): boolean {
-  let k = from;
-  for (let guard = 0; guard < LOOKBACK; guard++) {
-    let r = k;
-    while (r > 0 && isWs(s[r - 1])) r--;
-    if (r === 0) return true;
-    if (s.slice(r, k).includes('\n')) return true;
-    const c = s[r - 1];
-    if (c === '.' || c === '!' || c === '?') return true;
-    if (c !== ',') return false;
-    const from0 = Math.max(0, r - 24);
-    const m = FILLER_COMMA_AT_END_RE.exec(s.slice(from0, r));
-    if (!m) return false;
-    k = r - m[0].length;
-  }
-  return false;
-}
-
-// "one, two, um, three": the comma before the filler belongs to a list. It is
-// kept when an earlier real comma in the same sentence sits one word back.
-// A comma that follows a removed filler does not count.
-function isListComma(s: string, headEnd: number): boolean {
-  const lim = Math.max(0, headEnd - LOOKBACK);
-  let p = headEnd - 1;
-  while (p >= lim && s[p] !== ',' && !isStop(s[p]) && s[p] !== '\n') p--;
-  if (p < lim || s[p] !== ',') return false;
-  const segment = s.slice(p + 1, headEnd).trim();
-  if (!segment || /\s/.test(segment)) return false;
-  const before = s.slice(Math.max(0, p - 24), p).trimEnd();
-  return !FILLER_AT_END_RE.test(before);
+  return s.slice(k, end).toLowerCase().replace(/[^a-z]/g, '');
 }
 
 // Capitalize the first word only when it is plain lowercase letters. Paths,
 // identifiers, camelCase and numbers are left as spoken.
 function capitalizeFirstWord(text: string): string {
   let lead = 0;
-  while (lead < text.length && isHs(text[lead])) lead++;
+  while (lead < text.length && isWs(text[lead])) lead++;
   const rest = text.slice(lead);
   const w = /^[^\s,;:!?]+/.exec(rest);
   // A stop right after the word ("wait.") is sentence punctuation, not part of
