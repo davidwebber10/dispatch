@@ -107,9 +107,10 @@ export function removeFillers(text: string): string {
     if (q >= text.length || text[q] === '\n' || text[q] === '\r') endsLine[i] = true;
     else endsLine[i] = nextGroup && endsLine[i + 1];
     if (nextGroup) {
-      // A comma after the later group is its own, so it says nothing about this one.
+      // A comma after the later group is its own and goes with it, so the mark
+      // that counts is the one after that comma.
       const own = aheads[i + 1].punct[0];
-      nextMark[i] = own !== undefined && own !== ',' ? own : own === ',' ? '' : nextMark[i + 1];
+      nextMark[i] = own !== undefined && own !== ',' ? own : nextMark[i + 1];
     } else nextMark[i] = text[q] ?? '';
   }
 
@@ -135,7 +136,7 @@ export function removeFillers(text: string): string {
         // The comma goes too when the line ends after the filler, or when a
         // stop, colon or comma comes next and speaks for the pause.
         const next = nextMark[ci];
-        keepComma = !dropsComma(lastToken(text, back.headEnd)) && !endsLine[ci]
+        keepComma = !dropsCommaHere(text, back.headEnd, ahead.tailStart) && !endsLine[ci]
           && !(next !== '' && ',;:.!?\u2026'.includes(next));
       }
       if (ahead.punct !== '' && ahead.punct !== ',') {
@@ -311,6 +312,40 @@ function lastToken(s: string, end: number): string {
 function dropsComma(token: string): boolean {
   if (token === 'I') return true;
   return DROP_COMMA_AFTER.has(token.toLowerCase()) && token !== 'A';
+}
+
+// Whether the comma before a filler goes, given the text around it. I and and
+// keep the comma when they are a list item ("H, I, um, J" and "if, and, um, or")
+// or when a comma follows the next word ("I, um, John, accept"): there the
+// comma is real punctuation, not a pause.
+function dropsCommaHere(s: string, headEnd: number, tailStart: number): boolean {
+  const token = lastToken(s, headEnd);
+  if (!dropsComma(token)) return false;
+  if (token !== 'I' && token.toLowerCase() !== 'and') return true;
+  return !followsComma(s, headEnd - token.length) && !nextTokenEndsWithComma(s, tailStart);
+}
+
+// True when the word at k follows a comma and the word before that comma is not
+// the first word of its sentence ("Well, I" opens a sentence; "H, I" does not).
+function followsComma(s: string, k: number): boolean {
+  let r = k;
+  while (r > 0 && isWs(s[r - 1])) r--;
+  if (r === 0 || s[r - 1] !== ',') return false;
+  const p = r - 1;
+  let j = p;
+  const lim = Math.max(0, p - 40);
+  while (j > lim && !isWs(s[j - 1])) j--;
+  let q = j;
+  while (q > 0 && isWs(s[q - 1])) q--;
+  const opensSentence = q === 0 || s.slice(q, j).includes('\n') || '.!?'.includes(s[q - 1]);
+  return !opensSentence;
+}
+
+function nextTokenEndsWithComma(s: string, from: number): boolean {
+  const q = skipHs(s, from);
+  let e = q;
+  while (e < s.length && !isWs(s[e])) e++;
+  return e > q && s[e - 1] === ',';
 }
 
 // Capitalize the first word only when it is plain lowercase letters. Paths,

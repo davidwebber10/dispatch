@@ -470,6 +470,40 @@ describe('removeFillers: no comma after I or and (owner decision, option A)', ()
   });
 });
 
+describe('removeFillers: I and and in lists and before a comma (round 5)', () => {
+  it('keeps the comma after I or and when it is a list item', () => {
+    expect(removeFillers('The variables are H, I, um, J and K.')).toBe('The variables are H, I, J and K.');
+    expect(removeFillers('Keywords: if, and, um, or.')).toBe('Keywords: if, and, or.');
+    expect(removeFillers('Use x, y, and, uh, z.')).toBe('Use x, y, and, z.');
+  });
+  it('keeps the comma when a comma follows the next word', () => {
+    expect(removeFillers('I, um, John, accept the offer.')).toBe('I, John, accept the offer.');
+    expect(removeFillers('We ran it and, uh, then, it broke.')).toBe('We ran it and, then, it broke.');
+  });
+  it('still drops the comma after I or and that follow a sentence opener', () => {
+    expect(removeFillers('Well, I, uh, think so.')).toBe('Well, I think so.');
+    expect(removeFillers('Yes, and, um, then we left.')).toBe('Yes, and then we left.');
+    expect(removeFillers('First line.\nOkay, I, um, agree.')).toBe('First line.\nOkay, I agree.');
+  });
+  it('still drops the comma after I or and in an ordinary sentence', () => {
+    expect(removeFillers('I, um, think so.')).toBe('I think so.');
+    expect(removeFillers('We ran it and, uh, then it broke.')).toBe('We ran it and then it broke.');
+    expect(removeFillers('Then I, uh, left.')).toBe('Then I left.');
+  });
+});
+
+describe('removeFillers: the mark after a chain of far-apart fillers (round 5)', () => {
+  const gap = ' '.repeat(41);
+  it('carries the mark past a later filler that has its own comma', () => {
+    expect(removeFillers('John, um,' + gap + 'uh,' + gap + 'er: next')).toBe('John: next');
+    expect(removeFillers('John, um,' + gap + 'uh,' + gap + 'er.')).toBe('John.');
+    expect(removeFillers('John, um,' + gap + 'uh,' + gap + 'er. next')).toBe('John. Next');
+  });
+  it('keeps the comma when plain text follows the chain', () => {
+    expect(removeFillers('John, um,' + gap + 'uh,' + gap + 'er call me')).toBe('John, call me');
+  });
+});
+
 describe('shouldCleanLanguage', () => {
   it('cleans when the provider reports English in any common form', () => {
     for (const l of ['en', 'en_us', 'en-GB', 'english', 'English', 'eng', 'EN']) {
