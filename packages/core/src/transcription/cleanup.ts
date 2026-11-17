@@ -325,27 +325,39 @@ function dropsCommaHere(s: string, headEnd: number, tailStart: number): boolean 
   return !followsComma(s, headEnd - token.length) && !nextTokenEndsWithComma(s, tailStart);
 }
 
-// True when the word at k follows a comma and the word before that comma is not
-// the first word of its sentence ("Well, I" opens a sentence; "H, I" does not).
+// True when the word at k looks like an item in a list: it follows a comma, and
+// the word before that comma is a single-letter label ("H, I") or follows a
+// comma or colon itself ("Keywords: if, and", "x, y, and"). An ordinary clause
+// comma ("to the store, and") is not a list, and a line break ends the look.
 function followsComma(s: string, k: number): boolean {
   let r = k;
-  while (r > 0 && isWs(s[r - 1])) r--;
+  while (r > 0 && isHs(s[r - 1])) r--;
   if (r === 0 || s[r - 1] !== ',') return false;
   const p = r - 1;
   let j = p;
   const lim = Math.max(0, p - 40);
   while (j > lim && !isWs(s[j - 1])) j--;
+  const token = s.slice(j, p);
+  // A removed filler in front of the comma ("Well, um, I") does not make a list.
+  if (token === '' || isFillerWord(token)) return false;
+  if (/^\p{L}$/u.test(token)) return true;
   let q = j;
-  while (q > 0 && isWs(s[q - 1])) q--;
-  const opensSentence = q === 0 || s.slice(q, j).includes('\n') || '.!?'.includes(s[q - 1]);
-  return !opensSentence;
+  while (q > 0 && isHs(s[q - 1])) q--;
+  return q > 0 && (s[q - 1] === ',' || s[q - 1] === ':');
+}
+
+// A bare filler word, with any punctuation stuck to it.
+const FILLER_WORD_RE = new RegExp(`^(?:${FORMS})[,;:.!?\u2026]*$`, 'iu');
+function isFillerWord(token: string): boolean {
+  return FILLER_WORD_RE.test(token);
 }
 
 function nextTokenEndsWithComma(s: string, from: number): boolean {
   const q = skipHs(s, from);
   let e = q;
   while (e < s.length && !isWs(s[e])) e++;
-  return e > q && s[e - 1] === ',';
+  // A later filler is removed too, so its comma is not the next word's.
+  return e > q && s[e - 1] === ',' && !isFillerWord(s.slice(q, e));
 }
 
 // Capitalize the first word only when it is plain lowercase letters. Paths,

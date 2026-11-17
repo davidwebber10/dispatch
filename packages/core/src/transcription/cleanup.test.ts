@@ -504,6 +504,43 @@ describe('removeFillers: the mark after a chain of far-apart fillers (round 5)',
   });
 });
 
+describe('removeFillers: I and and next to other fillers (round 5 confirm)', () => {
+  const gap = ' '.repeat(41);
+  it('a filler before the comma does not make I or and a list item', () => {
+    expect(removeFillers('Well, um, I, uh, think so.')).toBe('Well, I think so.');
+    expect(removeFillers('Yes, um, and, uh, then we left.')).toBe('Yes, and then we left.');
+  });
+  it('a later removable filler with a comma does not count as the next word', () => {
+    expect(removeFillers('I, um,' + gap + 'uh, think so.')).toBe('I think so.');
+    expect(removeFillers('We ran it and, uh,' + gap + 'um, then left.')).toBe('We ran it and then left.');
+  });
+  it('real list items and a real comma after the next word still keep the comma', () => {
+    expect(removeFillers('Rooms H, I, um, J and K.')).toBe('Rooms H, I, J and K.');
+    expect(removeFillers('I, um, John, accept.')).toBe('I, John, accept.');
+  });
+});
+
+describe('removeFillers: a clause comma before I or and is not a list (round 5 confirm 2)', () => {
+  it('drops the comma after I or and that follow an ordinary clause comma', () => {
+    expect(removeFillers('I went to the store, and, um, bought milk.')).toBe('I went to the store, and bought milk.');
+    expect(removeFillers('If it fails, I, um, restart it.')).toBe('If it fails, I restart it.');
+    expect(removeFillers('So yeah, I, um, think so.')).toBe('So yeah, I think so.');
+  });
+  it('does not look past a line break for a comma', () => {
+    expect(removeFillers('Dear John,\nI, um, wanted to ask.')).toBe('Dear John,\nI wanted to ask.');
+    expect(removeFillers('First, then\nand, uh, last.')).toBe('First, then\nand last.');
+  });
+  it('keeps the comma for a letter label or a list of three or more', () => {
+    expect(removeFillers('Rooms H, I, um, J and K.')).toBe('Rooms H, I, J and K.');
+    expect(removeFillers('The variables are H, I, um, J and K.')).toBe('The variables are H, I, J and K.');
+    expect(removeFillers('Keywords: if, and, um, or.')).toBe('Keywords: if, and, or.');
+    expect(removeFillers('Use x, y, and, uh, z.')).toBe('Use x, y, and, z.');
+  });
+  it('known limit: a two-item list of words loses the comma', () => {
+    expect(removeFillers('Use if, and, um, or here.')).toBe('Use if, and or here.');
+  });
+});
+
 describe('shouldCleanLanguage', () => {
   it('cleans when the provider reports English in any common form', () => {
     for (const l of ['en', 'en_us', 'en-GB', 'english', 'English', 'eng', 'EN']) {
