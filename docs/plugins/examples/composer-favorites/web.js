@@ -25,7 +25,7 @@ export default function activate(d) {
     };
     return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
       h('span', { style: ui.styles.sectionLabel }, 'BUTTONS'),
-      h('div', { style: { fontSize: 12.5, color: 'var(--color-text-secondary)' } }, 'One per line: Label | the text it puts in the composer.'),
+      h('div', { style: { fontSize: '0.78125rem', color: 'var(--color-text-secondary)' } }, 'One per line: Label | the text it puts in the composer.'),
       h('textarea', { value: shown, rows: 6, onChange: (e) => setText(e.target.value), style: { ...ui.styles.fieldInput, height: 'auto', padding: 9, font: '12.5px/1.5 var(--font-mono)', resize: 'vertical' } }),
       h('div', null, h('button', { style: ui.styles.solidBtn(true), onClick: save }, 'Save')));
   }

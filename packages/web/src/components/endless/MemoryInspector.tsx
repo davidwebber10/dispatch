@@ -56,9 +56,10 @@ export function MemoryInspector({ open, onClose, sheet = false }: { open: boolea
         <label htmlFor="endless-instructions" style={{ fontSize: fontVar(12.5), color: 'var(--color-text-secondary)' }}>
           Chat instructions — placed after the system prompt on every turn and compaction. A change starts a new prompt cache.
         </label>
+        {/* Not `font: 'inherit'`: that shorthand also resets the size, so the 16px floor of a phone text box never applied. */}
         <textarea id="endless-instructions" aria-label="Chat instructions" rows={4} disabled={!loaded} value={instructions}
           onChange={(e) => { setInstructions(e.target.value); setSaved(false); }}
-          style={{ resize: 'vertical', padding: 10, borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: fontVarInput(16), font: 'inherit' }} />
+          style={{ resize: 'vertical', padding: 10, borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontFamily: 'inherit', lineHeight: 'inherit', fontSize: fontVarInput(16) }} />
         <div>
           <button type="button" onClick={save} disabled={!loaded}
             style={{ opacity: loaded ? 1 : 0.5, padding: '6px 14px', borderRadius: 'var(--radius-md)', border: 'none', background: 'var(--color-accent)', color: 'var(--color-on-accent)', cursor: 'pointer', fontWeight: 600 }}>

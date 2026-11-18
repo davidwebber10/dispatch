@@ -22,8 +22,8 @@ export default function activate(d) {
 
   function Home() {
     return h('div', { style: { padding: '22px 26px', maxWidth: 820, margin: '0 auto' } },
-      h('h1', { style: { margin: 0, fontSize: 18, fontWeight: 700 } }, '${safeName}'),
-      h('div', { style: { marginTop: 6, fontSize: 13, color: 'var(--color-text-secondary)' } },
+      h('h1', { style: { margin: 0, fontSize: '1.125rem', fontWeight: 700 } }, '${safeName}'),
+      h('div', { style: { marginTop: 6, fontSize: '0.8125rem', color: 'var(--color-text-secondary)' } },
         'Hello from ${safeName}. This screen comes from ~/.dispatch/plugins/${id}/web.js.'),
       h('div', { style: { marginTop: 16 } },
         h('button', { style: ui.styles.solidBtn(true), onClick: () => d.hint('The plugin says hello') }, 'Say hello')));

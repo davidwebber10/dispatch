@@ -129,7 +129,8 @@ export function PillComposer({
   const [full, setFull] = useState(false);
   const tallRef = useRef<(t: boolean) => void>(() => {});
   tallRef.current = (t) => onTallChange?.(t);
-  useLayoutEffect(fit, [value, minH, maxLines, maxHeight]);
+  // lineH is here for the text scale: on a phone a larger scale changes the line height while minH stays the key height.
+  useLayoutEffect(fit, [value, minH, lineH, maxLines, maxHeight]);
   // A resize (rotation, the keyboard, a window drag) re-wraps the text and moves the cap.
   useEffect(() => {
     window.addEventListener('resize', fit);

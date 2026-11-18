@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.1
+
+The Inbox follows the text scale (Settings → Appearance): its font sizes are in `rem`, so they grow and
+shrink with the rest of the app. Nothing changes at 100%.
+
 ## 1.2.0
 
 **Send a secret**: the other direction. In the Inbox (the view, a thread's tab, a project's sheet) the owner

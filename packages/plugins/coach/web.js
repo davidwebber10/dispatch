@@ -30,35 +30,43 @@ const WELCOME = Object.freeze({
 });
 
 // ── styles: CSS variables only (the app has themes) ─────────────────────────────────────────
+/**
+ * A font size that follows the app's text scale (Settings → Appearance): `px` at 100%, in rem.
+ * The app sets the root font size to 16px times the scale, so 1rem is 16px at 100%.
+ */
+const rem = (px) => `${px / 16}rem`;
+/** The same for a text box on a phone: never under 16px, or iOS zooms the page when it gets the focus. */
+const remInput = (px) => `max(16px, ${px / 16}rem)`;
+
 const S = {
-  card: { position: 'relative', margin: '0 0 8px', padding: '12px 14px', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', fontSize: 13, lineHeight: 1.45, color: 'var(--color-text-primary)' },
-  x: { position: 'absolute', top: 8, right: 8, width: 24, height: 24, padding: 0, borderRadius: 'var(--radius-sm)', border: 'none', background: 'none', color: 'var(--color-text-tertiary)', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center' },
-  kicker: { font: '600 10px var(--font-mono)', letterSpacing: 1, color: 'var(--color-accent)' },
+  card: { position: 'relative', margin: '0 0 8px', padding: '12px 14px', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', fontSize: rem(13), lineHeight: 1.45, color: 'var(--color-text-primary)' },
+  x: { position: 'absolute', top: 8, right: 8, width: 24, height: 24, padding: 0, borderRadius: 'var(--radius-sm)', border: 'none', background: 'none', color: 'var(--color-text-tertiary)', cursor: 'pointer', fontSize: rem(13), display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  kicker: { font: `600 ${rem(10)} var(--font-mono)`, letterSpacing: 1, color: 'var(--color-accent)' },
   axis: { color: 'var(--color-text-tertiary)' },
-  head: { fontWeight: 650, fontSize: 14.5, margin: '4px 28px 2px 0' },
-  why: { color: 'var(--color-text-secondary)', fontSize: 13 },
+  head: { fontWeight: 650, fontSize: rem(14.5), margin: '4px 28px 2px 0' },
+  why: { color: 'var(--color-text-secondary)', fontSize: rem(13) },
   row: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' },
-  btn: { height: 28, padding: '0 11px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'none', color: 'var(--color-text-secondary)', fontSize: 12.5, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 },
-  primary: { height: 28, padding: '0 11px', borderRadius: 'var(--radius-md)', border: 'none', background: 'var(--color-accent)', color: 'var(--color-on-accent)', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' },
-  icon: { width: 28, height: 28, padding: 0, borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 13 },
-  more: { marginTop: 10, borderTop: '1px solid var(--color-border)', paddingTop: 10, fontSize: 13, color: 'var(--color-text-secondary)' },
-  ex: { background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '8px 10px', margin: '6px 0', fontSize: 12.5, color: 'var(--color-text-primary)', overflowWrap: 'anywhere' },
-  exLabel: { display: 'block', marginBottom: 2, font: '600 10px var(--font-mono)', letterSpacing: 1, color: 'var(--color-text-tertiary)' },
+  btn: { height: 28, padding: '0 11px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'none', color: 'var(--color-text-secondary)', fontSize: rem(12.5), cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 },
+  primary: { height: 28, padding: '0 11px', borderRadius: 'var(--radius-md)', border: 'none', background: 'var(--color-accent)', color: 'var(--color-on-accent)', fontSize: rem(12.5), fontWeight: 600, cursor: 'pointer' },
+  icon: { width: 28, height: 28, padding: 0, borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: rem(13) },
+  more: { marginTop: 10, borderTop: '1px solid var(--color-border)', paddingTop: 10, fontSize: rem(13), color: 'var(--color-text-secondary)' },
+  ex: { background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '8px 10px', margin: '6px 0', fontSize: rem(12.5), color: 'var(--color-text-primary)', overflowWrap: 'anywhere' },
+  exLabel: { display: 'block', marginBottom: 2, font: `600 ${rem(10)} var(--font-mono)`, letterSpacing: 1, color: 'var(--color-text-tertiary)' },
   menu: { position: 'absolute', right: 10, bottom: 44, zIndex: 2, width: 230, padding: 5, borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)', background: 'var(--color-modal)', color: 'var(--color-text-primary)' },
-  menuItem: { display: 'block', width: '100%', textAlign: 'left', padding: '7px 10px', borderRadius: 'var(--radius-sm)', border: 'none', background: 'none', color: 'inherit', fontSize: 12.5, cursor: 'pointer' },
+  menuItem: { display: 'block', width: '100%', textAlign: 'left', padding: '7px 10px', borderRadius: 'var(--radius-sm)', border: 'none', background: 'none', color: 'inherit', fontSize: rem(12.5), cursor: 'pointer' },
   sep: { height: 1, margin: '4px 0', background: 'var(--color-border)' },
-  note: { marginTop: 8, fontSize: 12, color: 'var(--color-text-tertiary)' },
-  banner: { margin: '0 0 8px', fontSize: 12.5, color: 'var(--color-text-secondary)', background: 'var(--color-elevated)', border: '1px dashed var(--color-border)', borderRadius: 'var(--radius-lg)', padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8 },
-  link: { border: 'none', background: 'none', padding: 0, color: 'var(--color-accent)', cursor: 'pointer', fontSize: 12.5 },
+  note: { marginTop: 8, fontSize: rem(12), color: 'var(--color-text-tertiary)' },
+  banner: { margin: '0 0 8px', fontSize: rem(12.5), color: 'var(--color-text-secondary)', background: 'var(--color-elevated)', border: '1px dashed var(--color-border)', borderRadius: 'var(--radius-lg)', padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8 },
+  link: { border: 'none', background: 'none', padding: 0, color: 'var(--color-accent)', cursor: 'pointer', fontSize: rem(12.5) },
   chips: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 },
-  chip: { height: 26, padding: '0 10px', borderRadius: 'var(--radius-pill)', border: '1px solid var(--color-border)', background: 'none', color: 'var(--color-text-secondary)', fontSize: 12, cursor: 'pointer' },
-  chipOn: { height: 26, padding: '0 10px', borderRadius: 'var(--radius-pill)', border: '1px solid var(--color-accent)', background: 'color-mix(in srgb, var(--color-accent) 12%, var(--color-elevated))', color: 'var(--color-accent)', fontSize: 12, cursor: 'pointer' },
-  input: { marginTop: 8, width: '100%', height: 32, boxSizing: 'border-box', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: 12.5, padding: '0 10px' },
-  toast: { marginTop: 2, fontSize: 12.5, color: 'var(--color-text-secondary)', background: 'color-mix(in srgb, var(--color-accent) 12%, var(--color-elevated))', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '7px 10px', marginRight: 28 },
+  chip: { height: 26, padding: '0 10px', borderRadius: 'var(--radius-pill)', border: '1px solid var(--color-border)', background: 'none', color: 'var(--color-text-secondary)', fontSize: rem(12), cursor: 'pointer' },
+  chipOn: { height: 26, padding: '0 10px', borderRadius: 'var(--radius-pill)', border: '1px solid var(--color-accent)', background: 'color-mix(in srgb, var(--color-accent) 12%, var(--color-elevated))', color: 'var(--color-accent)', fontSize: rem(12), cursor: 'pointer' },
+  input: { marginTop: 8, width: '100%', height: 32, boxSizing: 'border-box', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: rem(12.5), padding: '0 10px' },
+  toast: { marginTop: 2, fontSize: rem(12.5), color: 'var(--color-text-secondary)', background: 'color-mix(in srgb, var(--color-accent) 12%, var(--color-elevated))', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '7px 10px', marginRight: 28 },
   section: { padding: '12px 14px', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)' },
-  label: { font: '600 10.5px var(--font-mono)', letterSpacing: 1, color: 'var(--color-text-tertiary)' },
-  fact: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, padding: '7px 0', borderBottom: '1px solid var(--color-border)' },
-  src: { color: 'var(--color-text-tertiary)', fontSize: 11 },
+  label: { font: `600 ${rem(10.5)} var(--font-mono)`, letterSpacing: 1, color: 'var(--color-text-tertiary)' },
+  fact: { display: 'flex', gap: 8, alignItems: 'center', fontSize: rem(12.5), padding: '7px 0', borderBottom: '1px solid var(--color-border)' },
+  src: { color: 'var(--color-text-tertiary)', fontSize: rem(11) },
   bar: { display: 'inline-block', height: 6, borderRadius: 'var(--radius-pill)', background: 'var(--color-pane)', border: '1px solid var(--color-border)', overflow: 'hidden' },
   barFill: { height: '100%', borderRadius: 'var(--radius-pill)' },
 };
@@ -431,7 +439,7 @@ export function createCoach(d, deps = {}) {
           btn('Show again', () => { void saveMemory(reviewMuted(store.getState().memory, x.type, true, now())); }, null, true),
           btn('Keep off', () => { void saveMemory(reviewMuted(store.getState().memory, x.type, false, now())); })))),
       items.length === 0
-        ? h('div', { style: { ...S.note, fontSize: 13 } }, 'The Coach knows nothing about you yet.')
+        ? h('div', { style: { ...S.note, fontSize: rem(13) } }, 'The Coach knows nothing about you yet.')
         : h('div', { 'data-testid': 'coach-knows', style: { marginTop: 6 } }, ...items.map((i) => {
           const key = `${i.kind}:${i.key}`;
           if (editing && editing.id === i.key && (i.kind === 'fact' || i.kind === 'goal')) {
@@ -461,21 +469,21 @@ export function createCoach(d, deps = {}) {
     return h('div', { 'data-testid': 'coach-measures', style: S.section },
       h('div', { style: S.label }, 'YOUR FIVE MEASURES · 30 DAYS'),
       !scores
-        ? h('div', { style: { ...S.note, fontSize: 12.5 } }, 'The Coach shows your measures after a few days of work.')
+        ? h('div', { style: { ...S.note, fontSize: rem(12.5) } }, 'The Coach shows your measures after a few days of work.')
         : h('div', { style: { marginTop: 8, display: 'flex', flexDirection: 'column', gap: 7 } }, ...Object.keys(MEASURE_LABEL).map((id) => {
           const m = scores[id] || { score: 0, trend: 0, enough: false };
           const [ico, word] = TREND[String(m.trend)] || TREND[0];
           const focus = doc.weakest === id;
-          return h('div', { key: id, 'data-testid': `measure-${id}`, style: { display: 'grid', gridTemplateColumns: '84px 1fr 70px', alignItems: 'center', gap: 8, fontSize: 12.5 } },
+          return h('div', { key: id, 'data-testid': `measure-${id}`, style: { display: 'grid', gridTemplateColumns: '84px 1fr 70px', alignItems: 'center', gap: 8, fontSize: rem(12.5) } },
             h('span', { style: { color: 'var(--color-text-primary)' } }, MEASURE_LABEL[id]),
             m.enough
               ? h('div', { style: S.bar }, h('div', { style: { ...S.barFill, width: `${Math.max(2, Math.min(100, m.score))}%`, background: focus ? 'var(--color-accent)' : 'var(--color-text-tertiary)' } }))
               : h('span', { style: S.src }, 'Not enough data yet'),
-            h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, color: focus ? 'var(--color-accent)' : 'var(--color-text-tertiary)', fontSize: 11.5 } },
+            h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, color: focus ? 'var(--color-accent)' : 'var(--color-text-tertiary)', fontSize: rem(11.5) } },
               m.enough ? h('span', { role: 'img', 'aria-label': `${MEASURE_LABEL[id]}: ${word}`, title: word, style: { display: 'inline-flex' } }, icon(ico, word, 13)) : null,
               focus ? 'focus' : null));
         })),
-      h('div', { style: { ...S.note, fontSize: 11.5 } }, 'Bars compare you with your own past, never with other people.'));
+      h('div', { style: { ...S.note, fontSize: rem(11.5) } }, 'Bars compare you with your own past, never with other people.'));
   }
 
   // ── the right-column tab: the open thread's card, and the measures (spec section 4.2) ─────
@@ -586,9 +594,9 @@ export function createCoach(d, deps = {}) {
     return h('div', { 'data-testid': 'coach-review-progress', style: { display: 'flex', flexDirection: 'column', gap: 8 } },
       h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 } },
         h('div', { style: { fontWeight: 600, overflowWrap: 'anywhere' } }, name ? `Reading ${name}` : 'Opening the next thread…'),
-        h('div', { style: { fontSize: 12.5, color: 'var(--color-text-secondary)' } }, threadLine(f))),
+        h('div', { style: { fontSize: rem(12.5), color: 'var(--color-text-secondary)' } }, threadLine(f))),
       h(ProgressBar, f),
-      h('div', { style: { fontSize: 12, color: 'var(--color-text-tertiary)', fontVariantNumeric: 'tabular-nums' } }, meta),
+      h('div', { style: { fontSize: rem(12), color: 'var(--color-text-tertiary)', fontVariantNumeric: 'tabular-nums' } }, meta),
       cancel);
   }
   const reviewName = (r) => (r.backfill ? 'Look back' : r.scope && r.scope.kind === 'thread' ? 'Thread review' : r.scope && r.scope.kind === 'project' ? 'Project review' : 'Review');
@@ -608,7 +616,7 @@ export function createCoach(d, deps = {}) {
         h('span', { style: { ...S.label, flex: 1 } }, reviewName(r).toUpperCase()),
         h('button', { type: 'button', style: S.link, onClick: () => { if (d.actions && typeof d.actions.setView === 'function') d.actions.setView(VIEW_KEY); } }, 'Open')),
       f && r.state === 'reading' && h(ProgressBar, { ...f, height: 6 }),
-      h('div', { style: { fontSize: 12, color: 'var(--color-text-secondary)', fontVariantNumeric: 'tabular-nums' } }, line));
+      h('div', { style: { fontSize: rem(12), color: 'var(--color-text-secondary)', fontVariantNumeric: 'tabular-nums' } }, line));
   }
   const FINDING_WORD = { 'went-well': 'Went well', handoff: 'Hand off more', plan: 'Plan first', check: 'Check the result', reuse: 'Reuse', parallel: 'Run in parallel' };
 
@@ -666,7 +674,7 @@ export function createCoach(d, deps = {}) {
           ...rep.nextSteps.map((s, i) => h('div', { key: i, style: { ...S.row, marginTop: 4 } }, h('span', { style: { flex: 1 } }, s.text), s.action && h('button', { type: 'button', style: S.btn, onClick: () => { void runAction(s.action); } }, actionLabel(s.action))))));
     } else body = null;
     const title = r.backfill ? 'LOOK BACK' : r.scope && r.scope.kind === 'thread' ? 'REVIEW OF THIS THREAD' : r.scope && r.scope.kind === 'project' ? 'REVIEW OF THIS PROJECT' : 'REVIEW';
-    return h('div', { 'data-testid': 'coach-review', style: { ...S.section, fontSize: 13 } }, h('div', { style: { ...S.label, marginBottom: 6 } }, title), body);
+    return h('div', { 'data-testid': 'coach-review', style: { ...S.section, fontSize: rem(13) } }, h('div', { style: { ...S.label, marginBottom: 6 } }, title), body);
   }
 
   /** The look back at history (spec section 4.10): offered once on the Coach screen; the estimate comes first. */
@@ -692,7 +700,7 @@ export function createCoach(d, deps = {}) {
     if (!terminalId) {
       return h('div', { style: { padding: 12, display: 'flex', flexDirection: 'column', gap: 10 } },
         h(ReviewCompact, { terminalId: null }),
-        h('div', { style: { ...S.note, fontSize: 13 } }, 'Open a thread to see what the Coach sees in it.'),
+        h('div', { style: { ...S.note, fontSize: rem(13) } }, 'Open a thread to see what the Coach sees in it.'),
         h('div', null, h('button', { type: 'button', style: S.btn, onClick: () => { if (d.actions && typeof d.actions.setView === 'function') d.actions.setView(VIEW_KEY); } }, 'Open the Coach screen')));
     }
     const t = now();
@@ -702,15 +710,15 @@ export function createCoach(d, deps = {}) {
     const ctx = { surface: 'inspector', terminalId, sessionId, value: '', set: (text) => { if (copyText) void copyText(text); hint('Copied. Paste it into the message box.'); }, insert: () => {} };
     let cardsBlock;
     if (st.toast && st.toast.terminalId === terminalId) cardsBlock = h(Toast, { toast: st.toast });
-    else cardsBlock = mine.length ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 0 } }, ...mine.map((c) => h(CardView, { key: c.id, card: c, ctx, fresh: false }))) : h('div', { style: { ...S.note, fontSize: 13 } }, 'The Coach has nothing for this thread yet.');
+    else cardsBlock = mine.length ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 0 } }, ...mine.map((c) => h(CardView, { key: c.id, card: c, ctx, fresh: false }))) : h('div', { style: { ...S.note, fontSize: rem(13) } }, 'The Coach has nothing for this thread yet.');
     const sees = threadObservations(st.signals, terminalId);
     const touched = activeGoals(st.memory).filter((g) => mine.some((c) => c.goal === g.id || g.detectors.includes(c.type) || g.measures.includes(c.measure)));
     return h('div', { style: { padding: 12, display: 'flex', flexDirection: 'column', gap: 12 } },
-      touched.length > 0 && h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--color-text-secondary)' } }, icon('target', null, 14), h('span', null, `Working on: ${touched.map((g) => g.text).join(' · ')}`)),
+      touched.length > 0 && h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: rem(12.5), color: 'var(--color-text-secondary)' } }, icon('target', null, 14), h('span', null, `Working on: ${touched.map((g) => g.text).join(' · ')}`)),
       cardsBlock,
       h('div', { 'data-testid': 'coach-thread-sees', style: S.section },
         h('div', { style: S.label }, 'WHAT THE COACH SEES IN THIS THREAD'),
-        sees.length ? h('ul', { style: { margin: '6px 0 0', paddingLeft: 18, fontSize: 12.5 } }, ...sees.map((x, k) => h('li', { key: k, style: { margin: '3px 0' } }, x))) : h('div', { style: { ...S.note, fontSize: 12.5 } }, 'Nothing yet: the Coach sees a thread after your first prompt in it.')),
+        sees.length ? h('ul', { style: { margin: '6px 0 0', paddingLeft: 18, fontSize: rem(12.5) } }, ...sees.map((x, k) => h('li', { key: k, style: { margin: '3px 0' } }, x))) : h('div', { style: { ...S.note, fontSize: rem(12.5) } }, 'Nothing yet: the Coach sees a thread after your first prompt in it.')),
       h('div', null, h(ReviewButton, { scope: { kind: 'thread', ids: [terminalId] }, label: 'Review this thread' })),
       h(ReviewPanel, { terminalId }),
       h(ReviewCompact, { terminalId }),
@@ -793,11 +801,11 @@ export function createCoach(d, deps = {}) {
           ...[['thread', 'About this thread'], ['me', 'About me']].map(([v, l]) => h('button', { key: v, type: 'button', role: 'radio', 'aria-checked': scope === v, style: scope === v ? S.chipOn : S.chip, onClick: () => setScope(v) }, l))),
         h('button', { type: 'button', style: S.link, onClick: () => { const all = (store.getState().chat && store.getState().chat.turns) || []; void saveChat({ turns: all.filter((x) => (tid ? x.terminalId !== tid : !!x.terminalId)) }); } }, 'Clear chat')),
       h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8, maxHeight: 360, overflowY: 'auto' } },
-        turns.length === 0 && h('div', { style: { ...S.note, fontSize: 12.5 } }, tid ? 'Ask about this thread: "How could I have handed off more here?"' : 'Ask about your own use: "What should I automate first?"'),
-        ...turns.map((x, k) => h('div', { key: k, style: { alignSelf: x.role === 'user' ? 'flex-end' : 'flex-start', maxWidth: '88%', padding: '7px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: x.role === 'user' ? 'var(--color-pane)' : 'var(--color-elevated)', fontSize: 12.5, color: 'var(--color-text-primary)', whiteSpace: 'pre-wrap' } },
+        turns.length === 0 && h('div', { style: { ...S.note, fontSize: rem(12.5) } }, tid ? 'Ask about this thread: "How could I have handed off more here?"' : 'Ask about your own use: "What should I automate first?"'),
+        ...turns.map((x, k) => h('div', { key: k, style: { alignSelf: x.role === 'user' ? 'flex-end' : 'flex-start', maxWidth: '88%', padding: '7px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: x.role === 'user' ? 'var(--color-pane)' : 'var(--color-elevated)', fontSize: rem(12.5), color: 'var(--color-text-primary)', whiteSpace: 'pre-wrap' } },
           x.text,
           Array.isArray(x.actions) && x.actions.length > 0 && h('div', { style: { ...S.row, marginTop: 6 } }, ...x.actions.map((a, n) => h('button', { key: n, type: 'button', style: S.btn, onClick: () => { void runAction(a, tid ? sessionId : undefined); } }, actionLabel(a))))))),
-      note && h('div', { role: 'status', style: { ...S.note, fontSize: 12.5 } }, note),
+      note && h('div', { role: 'status', style: { ...S.note, fontSize: rem(12.5) } }, note),
       h('div', { style: { ...S.row, marginTop: 8 } },
         h('input', { type: 'text', 'aria-label': 'Ask the Coach', placeholder: 'Ask about how you use AI', value: text, style: { ...S.input, marginTop: 0, flex: 1, minWidth: 160 }, onChange: (e) => setText(e.target.value), onKeyDown: (e) => { if (e.key === 'Enter') void send(); } }),
         h('button', { type: 'button', style: S.primary, disabled: busy, onClick: () => { void send(); } }, busy ? 'Thinking…' : 'Send')));
@@ -824,7 +832,7 @@ export function createCoach(d, deps = {}) {
     const five = data && data.share && data.share.fiveHour;
     const cap = data && data.budget && typeof data.budget.percentWeekly === 'number' ? data.budget.percentWeekly : null;
     const used = status && status.budget && typeof status.budget.usedPercent === 'number' ? status.budget.usedPercent : (week ? week.pluginPercent : null);
-    const row = (k, v) => h('div', { key: k, style: { display: 'flex', gap: 10, padding: '5px 0', borderBottom: '1px solid var(--color-border)', fontSize: 12.5 } },
+    const row = (k, v) => h('div', { key: k, style: { display: 'flex', gap: 10, padding: '5px 0', borderBottom: '1px solid var(--color-border)', fontSize: rem(12.5) } },
       h('span', { style: { width: 150, flexShrink: 0, color: 'var(--color-text-tertiary)' } }, k), h('span', { style: { color: 'var(--color-text-primary)', minWidth: 0 } }, v));
     return h('div', { 'data-testid': 'coach-cost', style: S.section },
       h('div', { style: S.label }, 'COST THIS WEEK'),
@@ -837,8 +845,8 @@ export function createCoach(d, deps = {}) {
           h('span', { role: 'meter', 'aria-label': 'Budget used', 'aria-valuemin': 0, 'aria-valuemax': cap, 'aria-valuenow': used === null ? 0 : Math.round(used * 100) / 100, style: { ...S.bar, width: 120 } },
             h('span', { style: { ...S.barFill, display: 'block', width: `${used === null ? 0 : Math.min(100, (used / cap) * 100)}%`, background: 'var(--color-accent)' } })),
           used === null ? null : h('span', { style: S.src }, `${pctTxt(used)} used`)))),
-      status && status.stepped && status.level && h('div', { style: { ...S.note, fontSize: 12.5 } }, `Near the budget, the Coach stepped down to ${LEVEL_NAME[status.level] || status.level}.`),
-      h('div', { style: { ...S.note, fontSize: 11.5 } }, 'Runs on your own subscription. The share is an estimate: use outside Dispatch makes it read high.'),
+      status && status.stepped && status.level && h('div', { style: { ...S.note, fontSize: rem(12.5) } }, `Near the budget, the Coach stepped down to ${LEVEL_NAME[status.level] || status.level}.`),
+      h('div', { style: { ...S.note, fontSize: rem(11.5) } }, 'Runs on your own subscription. The share is an estimate: use outside Dispatch makes it read high.'),
       h('div', { style: { ...S.row, marginTop: 8 } }, h('button', { type: 'button', style: S.btn, onClick: () => { if (d.actions && typeof d.actions.openSettings === 'function') d.actions.openSettings(VIEW_KEY); } }, icon('gear', null, 14), 'Coach settings')));
   }
 
@@ -851,7 +859,7 @@ export function createCoach(d, deps = {}) {
     return h('div', { style: S.section },
       h('div', { style: S.label }, 'CARD HISTORY'),
       list.length === 0
-        ? h('div', { style: { ...S.note, fontSize: 13 } }, 'No cards yet. The Coach shows one after it sees a pattern in your work.')
+        ? h('div', { style: { ...S.note, fontSize: rem(13) } }, 'No cards yet. The Coach shows one after it sees a pattern in your work.')
         : h('ul', { 'data-testid': 'coach-history', style: { listStyle: 'none', margin: '6px 0 0', padding: 0 } }, ...list.map((c) => {
           const cs = cardState[c.id];
           return h('li', { key: c.id, style: S.fact },
@@ -880,9 +888,9 @@ export function createCoach(d, deps = {}) {
     };
     return h('div', { 'data-testid': 'coach-recap', style: S.section },
       h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' } },
-        h('div', { style: { fontWeight: 650, fontSize: 15 } }, 'Your week with AI'),
+        h('div', { style: { fontWeight: 650, fontSize: rem(15) } }, 'Your week with AI'),
         h('span', { style: S.src }, `${st.threads ?? 0} threads · ${st.days ?? 0} days · up to ${st.parallel ?? 1} at a time`)),
-      h('ul', { style: { margin: '8px 0 0', paddingLeft: 18, fontSize: 13 } }, ...recap.patterns.map((p, i) => h('li', { key: i, style: { margin: '4px 0' } }, p))),
+      h('ul', { style: { margin: '8px 0 0', paddingLeft: 18, fontSize: rem(13) } }, ...recap.patterns.map((p, i) => h('li', { key: i, style: { margin: '4px 0' } }, p))),
       stretch && !hidden && h('div', { style: { ...S.card, margin: '10px 0 0' } },
         h('div', { style: S.kicker }, "THIS WEEK'S STRETCH"),
         h('div', { style: S.head }, stretch.headline),
@@ -891,7 +899,7 @@ export function createCoach(d, deps = {}) {
           h('button', { type: 'button', style: S.primary, onClick: start }, (stretch.action && stretch.action.label) || 'Start'),
           h('button', { type: 'button', style: S.btn, onClick: () => setHidden(true) }, 'Not this week'))),
       Array.isArray(recap.goals) && recap.goals.length > 0 && h(RecapGoals, { recap }),
-      recap.learned && h('div', { style: { ...S.note, fontSize: 12.5 } }, recap.learned));
+      recap.learned && h('div', { style: { ...S.note, fontSize: rem(12.5) } }, recap.learned));
   }
 
   // Each goal's progress, and once a month: Keep, Done or Change (spec section 4.6).
@@ -954,7 +962,7 @@ export function createCoach(d, deps = {}) {
     return h('div', { 'data-testid': 'coach-goals', style: S.section },
       h('div', { style: S.label }, 'YOUR GOALS'),
       active.length === 0
-        ? h('div', { style: { ...S.note, fontSize: 13 } }, 'Say how you want to improve. Cards that serve a goal come first.')
+        ? h('div', { style: { ...S.note, fontSize: rem(13) } }, 'Say how you want to improve. Cards that serve a goal come first.')
         : h('div', { style: { marginTop: 6 } }, ...active.map((g) => h('div', { key: g.id, style: S.fact },
           icon('target', null, 14),
           h('span', { style: { flex: 1, minWidth: 0, color: 'var(--color-text-primary)' } }, g.text),
@@ -976,8 +984,8 @@ export function createCoach(d, deps = {}) {
     const st = store((x) => x);
     return h('div', { style: { padding: '20px clamp(16px, 4vw, 26px) 40px', maxWidth: 820, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 } },
       h('div', null,
-        h('h1', { style: { margin: 0, fontSize: 18, fontWeight: 700 } }, 'Coach'),
-        h('div', { style: { fontSize: 13, color: 'var(--color-text-secondary)', marginTop: 4 } }, 'One small next step at a time, from how you actually work. Your Coach data stays on this machine and is private to you.')),
+        h('h1', { style: { margin: 0, fontSize: rem(18), fontWeight: 700 } }, 'Coach'),
+        h('div', { style: { fontSize: rem(13), color: 'var(--color-text-secondary)', marginTop: 4 } }, 'One small next step at a time, from how you actually work. Your Coach data stays on this machine and is private to you.')),
       h(LookBack),
       h(ReviewPanel, {}),
       h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
@@ -1014,7 +1022,7 @@ export function createCoach(d, deps = {}) {
   // wide control (a segmented choice, fields) on its own line under the text (2026-11-07).
   const isMobile = () => (d.hooks && typeof d.hooks.useIsMobile === 'function' ? d.hooks.useIsMobile() : false);
   /** An input's look: the phone gets 16px text (iOS does not zoom) and a taller box. */
-  const fieldStyle = (phone, width) => ({ ...S.input, marginTop: 0, width, height: phone ? 36 : 30, fontSize: phone ? 16 : 12.5 });
+  const fieldStyle = (phone, width) => ({ ...S.input, marginTop: 0, width, height: phone ? 36 : 30, fontSize: phone ? remInput(16) : rem(12.5) });
 
   /** A number field that writes on blur or Enter, clamped to [min, max]. */
   function NumField({ label, value, min, max, step = 1, onSave, width = 70 }) {
@@ -1090,7 +1098,7 @@ export function createCoach(d, deps = {}) {
         ...Object.entries(DEFAULT_THRESHOLDS).map(([group, fields]) => h(Row, { key: group, label: typeLabel(DETECTOR_OF_THRESHOLD[group]), hint: THRESHOLD_HINT[group] },
           h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(104px, 1fr))', gap: '8px 12px' } },
             ...Object.entries(fields).map(([field, def]) => h('label', { key: field, style: { display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 } },
-              h('span', { style: { fontSize: 11.5, color: 'var(--color-text-secondary)' } }, words(field)),
+              h('span', { style: { fontSize: rem(11.5), color: 'var(--color-text-secondary)' } }, words(field)),
               h(NumField, { label: `${group} ${field}`, value: (th[group] && th[group][field]) ?? def, min: 0, max: 100000, step: field === 'share' ? 0.05 : 1, width: '100%', onSave: (v) => setTh(group, field, v) }),
               h('span', { 'data-default': `${group}.${field}`, style: S.src }, `default ${def}`))))))));
   }
@@ -1123,7 +1131,7 @@ export function createCoach(d, deps = {}) {
     // An id with no project now (a deleted project) stays left alone.
     const setWatched = (next) => { const on = new Set(next); put({ leaveAlone: [...(s.leaveAlone || []).filter((x) => !ids.has(x)), ...list.filter((p) => !on.has(p.id)).map((p) => p.id)] }); };
     const time = (label, key) => h('input', { type: 'time', 'aria-label': label, value: s.quietHours[key], style: fieldStyle(phone, 120), onChange: (e) => put({ quietHours: { ...s.quietHours, [key]: e.target.value } }) });
-    return h('div', { 'data-testid': 'coach-settings', style: { display: 'flex', flexDirection: 'column', gap: 20, fontSize: 13, color: 'var(--color-text-secondary)' } },
+    return h('div', { 'data-testid': 'coach-settings', style: { display: 'flex', flexDirection: 'column', gap: 20, fontSize: rem(13), color: 'var(--color-text-secondary)' } },
       h(Group, { title: 'Coach', footer: 'To mute it for a while: press ⌘K, then type "Mute coach".' },
         h(Row, { label: 'How often' }, h(d.ui.Segmented, { ariaLabel: 'How often', value: s.howOften, options: HOW_OFTEN, onChange: (v) => put({ howOften: v }) })),
         h(Row, { label: 'Cards on the phone', control: h(Toggle, { label: 'Cards on the phone', on: !!s.phone, onClick: () => put({ phone: !s.phone }) }) }),
@@ -1150,8 +1158,8 @@ export function createCoach(d, deps = {}) {
         h('button', { type: 'button', 'aria-label': 'Advanced', 'aria-expanded': adv, onClick: () => setAdv(!adv),
           style: { display: 'flex', alignItems: 'center', gap: 12, width: '100%', padding: '11px 12px', border: 'none', background: 'none', cursor: 'pointer', textAlign: 'left', color: 'inherit' } },
           h('span', { style: { flex: 1, minWidth: 0 } },
-            h('span', { style: { display: 'block', fontSize: 13.5, color: 'var(--color-text-primary)' } }, adv ? 'Hide advanced settings' : 'Show advanced settings'),
-            h('span', { style: { display: 'block', marginTop: 2, fontSize: 12, color: 'var(--color-text-tertiary)' } }, 'Card limits, models, the OpenRouter budget, tip triggers.')),
+            h('span', { style: { display: 'block', fontSize: rem(13.5), color: 'var(--color-text-primary)' } }, adv ? 'Hide advanced settings' : 'Show advanced settings'),
+            h('span', { style: { display: 'block', marginTop: 2, fontSize: rem(12), color: 'var(--color-text-tertiary)' } }, 'Card limits, models, the OpenRouter budget, tip triggers.')),
           h('span', { style: { display: 'inline-flex', color: 'var(--color-text-tertiary)', transform: adv ? 'rotate(180deg)' : 'none', transition: 'transform 120ms' } }, icon('caret-down', null, 16)))),
       adv && h(Advanced, { s }));
   }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import { PillComposer } from './PillComposer';
 import { usePluginRegistry } from '../../plugins/registry';
 import { useSettings } from '../../stores/settings';
@@ -96,6 +96,20 @@ describe('PillComposer', () => {
     rerender(<PillComposer {...base} dictation={dictation()} mobile value={'line\n'.repeat(12)} maxLines={2} onTallChange={onTall} />);
     expect(box.style.height).toBe('64px'); // two 22 px lines inside the 42 px key height
     expect(onTall).toHaveBeenLastCalledWith(true); // still taller than two lines: the handle stays
+  });
+
+  it('a change of the text scale fits a draft that is already in the box again', () => {
+    Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true });
+    useSettings.setState({ textScale: 1 });
+    try {
+      render(<PillComposer {...base} dictation={dictation()} mobile value={'line\n'.repeat(12)} maxLines={2} />);
+      const box = screen.getByPlaceholderText('Message…') as HTMLTextAreaElement;
+      Object.defineProperty(box, 'scrollHeight', { configurable: true, get: () => 300 });
+      act(() => useSettings.setState({ textScale: 1.05 })); // 23 px lines: the cap is 42 + 23
+      expect(box.style.height).toBe('65px');
+      act(() => useSettings.setState({ textScale: 1.5 }));  // 33 px lines, the key height stays 42
+      expect(box.style.height).toBe('75px');
+    } finally { useSettings.setState({ textScale: 1 }); }
   });
 
   describe('going to two lines glides instead of jumping (2026-11-06)', () => {

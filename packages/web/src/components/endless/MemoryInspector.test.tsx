@@ -29,6 +29,17 @@ describe('MemoryInspector', () => {
     expect(screen.queryByTestId('memory-view')).toBeNull();
   });
 
+  // A phone text box under 16px makes iOS zoom the page on focus. The box had `font: 'inherit'` after
+  // its size: that shorthand resets the size, so the floor never applied (2026-11-18).
+  it('the instructions box keeps the 16px floor: it inherits the family and the line height, not the size', async () => {
+    render(<MemoryInspector open onClose={() => {}} />);
+    const box = await screen.findByRole('textbox', { name: 'Chat instructions' });
+    expect(box.style.fontSize).toBe('max(16px, var(--fs-16))');
+    expect(box.style.fontFamily).toBe('inherit');
+    expect(box.style.lineHeight).toBe('inherit');
+    expect(box.style.font).not.toBe('inherit');
+  });
+
   it('edits the Chat instructions', async () => {
     const save = vi.spyOn(api, 'setEndlessInstructions').mockResolvedValue({ ok: true });
     render(<MemoryInspector open onClose={() => {}} />);

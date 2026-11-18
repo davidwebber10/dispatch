@@ -7,6 +7,12 @@
 // stored drops and the running threads keep working.
 
 /**
+ * A font size that follows the app's text scale (Settings → Appearance): `px` at 100%, in rem.
+ * The app sets the root font size to 16px times the scale, so 1rem is 16px at 100%.
+ */
+const rem = (px) => `${px / 16}rem`;
+
+/**
  * The name the user reads, everywhere in this plugin (the view, the tab, the menu row, the sheet title,
  * the empty texts). To rename the feature, change this line (and `name` and the labels in plugin.json).
  */
@@ -264,10 +270,10 @@ export default function activate(d) {
     if (t0.toDateString() === y.toDateString()) return `Yesterday ${t}`;
     return `${t0.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${t}`;
   };
-  const chip = { display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: '100%', height: 34, padding: '0 11px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: 13, cursor: 'pointer', textDecoration: 'none' };
-  const solid = { ...chip, height: 30, padding: '0 12px', background: 'var(--color-accent)', borderColor: 'var(--color-accent)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: 12.5 };
+  const chip = { display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: '100%', height: 34, padding: '0 11px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: rem(13), cursor: 'pointer', textDecoration: 'none' };
+  const solid = { ...chip, height: 30, padding: '0 12px', background: 'var(--color-accent)', borderColor: 'var(--color-accent)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: rem(12.5) };
   // Every monospace block wraps: no sideways scroll on a phone.
-  const mono = { font: '13px/1.5 var(--font-mono)', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: 'var(--color-text-primary)' };
+  const mono = { font: `${rem(13)}/1.5 var(--font-mono)`, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: 'var(--color-text-primary)' };
   const block = { margin: 0, background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' };
   const row = { display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' };
   const I = (name) => icons[name] || icons.file;
@@ -289,7 +295,7 @@ export default function activate(d) {
   function KindChip({ kind }) {
     const k = KIND[kind];
     const Icon = I(k.icon);
-    return h('span', { 'data-testid': 'drop-kind', style: { display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0, height: 20, padding: '0 7px 0 6px', borderRadius: 'var(--radius-pill)', background: `color-mix(in srgb, ${k.color} 15%, transparent)`, color: k.color, font: '600 10.5px var(--font-sans)', letterSpacing: '0.2px', whiteSpace: 'nowrap' } },
+    return h('span', { 'data-testid': 'drop-kind', style: { display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0, height: 20, padding: '0 7px 0 6px', borderRadius: 'var(--radius-pill)', background: `color-mix(in srgb, ${k.color} 15%, transparent)`, color: k.color, font: `600 ${rem(10.5)} var(--font-sans)`, letterSpacing: '0.2px', whiteSpace: 'nowrap' } },
       h(Icon, { size: 12, weight: 'bold', 'aria-hidden': true }), k.label);
   }
 
@@ -300,8 +306,8 @@ export default function activate(d) {
     return h('div', { 'data-testid': 'inbox-empty', role: 'status', style: { display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: 6, padding: '44px 20px 28px' } },
       h('span', { 'aria-hidden': true, style: { width: 48, height: 48, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 6, background: 'color-mix(in srgb, var(--color-text-emphasis) 6%, transparent)', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' } },
         h(icons.tray, { size: 22 })),
-      h('div', { style: { fontSize: 14, fontWeight: 600, color: 'var(--color-text-primary)' } }, loading ? 'Loading…' : title),
-      !loading && body && h('div', { style: { maxWidth: 270, fontSize: 12.5, lineHeight: 1.5, color: 'var(--color-text-tertiary)' } }, body));
+      h('div', { style: { fontSize: rem(14), fontWeight: 600, color: 'var(--color-text-primary)' } }, loading ? 'Loading…' : title),
+      !loading && body && h('div', { style: { maxWidth: 270, fontSize: rem(12.5), lineHeight: 1.5, color: 'var(--color-text-tertiary)' } }, body));
   }
 
   function CopyButton({ text, label, aria, compact }) {
@@ -312,7 +318,7 @@ export default function activate(d) {
     const on = state === 'copied';
     const look = compact
       ? { ...chip, width: 32, height: 30, padding: 0, justifyContent: 'center', flexShrink: 0 }
-      : { ...chip, height: 30, padding: '0 10px', fontWeight: 600, fontSize: 12.5 };
+      : { ...chip, height: 30, padding: '0 10px', fontWeight: 600, fontSize: rem(12.5) };
     return h('button', { type: 'button', 'aria-label': name, title: on ? 'Copied' : name, onClick: () => ui.copyText(text).then(() => setState('copied'), () => setState('error')),
       style: { ...look, background: on ? 'var(--color-accent)' : 'var(--color-elevated)', color: on ? 'var(--color-on-accent)' : 'var(--color-text-primary)' } },
       h(Icon, { size: 14, weight: on ? 'bold' : 'regular' }),
@@ -322,7 +328,7 @@ export default function activate(d) {
   // One command: a `$` prompt, the command (wraps), and its own Copy.
   function CommandRow({ command, aria, first }) {
     return h('div', { 'data-testid': 'drop-command', style: { display: 'flex', alignItems: 'flex-start', gap: 8, padding: '5px 5px 5px 10px', borderTop: first ? 'none' : '1px solid var(--color-border)' } },
-      h('span', { 'aria-hidden': true, style: { font: '600 13px/30px var(--font-mono)', color: 'var(--color-green)', userSelect: 'none', WebkitUserSelect: 'none', flexShrink: 0 } }, '$'),
+      h('span', { 'aria-hidden': true, style: { font: `600 ${rem(13)}/30px var(--font-mono)`, color: 'var(--color-green)', userSelect: 'none', WebkitUserSelect: 'none', flexShrink: 0 } }, '$'),
       h('code', { style: { ...mono, flex: 1, minWidth: 0, padding: '5px 0', userSelect: 'all', WebkitUserSelect: 'all' } }, command),
       h(CopyButton, { text: command, aria, compact: true }));
   }
@@ -332,7 +338,7 @@ export default function activate(d) {
     const commands = Array.isArray(preview.commands) && preview.commands.length ? preview.commands : String(preview.text || '').split(/\r?\n/).filter((c) => c.trim());
     const many = commands.length > 1;
     return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
-      preview.cwd && h('div', { style: { font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', overflowWrap: 'anywhere' } }, `in ${preview.cwd}`),
+      preview.cwd && h('div', { style: { font: `400 ${rem(11)} var(--font-mono)`, color: 'var(--color-text-tertiary)', overflowWrap: 'anywhere' } }, `in ${preview.cwd}`),
       h('div', { style: terminal }, ...commands.map((c, i) => h(CommandRow, { key: i, command: c, first: i === 0, aria: many ? `Copy command ${i + 1}` : 'Copy command' }))),
       many && h('div', null, h(CopyButton, { text: commands.join('\n'), label: 'Copy all', aria: 'Copy all commands' })));
   }
@@ -342,8 +348,8 @@ export default function activate(d) {
     const u = httpUrl(url);
     return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
       h('div', { style: { ...block, padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 2 } },
-        u && h('div', { style: { fontSize: 13.5, fontWeight: 600, color: 'var(--color-text-primary)', overflowWrap: 'anywhere' } }, u.host),
-        h('div', { 'data-testid': 'drop-url', style: { ...mono, fontSize: 12, color: 'var(--color-link)', userSelect: 'all', WebkitUserSelect: 'all' } }, url)),
+        u && h('div', { style: { fontSize: rem(13.5), fontWeight: 600, color: 'var(--color-text-primary)', overflowWrap: 'anywhere' } }, u.host),
+        h('div', { 'data-testid': 'drop-url', style: { ...mono, fontSize: rem(12), color: 'var(--color-link)', userSelect: 'all', WebkitUserSelect: 'all' } }, url)),
       h('div', { style: row },
         u && h('a', { href: u.href, target: '_blank', rel: 'noopener noreferrer', 'aria-label': 'Open link', style: solid }, h(I('arrow-square-out'), { size: 14 }), 'Open'),
         h(CopyButton, { text: url, label: 'Copy', aria: 'Copy link' })));
@@ -352,9 +358,9 @@ export default function activate(d) {
   function CodeBlock({ preview }) {
     return h('div', { style: { ...block, overflow: 'hidden' } },
       h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, padding: '4px 4px 4px 10px', borderBottom: '1px solid var(--color-border)' } },
-        h('span', { 'data-testid': 'drop-language', style: { flex: 1, font: '500 11px var(--font-mono)', color: 'var(--color-text-tertiary)', textTransform: 'lowercase' } }, preview.language || 'code'),
+        h('span', { 'data-testid': 'drop-language', style: { flex: 1, font: `500 ${rem(11)} var(--font-mono)`, color: 'var(--color-text-tertiary)', textTransform: 'lowercase' } }, preview.language || 'code'),
         h(CopyButton, { text: preview.text, aria: 'Copy code', compact: true })),
-      h('pre', { 'data-testid': 'drop-code', style: { ...mono, margin: 0, padding: '8px 12px', maxHeight: 280, overflowY: 'auto', fontSize: 12.5 } }, preview.text));
+      h('pre', { 'data-testid': 'drop-code', style: { ...mono, margin: 0, padding: '8px 12px', maxHeight: 280, overflowY: 'auto', fontSize: rem(12.5) } }, preview.text));
   }
 
   const lineKind = (l) => (/^(\+\+\+ |--- |diff --git |index )/.test(l) ? 'file' : l.startsWith('@@') ? 'hunk' : l.startsWith('+') ? 'add' : l.startsWith('-') ? 'del' : 'ctx');
@@ -369,7 +375,7 @@ export default function activate(d) {
     const lines = String(preview.text || '').replace(/\n$/, '').split(/\r?\n/);
     return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
       h('div', { 'data-testid': 'drop-diff', style: { ...block, padding: '6px 0', maxHeight: 320, overflowY: 'auto' } },
-        ...lines.map((l, i) => { const k = lineKind(l); return h('div', { key: i, 'data-line': k, style: { ...mono, fontSize: 12.5, padding: '0 10px', minHeight: '1.5em', ...LINE_STYLE[k] } }, l); })),
+        ...lines.map((l, i) => { const k = lineKind(l); return h('div', { key: i, 'data-line': k, style: { ...mono, fontSize: rem(12.5), padding: '0 10px', minHeight: '1.5em', ...LINE_STYLE[k] } }, l); })),
       h('div', null, h(CopyButton, { text: preview.text, label: 'Copy', aria: 'Copy diff' })));
   }
 
@@ -377,9 +383,9 @@ export default function activate(d) {
     const steps = Array.isArray(preview.steps) ? preview.steps : [];
     return h('ol', { 'data-testid': 'drop-steps', style: { margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 8 } },
       ...steps.map((st, i) => h('li', { key: i, style: { display: 'flex', gap: 9, alignItems: 'flex-start' } },
-        h('span', { 'aria-hidden': true, style: { width: 22, height: 22, flexShrink: 0, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'color-mix(in srgb, var(--color-cyan) 16%, transparent)', color: 'var(--color-cyan)', font: '700 11.5px var(--font-sans)' } }, i + 1),
+        h('span', { 'aria-hidden': true, style: { width: 22, height: 22, flexShrink: 0, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'color-mix(in srgb, var(--color-cyan) 16%, transparent)', color: 'var(--color-cyan)', font: `700 ${rem(11.5)} var(--font-sans)` } }, i + 1),
         h('div', { style: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 5, paddingTop: 2 } },
-          h('div', { style: { fontSize: 13.5, lineHeight: 1.45, color: 'var(--color-text-primary)', overflowWrap: 'anywhere' } }, st.text),
+          h('div', { style: { fontSize: rem(13.5), lineHeight: 1.45, color: 'var(--color-text-primary)', overflowWrap: 'anywhere' } }, st.text),
           st.command && h('div', { style: terminal }, h(CommandRow, { command: st.command, first: true, aria: `Copy command for step ${i + 1}` }))))));
   }
 
@@ -387,15 +393,15 @@ export default function activate(d) {
   function SecretBlock({ preview }) {
     const [shown, setShown] = useState(false);
     const expired = !!preview.expired || !preview.text || !!expireSecret(preview);
-    if (expired) return h('div', { style: { ...block, padding: '9px 12px', fontSize: 13, color: 'var(--color-text-tertiary)' } }, 'This secret expired (24 hours after it was sent). Ask the thread again if you still need it.');
+    if (expired) return h('div', { style: { ...block, padding: '9px 12px', fontSize: rem(13), color: 'var(--color-text-tertiary)' } }, 'This secret expired (24 hours after it was sent). Ask the thread again if you still need it.');
     const Eye = icons.eye; // the label says Reveal or Hide; one icon keeps the app's first load small
     return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
       h('div', { 'data-testid': 'drop-secret', style: { ...block, ...mono, padding: '9px 12px', letterSpacing: shown ? 0 : '1px', userSelect: shown ? 'all' : 'none', WebkitUserSelect: shown ? 'all' : 'none' } }, shown ? preview.text : maskSecret(preview.text)),
       h('div', { style: row },
         h(CopyButton, { text: preview.text, label: 'Copy', aria: 'Copy secret' }),
-        h('button', { type: 'button', 'aria-label': shown ? 'Hide secret' : 'Reveal secret', 'aria-pressed': shown, onClick: () => setShown((v) => !v), style: { ...chip, height: 30, padding: '0 10px', fontWeight: 600, fontSize: 12.5 } },
+        h('button', { type: 'button', 'aria-label': shown ? 'Hide secret' : 'Reveal secret', 'aria-pressed': shown, onClick: () => setShown((v) => !v), style: { ...chip, height: 30, padding: '0 10px', fontWeight: 600, fontSize: rem(12.5) } },
           h(Eye, { size: 14 }), shown ? 'Hide' : 'Reveal'),
-        h('span', { style: { fontSize: 11.5, color: 'var(--color-text-tertiary)' } }, 'Removed 24 hours after it was sent')));
+        h('span', { style: { fontSize: rem(11.5), color: 'var(--color-text-tertiary)' } }, 'Removed 24 hours after it was sent')));
   }
 
   // A table: CSV text, or the drop's .csv/.json file. The first 50 rows; the header stays on top.
@@ -418,17 +424,17 @@ export default function activate(d) {
       return () => { on = false; };
     }, [preview.id]);
     const shownRows = rows || fromText;
-    if (!shownRows) return h('div', { style: { fontSize: 12.5, color: 'var(--color-text-tertiary)' } }, failed ? 'Could not read the table.' : 'Loading the table…');
+    if (!shownRows) return h('div', { style: { fontSize: rem(12.5), color: 'var(--color-text-tertiary)' } }, failed ? 'Could not read the table.' : 'Loading the table…');
     const [head = [], ...body] = shownRows;
     const more = body.length - TABLE_ROWS;
     const cell = { padding: '5px 9px', borderBottom: '1px solid var(--color-border)', textAlign: 'left', verticalAlign: 'top', whiteSpace: 'nowrap', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis' };
     return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
       h('div', { style: { ...block, maxHeight: 300, overflow: 'auto' } },
-        h('table', { 'data-testid': 'drop-table', style: { borderCollapse: 'separate', borderSpacing: 0, width: '100%', font: '12px/1.4 var(--font-mono)', color: 'var(--color-text-primary)' } },
+        h('table', { 'data-testid': 'drop-table', style: { borderCollapse: 'separate', borderSpacing: 0, width: '100%', font: `${rem(12)}/1.4 var(--font-mono)`, color: 'var(--color-text-primary)' } },
           h('thead', null, h('tr', null, ...head.map((c, i) => h('th', { key: i, style: { ...cell, position: 'sticky', top: 0, background: 'var(--color-elevated)', fontWeight: 600, color: 'var(--color-text-secondary)' } }, c)))),
           h('tbody', null, ...body.slice(0, TABLE_ROWS).map((r, i) => h('tr', { key: i }, ...head.map((_, j) => h('td', { key: j, title: r[j] || undefined, style: cell }, r[j] ?? ''))))))),
       h('div', { style: { ...row, justifyContent: 'space-between' } },
-        h('span', { style: { fontSize: 11.5, color: 'var(--color-text-tertiary)' } }, more > 0 ? `+${more} more rows` : `${body.length} ${body.length === 1 ? 'row' : 'rows'}`),
+        h('span', { style: { fontSize: rem(11.5), color: 'var(--color-text-tertiary)' } }, more > 0 ? `+${more} more rows` : `${body.length} ${body.length === 1 ? 'row' : 'rows'}`),
         preview.text && h(CopyButton, { text: preview.text, label: 'Copy CSV', aria: 'Copy table' })));
   }
 
@@ -459,11 +465,11 @@ export default function activate(d) {
         h('div', { style: { flex: 1, minWidth: 0 } },
           h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
             h(KindChip, { kind }),
-            h('span', { style: { flex: 1, minWidth: 0, fontSize: 14.5, fontWeight: 600, color: 'var(--color-text-primary)', overflowWrap: 'anywhere' } }, preview.title),
-            when && h('span', { 'data-testid': 'preview-when', style: { flexShrink: 0, font: '400 11px var(--font-mono)', color: unseen ? 'var(--color-accent)' : 'var(--color-text-tertiary)', whiteSpace: 'nowrap' } }, when)),
-          context && h('div', { title: context, style: { font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, context)),
+            h('span', { style: { flex: 1, minWidth: 0, fontSize: rem(14.5), fontWeight: 600, color: 'var(--color-text-primary)', overflowWrap: 'anywhere' } }, preview.title),
+            when && h('span', { 'data-testid': 'preview-when', style: { flexShrink: 0, font: `400 ${rem(11)} var(--font-mono)`, color: unseen ? 'var(--color-accent)' : 'var(--color-text-tertiary)', whiteSpace: 'nowrap' } }, when)),
+          context && h('div', { title: context, style: { font: `400 ${rem(11)} var(--font-mono)`, color: 'var(--color-text-tertiary)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, context)),
         onDelete && h('button', { type: 'button', 'aria-label': `Delete ${ONE}`, title: 'Delete', onClick: () => onDelete(preview.id), style: { width: 28, height: 28, padding: 0, border: 'none', borderRadius: 'var(--radius-sm)', background: 'transparent', color: 'var(--color-text-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 } }, h(icons.trash, { size: 15 }))),
-      preview.note && h('div', { style: { fontSize: 13, lineHeight: 1.5, color: 'var(--color-text-secondary)', overflowWrap: 'anywhere' } }, preview.note),
+      preview.note && h('div', { style: { fontSize: rem(13), lineHeight: 1.5, color: 'var(--color-text-secondary)', overflowWrap: 'anywhere' } }, preview.note),
       kind === 'command' && h(CommandBlock, { preview }),
       kind === 'link' && h(LinkBlock, { preview }),
       kind === 'code' && text && h(CodeBlock, { preview }),
@@ -474,7 +480,7 @@ export default function activate(d) {
       text && isDoc && h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
         // The document rendered, cut at a height with a fade; tap it (or Read) for the whole thing.
         h('div', { 'data-testid': 'preview-doc', role: 'button', tabIndex: 0, 'aria-label': `Open ${docName}`, onClick: () => setReading(true), onKeyDown: (e) => { if (e.key === 'Enter') setReading(true); },
-          style: { maxHeight: 260, overflow: 'hidden', cursor: 'pointer', padding: '2px 14px 4px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-pane)', fontSize: 14, lineHeight: 1.55, WebkitMaskImage: 'linear-gradient(to bottom, #000 70%, transparent)', maskImage: 'linear-gradient(to bottom, #000 70%, transparent)' } },
+          style: { maxHeight: 260, overflow: 'hidden', cursor: 'pointer', padding: '2px 14px 4px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-pane)', fontSize: rem(14), lineHeight: 1.55, WebkitMaskImage: 'linear-gradient(to bottom, #000 70%, transparent)', maskImage: 'linear-gradient(to bottom, #000 70%, transparent)' } },
           h(ui.Markdown, { source: text })),
         h('div', { style: row },
           h('button', { type: 'button', 'aria-label': `Read ${docName}`, onClick: () => setReading(true), style: solid },
@@ -486,13 +492,13 @@ export default function activate(d) {
       hasImage && h('div', { 'data-testid': 'preview-thumbs', style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 8 } },
         ...preview.files.map((f, k) => (kindOf(f) !== 'image' ? null : h('button', { key: k, type: 'button', onClick: () => setViewing(k), 'aria-label': `Open ${f.name}`, title: `${f.name} · ${fmtSize(f.size)}`, style: { display: 'flex', flexDirection: 'column', gap: 4, padding: 0, border: 'none', background: 'transparent', color: 'inherit', cursor: 'pointer', textAlign: 'left', minWidth: 0 } },
           h('img', { src: `${fileUrl(f)}?thumb=480`, alt: '', decoding: 'async', style: { width: '100%', aspectRatio: '1 / 1', objectFit: 'contain', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-pane)', display: 'block' } }),
-          h('span', { style: { fontSize: 11.5, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, f.name))))),
+          h('span', { style: { fontSize: rem(11.5), color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, f.name))))),
       hasOther && h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
         ...preview.files.map((f, k) => { const fk = kindOf(f); if (fk === 'image') return null; const FI = KIND_ICON[fk];
           return h('button', { key: k, type: 'button', onClick: () => setViewing(k), title: `${f.name} · ${fmtSize(f.size)}`, style: chip },
             h(FI, { size: 16, style: { flexShrink: 0 } }),
             h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, f.name),
-            h('span', { style: { flexShrink: 0, font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)' } }, fmtSize(f.size))); })),
+            h('span', { style: { flexShrink: 0, font: `400 ${rem(10.5)} var(--font-mono)`, color: 'var(--color-text-tertiary)' } }, fmtSize(f.size))); })),
       viewing !== null && h(ui.FileViewer, { files: viewerFiles, index: viewing, onClose: () => setViewing(null) }),
       reading && text && h(ui.FileViewer, { files: [{ src: '', name: docName, mime: 'text/markdown', size: text.length, loadText: async () => text }], index: 0, onClose: () => setReading(false) }));
   }
@@ -500,8 +506,8 @@ export default function activate(d) {
   // ── Send a secret (2026-11-12): the owner hands a thread a secret by a short ID ─────────────
   // The scope: a thread (from its tab) or a project (from its sheet; from the Inbox view, a picked project). The
   // value goes to the daemon once and is never shown again: after Send, the sheet shows the ID and a line to copy.
-  const label = { display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)' };
-  const field = { height: 36, padding: '0 10px', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', font: '400 15px var(--font-sans)', minWidth: 0 };
+  const label = { display: 'flex', flexDirection: 'column', gap: 5, fontSize: rem(12), fontWeight: 600, color: 'var(--color-text-secondary)' };
+  const field = { height: 36, padding: '0 10px', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', font: `400 ${rem(15)} var(--font-sans)`, minWidth: 0 };
   function SendSecret({ sessionId, terminalId, terminalLabel, onClose }) {
     const projects = useProjects();
     const [name, setName] = useState('');
@@ -533,19 +539,19 @@ export default function activate(d) {
       h('div', { 'data-testid': 'send-secret', style: { display: 'flex', flexDirection: 'column', gap: 12, paddingBottom: 8 } },
         made
           ? h(Fragment, null,
-            h('div', { style: { fontSize: 13, lineHeight: 1.5, color: 'var(--color-text-secondary)' } }, 'Give the thread this ID. It works once, for 24 hours. The value is not shown again.'),
+            h('div', { style: { fontSize: rem(13), lineHeight: 1.5, color: 'var(--color-text-secondary)' } }, 'Give the thread this ID. It works once, for 24 hours. The value is not shown again.'),
             h('div', { style: { ...block, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '14px 12px' } },
-              h('span', { 'data-testid': 'secret-id', style: { font: '700 30px/1.1 var(--font-mono)', letterSpacing: '6px', color: 'var(--color-text-primary)', userSelect: 'all', WebkitUserSelect: 'all' } }, made.id)),
+              h('span', { 'data-testid': 'secret-id', style: { font: `700 ${rem(30)}/1.1 var(--font-mono)`, letterSpacing: '6px', color: 'var(--color-text-primary)', userSelect: 'all', WebkitUserSelect: 'all' } }, made.id)),
             h('div', { style: row },
               h(CopyButton, { text: made.id, label: 'Copy ID' }),
               h(CopyButton, { text: line, label: 'Copy line', aria: 'Copy line' })),
-            h('div', { style: { ...block, ...mono, fontSize: 12.5, padding: '8px 12px', color: 'var(--color-text-secondary)' } }, line),
+            h('div', { style: { ...block, ...mono, fontSize: rem(12.5), padding: '8px 12px', color: 'var(--color-text-secondary)' } }, line),
             h('div', null, h('button', { type: 'button', onClick: onClose, style: solid }, 'Done')))
           : h(Fragment, null,
             !sessionId && !terminalId && h('div', { style: label }, 'Project',
               h(ui.Select, { value: picked, onChange: setPicked, ariaLabel: 'Project', placeholder: 'Choose a project',
                 options: projects.filter((x) => !x.archived).map((x) => ({ value: x.id, label: x.name })) })),
-            scope && h('div', { style: { fontSize: 12.5, color: 'var(--color-text-tertiary)' } }, scope),
+            scope && h('div', { style: { fontSize: rem(12.5), color: 'var(--color-text-tertiary)' } }, scope),
             h('label', { style: label }, 'Name',
               h('input', { type: 'text', 'aria-label': 'Name', value: name, maxLength: 100, placeholder: 'Stripe key', autoComplete: 'off', onChange: (e) => setName(e.target.value), style: field })),
             h('label', { style: label }, 'Value',
@@ -553,18 +559,18 @@ export default function activate(d) {
                 onChange: (e) => setValue(e.target.value), onKeyDown: (e) => { if (e.key === 'Enter') void send(); }, style: { ...field, fontFamily: 'var(--font-mono)' } })),
             h('div', { style: { display: 'flex', alignItems: 'center', gap: 10 } },
               h('div', { style: { flex: 1, minWidth: 0 } },
-                h('div', { style: { fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' } }, 'Let the thread read it'),
-                h('div', { style: { fontSize: 11.5, lineHeight: 1.45, color: 'var(--color-text-tertiary)' } }, reveal ? 'The thread may get the value itself.' : 'Off: the thread can only write it to a file or to Doppler.')),
+                h('div', { style: { fontSize: rem(13), fontWeight: 600, color: 'var(--color-text-primary)' } }, 'Let the thread read it'),
+                h('div', { style: { fontSize: rem(11.5), lineHeight: 1.45, color: 'var(--color-text-tertiary)' } }, reveal ? 'The thread may get the value itself.' : 'Off: the thread can only write it to a file or to Doppler.')),
               h(ui.Toggle, { on: reveal, onClick: () => setReveal((v) => !v), label: 'Let the thread read it' })),
-            error && h('div', { role: 'alert', style: { fontSize: 12.5, color: 'var(--color-status-red)' } }, error),
+            error && h('div', { role: 'alert', style: { fontSize: rem(12.5), color: 'var(--color-status-red)' } }, error),
             h('div', { style: row },
               h('button', { type: 'button', disabled: !ready, onClick: () => void send(), style: { ...solid, opacity: ready ? 1 : 0.5, cursor: ready ? 'pointer' : 'default' } },
                 h(icons.key, { size: 14, weight: 'bold' }), busy ? 'Sending…' : 'Send'),
-              h('span', { style: { fontSize: 11.5, color: 'var(--color-text-tertiary)' } }, 'One use. Gone after 24 hours.')))));
+              h('span', { style: { fontSize: rem(11.5), color: 'var(--color-text-tertiary)' } }, 'One use. Gone after 24 hours.')))));
   }
 
   function SendSecretButton({ onClick }) {
-    return h('button', { type: 'button', onClick, style: { ...chip, height: 30, padding: '0 11px', fontWeight: 600, fontSize: 12.5, flexShrink: 0 } },
+    return h('button', { type: 'button', onClick, style: { ...chip, height: 30, padding: '0 11px', fontWeight: 600, fontSize: rem(12.5), flexShrink: 0 } },
       h(icons.key, { size: 14 }), 'Send a secret');
   }
 
@@ -595,15 +601,15 @@ export default function activate(d) {
     return h('div', { 'data-testid': 'sent-secret', 'data-state': r.state, style: { display: 'flex', flexDirection: 'column', gap: 8, padding: '11px 13px 12px', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)' } },
       h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
         h(KindChip, { kind: 'secret' }),
-        h('span', { style: { flex: 1, minWidth: 0, fontSize: 14.5, fontWeight: 600, color: 'var(--color-text-primary)', overflowWrap: 'anywhere' } }, r.name),
-        when && h('span', { style: { flexShrink: 0, font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap' } }, when),
+        h('span', { style: { flex: 1, minWidth: 0, fontSize: rem(14.5), fontWeight: 600, color: 'var(--color-text-primary)', overflowWrap: 'anywhere' } }, r.name),
+        when && h('span', { style: { flexShrink: 0, font: `400 ${rem(11)} var(--font-mono)`, color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap' } }, when),
         onDelete && h('button', { type: 'button', 'aria-label': 'Delete secret', title: 'Delete', onClick: () => onDelete(r.id), style: { width: 28, height: 28, padding: 0, border: 'none', borderRadius: 'var(--radius-sm)', background: 'transparent', color: 'var(--color-text-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 } }, h(icons.trash, { size: 15 }))),
       h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
-        h('span', { 'data-testid': 'sent-secret-id', style: { font: '700 15px var(--font-mono)', letterSpacing: '2px', color: r.state === 'waiting' ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)', userSelect: 'all', WebkitUserSelect: 'all' } }, r.id),
+        h('span', { 'data-testid': 'sent-secret-id', style: { font: `700 ${rem(15)} var(--font-mono)`, letterSpacing: '2px', color: r.state === 'waiting' ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)', userSelect: 'all', WebkitUserSelect: 'all' } }, r.id),
         r.state === 'waiting' && h(CopyButton, { text: r.id, aria: 'Copy ID', compact: true }),
-        h('span', { style: { display: 'inline-flex', alignItems: 'center', height: 20, padding: '0 8px', borderRadius: 'var(--radius-pill)', background: `color-mix(in srgb, ${st.color} 15%, transparent)`, color: st.color, font: '600 10.5px var(--font-sans)' } }, st.label),
-        r.allowReveal && h('span', { title: 'The thread may read the value', style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11.5, color: 'var(--color-text-tertiary)' } }, h(icons.eye, { size: 13 }), 'Readable')),
-      h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)', overflowWrap: 'anywhere' } },
+        h('span', { style: { display: 'inline-flex', alignItems: 'center', height: 20, padding: '0 8px', borderRadius: 'var(--radius-pill)', background: `color-mix(in srgb, ${st.color} 15%, transparent)`, color: st.color, font: `600 ${rem(10.5)} var(--font-sans)` } }, st.label),
+        r.allowReveal && h('span', { title: 'The thread may read the value', style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: rem(11.5), color: 'var(--color-text-tertiary)' } }, h(icons.eye, { size: 13 }), 'Readable')),
+      h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, font: `400 ${rem(11.5)} var(--font-mono)`, color: 'var(--color-text-tertiary)', overflowWrap: 'anywhere' } },
         h('span', null, scope),
         h('span', { style: { color: r.state === 'used' ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)' } }, detail),
         to && h('span', { style: { color: 'var(--color-text-secondary)' } }, `→ ${to}`)));
@@ -641,7 +647,7 @@ export default function activate(d) {
         mine.length === 0 && h(EmptyState, { loading: !loaded, title: 'Nothing here yet', body: 'Threads in this project put commands, links, files and text here for you.' }),
         ...mine.slice(0, shown).map((p) => cardOf(p, false)),
         mine.length > shown && h('button', { type: 'button', onClick: () => setShown((n) => n + PAGE),
-          style: { alignSelf: 'center', height: 34, padding: '0 16px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13, fontWeight: 500, cursor: 'pointer' } },
+          style: { alignSelf: 'center', height: 34, padding: '0 16px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: rem(13), fontWeight: 500, cursor: 'pointer' } },
           `Show older (${mine.length - shown} more)`)));
   }
 
@@ -687,20 +693,20 @@ export default function activate(d) {
       h('div', { style: { maxWidth: 820, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 18 } },
         h('div', { style: { display: 'flex', alignItems: 'flex-start', gap: 12 } },
           h('div', { style: { flex: 1, minWidth: 0 } },
-            h('h1', { style: { margin: 0, fontSize: 18, fontWeight: 700 } }, NAME),
-            h('div', { style: { fontSize: 13, color: 'var(--color-text-secondary)', marginTop: 4 } }, 'Commands, links, files and text that threads handed you to look at or copy, newest first.')),
+            h('h1', { style: { margin: 0, fontSize: rem(18), fontWeight: 700 } }, NAME),
+            h('div', { style: { fontSize: rem(13), color: 'var(--color-text-secondary)', marginTop: 4 } }, 'Commands, links, files and text that threads handed you to look at or copy, newest first.')),
           h(SendSecretButton, { onClick: () => setSending(true) })),
         sending && h(SendSecret, { sessionId: project || null, onClose: () => setSending(false) }),
         all.length > 0 && h('div', { role: 'search' },
           h(ui.FilterBar, { query, onQueryChange: setQuery, placeholder: `Search ${MANY}`, facets,
             doneLabel: `Show ${items.length} ${items.length === 1 ? ONE : MANY}` })),
         all.length === 0 && h(EmptyState, { loading: !loaded, title: `Your ${NAME} is empty`, body: 'Ask a thread to send you a command, a link, a screenshot or a page. It lands here.' }),
-        all.length > 0 && items.length === 0 && h('div', { style: { fontSize: 13.5, color: 'var(--color-text-tertiary)', padding: '12px 0' } }, `No ${ONE} matches.`),
+        all.length > 0 && items.length === 0 && h('div', { style: { fontSize: rem(13.5), color: 'var(--color-text-tertiary)', padding: '12px 0' } }, `No ${ONE} matches.`),
         ...groups.map((g) => h('section', { key: g.day, style: { display: 'flex', flexDirection: 'column', gap: 10 } },
-          h('h2', { style: { margin: 0, font: '500 10.5px var(--font-mono)', letterSpacing: '1.2px', textTransform: 'uppercase', color: 'var(--color-text-tertiary)' } }, g.day),
+          h('h2', { style: { margin: 0, font: `500 ${rem(10.5)} var(--font-mono)`, letterSpacing: '1.2px', textTransform: 'uppercase', color: 'var(--color-text-tertiary)' } }, g.day),
           ...g.items.map((p) => cardOf(p, true)))),
         items.length > shown && h('button', { type: 'button', onClick: () => setShown((n) => n + PAGE),
-          style: { alignSelf: 'center', height: 34, padding: '0 16px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13, fontWeight: 500, cursor: 'pointer' } },
+          style: { alignSelf: 'center', height: 34, padding: '0 16px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: rem(13), fontWeight: 500, cursor: 'pointer' } },
           `Show older (${items.length - shown} more)`)));
   }
 
@@ -734,7 +740,7 @@ export default function activate(d) {
       mine.length === 0 && h(EmptyState, { loading: !loaded, title: `No ${MANY} from this thread yet`, body: 'When this thread sends you a command, a link, a file or a screenshot, it shows here.' }),
       ...visible.map((p) => cardOf(p, false)),
       mine.length > shown && h('button', { type: 'button', onClick: () => setPage({ id: terminalId, shown: shown + PAGE }),
-        style: { alignSelf: 'center', height: 34, padding: '0 16px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13, fontWeight: 500, cursor: 'pointer' } },
+        style: { alignSelf: 'center', height: 34, padding: '0 16px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: rem(13), fontWeight: 500, cursor: 'pointer' } },
         `Show older (${mine.length - shown} more)`));
   }
 
@@ -748,7 +754,7 @@ export default function activate(d) {
     return h('button', { type: 'button', 'aria-label': NAME, title: n ? `${n} new ${MANY}` : NAME, onClick: () => usePv.getState().openSheet(sessionId),
       style: { ...box, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', color: n ? 'var(--color-text-primary)' : 'var(--color-text-secondary)', cursor: 'pointer', padding: 0 } },
       h(icons.tray, { size: 20 }),
-      n > 0 && h('span', { 'aria-label': `${n} new ${MANY}`, style: { position: 'absolute', top: -5, right: -5, minWidth: 17, height: 17, padding: '0 5px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: 'var(--color-on-accent)', font: '700 10.5px var(--font-sans)', display: 'flex', alignItems: 'center', justifyContent: 'center' } }, n > 99 ? '99+' : n));
+      n > 0 && h('span', { 'aria-label': `${n} new ${MANY}`, style: { position: 'absolute', top: -5, right: -5, minWidth: 17, height: 17, padding: '0 5px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: 'var(--color-on-accent)', font: `700 ${rem(10.5)} var(--font-sans)`, display: 'flex', alignItems: 'center', justifyContent: 'center' } }, n > 99 ? '99+' : n));
   }
   const ProjectEye = ({ session }) => h(Eye, { sessionId: session ? session.id : null });
   // No thread header button (2026-11-07): a thread reaches its previews from the shelf and the thread menu.
