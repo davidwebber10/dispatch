@@ -56,6 +56,26 @@ test('a failing project reload is swallowed so one dead project cannot abort the
   expect(listTerminals).toHaveBeenCalledWith('ok');
 });
 
+test('a session:created missed while down: the new project and its threads show after the reconnect', async () => {
+  useProjects.setState({ sessions: [{ id: 'p1', name: 'Alpha' } as any] });
+  vi.spyOn(api, 'listSessions').mockResolvedValue([{ id: 'p1', name: 'Alpha' } as any, { id: 'pNew', name: 'Fresh' } as any]);
+  const listTerminals = vi.spyOn(api, 'listTerminals').mockResolvedValue([]);
+
+  await resyncAfterReconnect();
+
+  expect(useProjects.getState().sessions.map((s) => s.id)).toEqual(['p1', 'pNew']);
+  expect(listTerminals).toHaveBeenCalledWith('pNew');
+});
+
+test('a failing project reload does not abort the resync', async () => {
+  useProjects.setState({ sessions: [{ id: 'p1', name: 'Alpha' } as any] });
+  vi.spyOn(api, 'listSessions').mockRejectedValue(new Error('offline'));
+  const listTerminals = vi.spyOn(api, 'listTerminals').mockResolvedValue([]);
+
+  await expect(resyncAfterReconnect()).resolves.toBeUndefined();
+  expect(listTerminals).toHaveBeenCalledWith('p1');
+});
+
 test('loads the stall flags again: a terminal:stall missed while the socket was down', async () => {
   vi.spyOn(api, 'listTerminals').mockResolvedValue([]);
   useThreadStatus.setState({ stalls: { stale: 1 } });
@@ -90,6 +110,7 @@ describe('resyncAfterReconnect with the bootstrap (W2-H)', () => {
     }));
   };
   const boot = () => ({
+    sessions: ids.map((id) => ({ id, name: id })),
     terminalsByProject: Object.fromEntries(ids.map((id) => [id, [row(`t-${id}`, id)]])),
     stalls: [{ terminalId: 't-p3', stalledSince: 42, lastFrameAt: null }],
     usageSummary: { type: 'usage-limits', at: 9, epoch: 'e9', rev: 4, warnPercent: 70, providers: [], paused: [] },
@@ -107,7 +128,7 @@ describe('resyncAfterReconnect with the bootstrap (W2-H)', () => {
   test('a reconnect sends one request for 20 projects', async () => {
     network(boot());
     await resyncAfterReconnect();
-    expect(calls).toEqual(['/api/bootstrap?parts=terminalsByProject,stalls,usageSummary']);
+    expect(calls).toEqual(['/api/bootstrap?parts=sessions,terminalsByProject,stalls,usageSummary']);
     // Every project has its rows again, the stall flags and the usage gauge too.
     for (const id of ids) expect(useTabs.getState().byProject[id].map((t) => t.status)).toEqual(['waiting']);
     expect(useThreadStatus.getState().byTerminal).toEqual({});
@@ -117,7 +138,7 @@ describe('resyncAfterReconnect with the bootstrap (W2-H)', () => {
   });
 
   test('an older daemon (404) gets one list request for each project, as before', async () => {
-    network(null);
+    network(null, { '/api/sessions': ids.map((id) => ({ id, name: id })) });
     await resyncAfterReconnect();
     expect(calls.filter((u) => /\/terminals$/.test(u))).toHaveLength(20);
     expect(calls).toContain('/api/terminals/stalls');
@@ -129,7 +150,7 @@ describe('resyncAfterReconnect with the bootstrap (W2-H)', () => {
     delete (b.terminalsByProject as Record<string, unknown>).p7;
     network(b, { '/api/sessions/p7/terminals': [row('t-p7-net', 'p7')] });
     await resyncAfterReconnect();
-    expect(calls).toEqual(['/api/bootstrap?parts=terminalsByProject,stalls,usageSummary', '/api/sessions/p7/terminals']);
+    expect(calls).toEqual(['/api/bootstrap?parts=sessions,terminalsByProject,stalls,usageSummary', '/api/sessions/p7/terminals']);
     expect(useTabs.getState().byProject.p7.map((t) => t.id)).toEqual(['t-p7-net']);
   });
 

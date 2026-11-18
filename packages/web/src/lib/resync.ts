@@ -27,6 +27,9 @@ import { resyncWithBootstrap } from './bootstrap';
  *
  * The usage gauge reloads too: a `usage-limits` broadcast missed while down never replays (#127).
  *
+ * The project list loads again too: a `session:created` missed while down never replays, and Android
+ * drops it while the PWA is in the background.
+ *
  * The stall flags load again too: a `terminal:stall` missed while down never replays (W1-D).
  *
  * One request (W2-H): the thread lists of every project, the stall flags and the usage gauge come in
@@ -37,7 +40,9 @@ import { resyncWithBootstrap } from './bootstrap';
  */
 export async function resyncAfterReconnect(): Promise<void> {
   useThreadStatus.getState().reset();
-  await resyncWithBootstrap(['terminalsByProject', 'stalls', 'usageSummary'], async () => {
+  await resyncWithBootstrap(['sessions', 'terminalsByProject', 'stalls', 'usageSummary'], async () => {
+    // A session:created missed while down never replays: reload the projects first, so a new one's tabs load below.
+    await useProjects.getState().load().catch(() => { /* offline: go on with the projects we know */ });
     const ids = useProjects.getState().sessions.map((s) => s.id);
     await Promise.all([
       ...ids.map((id) => useTabs.getState().loadTabs(id).catch(() => { /* project gone — skip it */ })),
