@@ -6,6 +6,7 @@ import { useIsMobile } from '../../hooks/useIsMobile';
 import { ConfirmModal } from '../common/ConfirmModal';
 import { SettingsPage, SettingsGroup, SettingsRow, StatusMark, EmptyState, Sheet, fieldFor, CONNECTION_STATUS, type Tone } from './ui';
 import { Button, IconButton } from '../ui';
+import { fontVar } from '../../lib/fontSize';
 
 /** This browser's link to the daemon, as a status tone (the words come from ui CONNECTION_STATUS). */
 const CONNECTION_TONE: Record<'open' | 'connecting' | 'closed', { tone: Tone; label: string }> = {
@@ -47,7 +48,7 @@ export function ServersSection() {
         <SettingsGroup title="Servers" action={addButton} footer="Switch servers from the brand menu. Every device sees this list.">
           {servers.map((s) => (
             <SettingsRow key={s.origin} icon={HardDrives} label={s.label}
-              hint={<span style={{ display: 'block', fontFamily: 'var(--font-mono)', fontSize: 11.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.origin}</span>}
+              hint={<span style={{ display: 'block', fontFamily: 'var(--font-mono)', fontSize: fontVar(11.5), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.origin}</span>}
               control={(
                 <IconButton label={`Remove ${s.label}`} title="Remove server" icon={<Trash size={16} />} onClick={() => setRemoving(s)}
                   style={{ width: 30, height: 30, borderRadius: 'var(--radius-sm)', color: 'var(--color-text-tertiary)' }} />
@@ -74,7 +75,7 @@ function AddServerSheet({ open, onClose, phone }: { open: boolean; onClose: () =
   const [err, setErr] = useState('');
   const canAdd = !!label.trim() && !!origin.trim() && !busy;
   const field = { ...fieldFor(phone), width: '100%' };
-  const fieldLabel: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12, color: 'var(--color-text-secondary)' };
+  const fieldLabel: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 5, fontSize: fontVar(12), color: 'var(--color-text-secondary)' };
 
   const close = () => { setLabel(''); setOrigin(''); setErr(''); onClose(); };
   async function add() {
@@ -86,7 +87,7 @@ function AddServerSheet({ open, onClose, phone }: { open: boolean; onClose: () =
 
   return (
     <Sheet open={open} onClose={close} title="Add server">
-      <div style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--color-text-tertiary)' }}>Another machine that runs Dispatch. You can switch to it from the brand menu.</div>
+      <div style={{ fontSize: fontVar(12.5), lineHeight: 1.5, color: 'var(--color-text-tertiary)' }}>Another machine that runs Dispatch. You can switch to it from the brand menu.</div>
       <label style={fieldLabel}>
         Name
         <input aria-label="Server label" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Mac mini" style={field} />
@@ -96,7 +97,7 @@ function AddServerSheet({ open, onClose, phone }: { open: boolean; onClose: () =
         <input aria-label="Server address" value={origin} onChange={(e) => setOrigin(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void add(); }}
           placeholder="https://host:3456" spellCheck={false} autoCapitalize="off" style={{ ...field, fontFamily: 'var(--font-mono)' }} />
       </label>
-      {err && <div role="alert" style={{ fontSize: 12, color: 'var(--color-status-red)' }}>{err}</div>}
+      {err && <div role="alert" style={{ fontSize: fontVar(12), color: 'var(--color-status-red)' }}>{err}</div>}
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
         <Button variant="ghost" size="sm" onClick={close}>Cancel</Button>
         <Button onClick={() => void add()} disabled={!canAdd} variant="primary" size="sm">Add server</Button>

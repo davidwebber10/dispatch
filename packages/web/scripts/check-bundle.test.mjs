@@ -68,7 +68,7 @@ describe('checkBundle', () => {
   it('fails when a first-paint path is over its brotli budget or has too many files', () => {
     build({ sizes: { vendor: 250_000 } });
     const r = checkBundle(dist);
-    expect(r.errors.join('\n')).toMatch(/phone: the first-paint path is \d+ bytes brotli: over the budget of 285000/);
+    expect(r.errors.join('\n')).toMatch(new RegExp(`phone: the first-paint path is \\d+ bytes brotli: over the budget of ${BUDGETS.firstPaintBrotli.phone}`));
     build();
     const few = checkBundle(dist, { budgets: { firstPaintFiles: { phone: 2, desktop: 4 } } });
     expect(few.errors).toEqual(['phone: the first-paint path has 3 JS files: over the budget of 2']);

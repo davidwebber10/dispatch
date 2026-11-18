@@ -2,8 +2,10 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Plus, TrashSimple } from '@phosphor-icons/react';
 import { parseCsv, serializeCsv, editCell, insertRow, deleteRow, columnCount, toTsv, type CsvDoc } from '../../lib/csv';
 import { copyText } from '../../lib/clipboard';
+import { fontVar } from '../../lib/fontSize';
+import { useSettings } from '../../stores/settings';
 
-const ROW_H = 28;                // fixed row height — what makes windowing arithmetic possible
+const ROW_H = 28;                // row height at a text scale of 100% or less; every row has one height, which makes the windowing arithmetic possible
 const OVERSCAN = 10;
 const VIEWPORT_GUESS = 600;      // used before the first scroll measurement
 
@@ -40,6 +42,9 @@ export function CsvGrid({ content, path, onChange }: { content: string; path: st
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(VIEWPORT_GUESS);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // Above 100% the text no longer fits in 28px, so the rows grow with the scale (42px at 150%).
+  // Each <tr> gets this height and the arithmetic below uses it, so they cannot drift apart.
+  const rowH = Math.round(ROW_H * Math.max(1, useSettings((st) => st.textScale)));
   // Spreadsheet-style selection: click focuses a cell, Shift-click / drag extends a
   // rectangle, arrows move, Ctrl/Cmd+C copies the rectangle as TSV (pastes into
   // Excel/Sheets with cells intact). Coordinates live in doc.rows space, NOT the DOM:
@@ -109,7 +114,7 @@ export function CsvGrid({ content, path, onChange }: { content: string; path: st
   // would silently corrupt the user's data. Raw mode is still right there.
   if (!parsed.doc) {
     return (
-      <div style={{ padding: 16, color: 'var(--color-text-secondary)', font: '400 12px var(--font-mono)' }}>
+      <div style={{ padding: 16, color: 'var(--color-text-secondary)', font: `400 ${fontVar(12)} var(--font-mono)` }}>
         This file could not be parsed as CSV ({parsed.error}). Switch to <strong>Raw</strong> to edit it as text.
       </div>
     );
@@ -200,9 +205,9 @@ export function CsvGrid({ content, path, onChange }: { content: string; path: st
   function ensureVisible(r: number) {
     const el = scrollRef.current;
     if (!el || r === 0) return;
-    const top = ROW_H + (r - 1) * ROW_H; // content y of the row (thead occupies the first ROW_H)
-    if (top < el.scrollTop + ROW_H) el.scrollTop = top - ROW_H;
-    else if (top + ROW_H > el.scrollTop + el.clientHeight) el.scrollTop = top + ROW_H - el.clientHeight;
+    const top = rowH + (r - 1) * rowH; // content y of the row (thead occupies the first rowH)
+    if (top < el.scrollTop + rowH) el.scrollTop = top - rowH;
+    else if (top + rowH > el.scrollTop + el.clientHeight) el.scrollTop = top + rowH - el.clientHeight;
     // Move the render window now, not on the async scroll event: a caller may need the row
     // mounted in this same update (Enter must find its row to put the editor in).
     setScrollTop(el.scrollTop);
@@ -245,11 +250,11 @@ export function CsvGrid({ content, path, onChange }: { content: string; path: st
 
   // Windowing: only the visible slice of data rows is in the DOM. A 100k-row CSV would
   // otherwise put 100k <tr> nodes on the page and lock the tab.
-  const first = Math.max(0, Math.floor(scrollTop / ROW_H) - OVERSCAN);
-  const visible = Math.ceil(viewportH / ROW_H) + OVERSCAN * 2;
+  const first = Math.max(0, Math.floor(scrollTop / rowH) - OVERSCAN);
+  const visible = Math.ceil(viewportH / rowH) + OVERSCAN * 2;
   const last = Math.min(dataCount, first + visible);
-  const padTop = first * ROW_H;
-  const padBottom = Math.max(0, (dataCount - last) * ROW_H);
+  const padTop = first * rowH;
+  const padBottom = Math.max(0, (dataCount - last) * rowH);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
@@ -260,9 +265,9 @@ export function CsvGrid({ content, path, onChange }: { content: string; path: st
         onScroll={(e) => { setScrollTop(e.currentTarget.scrollTop); setViewportH(e.currentTarget.clientHeight); }}
         style={{ flex: 1, minHeight: 0, overflow: 'auto', outline: 'none' }}
       >
-        <table style={{ borderCollapse: 'collapse', font: '400 11.5px var(--font-mono)', minWidth: '100%' }}>
+        <table style={{ borderCollapse: 'collapse', font: `400 ${fontVar(11.5)} var(--font-mono)`, minWidth: '100%' }}>
           <thead>
-            <tr>
+            <tr style={{ height: rowH }}>
               <th style={{ ...TH, ...GUTTER, position: 'sticky', top: 0, left: 0, zIndex: 2 }} />
               {Array.from({ length: cols }, (_, c) => (
                 <th key={c} style={{ ...TH, ...selStyle(0, c) }} onDoubleClick={() => startEdit(0, c)}
@@ -289,7 +294,7 @@ export function CsvGrid({ content, path, onChange }: { content: string; path: st
               const di = first + k;          // index among DATA rows
               const ri = di + 1;             // index in doc.rows (0 is the header)
               return (
-                <tr key={ri}>
+                <tr key={ri} style={{ height: rowH }}>
                   <td style={GUTTER}>{ri}</td>
                   {Array.from({ length: cols }, (_, c) => (
                     <td key={c} style={{ ...TD, ...selStyle(ri, c) }} title={doc.rows[ri]?.cells[c] ?? ''} onDoubleClick={() => startEdit(ri, c)}
@@ -319,11 +324,11 @@ export function CsvGrid({ content, path, onChange }: { content: string; path: st
           </tbody>
         </table>
       </div>
-      <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '6px 9px', borderTop: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)', fontSize: 11 }}>
+      <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '6px 9px', borderTop: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)', fontSize: fontVar(11) }}>
         <button
           title="Add row"
           onClick={() => commit(insertRow(doc, doc.rows.length))}
-          style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-secondary)', cursor: 'pointer', padding: '3px 8px', fontSize: 11 }}
+          style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-secondary)', cursor: 'pointer', padding: '3px 8px', fontSize: fontVar(11) }}
         >
           <Plus size={12} /> Add row
         </button>
@@ -366,7 +371,7 @@ function CellInput({ draft, setDraft, onCommit, onCancel }: {
         else if (e.key === 'Tab') { e.preventDefault(); onCommit('right'); }
         else if (e.key === 'Escape') { e.preventDefault(); cancelledRef.current = true; onCancel(); }
       }}
-      style={{ width: '100%', background: 'var(--color-terminal)', border: '1px solid var(--color-accent)', borderRadius: 'var(--radius-xs)', color: 'var(--color-text-primary)', font: '400 11.5px var(--font-mono)', padding: '1px 3px', outline: 'none' }}
+      style={{ width: '100%', background: 'var(--color-terminal)', border: '1px solid var(--color-accent)', borderRadius: 'var(--radius-xs)', color: 'var(--color-text-primary)', font: `400 ${fontVar(11.5)} var(--font-mono)`, padding: '1px 3px', outline: 'none' }}
     />
   );
 }

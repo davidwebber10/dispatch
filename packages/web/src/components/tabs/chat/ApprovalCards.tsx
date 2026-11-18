@@ -3,6 +3,7 @@ import { CaretRight, ShieldWarning, ShieldCheck } from '@phosphor-icons/react';
 import { api, type BlockedAction } from '../../../api/client';
 import type { PendingPermission } from '../../../api/types';
 import { Button } from '../../ui';
+import { fontVar } from '../../../lib/fontSize';
 
 /** A plain title for what a thread wants to do (mirrors core os/approvals.ts approvalTitle). */
 export function approvalTitle(toolName: string): string {
@@ -33,10 +34,10 @@ function Detail({ text }: { text: string }) {
   if (!text) return null;
   return (
     <div>
-      <button type="button" onClick={() => setOpen((o) => !o)} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--color-text-secondary)', fontSize: 12 }}>
+      <button type="button" onClick={() => setOpen((o) => !o)} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--color-text-secondary)', fontSize: fontVar(12) }}>
         <CaretRight size={10} weight="bold" style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .12s' }} /> Details
       </button>
-      {open && <pre style={{ margin: '6px 0 0', padding: '8px 10px', background: 'var(--color-pane)', borderRadius: 'var(--radius-sm)', font: '400 11.5px var(--font-mono)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 200, overflow: 'auto' }}>{text}</pre>}
+      {open && <pre style={{ margin: '6px 0 0', padding: '8px 10px', background: 'var(--color-pane)', borderRadius: 'var(--radius-sm)', font: `400 ${fontVar(11.5)} var(--font-mono)`, whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 200, overflow: 'auto' }}>{text}</pre>}
     </div>
   );
 }
@@ -82,10 +83,10 @@ export function ApprovalCards({ terminalId, pending, refreshKey }: { terminalId:
     <div data-testid="approval-cards" style={{ flexShrink: 0, padding: '10px 14px 0', display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 768, width: '100%', margin: '0 auto', boxSizing: 'border-box' }}>
       {gated && (
         <div role="alert" data-testid="approval-pending" style={card}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 13.5, color: 'var(--color-text-primary)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: fontVar(13.5), color: 'var(--color-text-primary)' }}>
             <ShieldWarning size={16} /> {approvalTitle(gated.toolName)}
           </div>
-          <span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>The thread waits for you before it does this.</span>
+          <span style={{ fontSize: fontVar(12.5), color: 'var(--color-text-secondary)' }}>The thread waits for you before it does this.</span>
           <Detail text={detailOf(gated.input)} />
           <div style={{ display: 'flex', gap: 8 }}>
             <Button variant="primary" size="sm" disabled={busy !== null} onClick={() => void answer('allow')}>Allow once</Button>
@@ -95,10 +96,10 @@ export function ApprovalCards({ terminalId, pending, refreshKey }: { terminalId:
       )}
       {blocked.map((b) => (
         <div key={b.id} data-testid="approval-blocked" style={card}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 13.5, color: 'var(--color-text-primary)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: fontVar(13.5), color: 'var(--color-text-primary)' }}>
             <ShieldCheck size={16} /> Blocked: {b.title.replace(/^Wants to /, '')}
           </div>
-          <span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>
+          <span style={{ fontSize: fontVar(12.5), color: 'var(--color-text-secondary)' }}>
             {b.reason ? `Reason: ${b.reason}` : 'The safety check stopped this action.'}{b.riskLevel ? ` (risk: ${b.riskLevel})` : ''}
           </span>
           <Detail text={b.detail ?? ''} />
@@ -108,7 +109,7 @@ export function ApprovalCards({ terminalId, pending, refreshKey }: { terminalId:
           </div>
         </div>
       ))}
-      {error && <span role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)' }}>{error}</span>}
+      {error && <span role="alert" style={{ fontSize: fontVar(12.5), color: 'var(--color-status-red)' }}>{error}</span>}
     </div>
   );
 }

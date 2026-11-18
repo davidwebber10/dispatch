@@ -7,6 +7,7 @@ import { usePickerRequest } from '../../../stores/pickerRequest';
 import { useThreadModelControls, type EffortInfo } from './modelControls';
 import { Spinner } from '../../common/Spinner';
 import { Modal } from '../../common/Modal';
+import { fontVar } from '../../../lib/fontSize';
 
 /**
  * The model chip of a Pretty composer, and the one place a model or an effort is chosen: the model the thread runs NOW
@@ -94,7 +95,7 @@ export function ModelChip({ owner, label, active, options, busy, emptyText = 'Th
           display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 0, maxWidth: isMobile ? 190 : 240,
           height: isMobile ? 28 : 22, padding: isMobile ? '0 9px' : '0 7px',
           background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-pill)',
-          color: 'var(--color-text-secondary)', font: `500 ${isMobile ? 12 : 11}px var(--font-sans)`,
+          color: 'var(--color-text-secondary)', font: `500 ${fontVar(isMobile ? 12 : 11)} var(--font-sans)`,
           cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1,
         }}
       >
@@ -105,11 +106,11 @@ export function ModelChip({ owner, label, active, options, busy, emptyText = 'Th
       {open && (
         <Modal open sheet={isMobile} title={effort ? 'Model and effort' : 'Switch model'} onClose={() => setOpen(false)} maxWidth={400}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>
+            <span style={{ fontSize: fontVar(13), color: 'var(--color-text-secondary)' }}>
               The next message runs on what you pick. The conversation stays.
             </span>
             {options.length === 0 ? (
-              <span style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>{emptyText}</span>
+              <span style={{ fontSize: fontVar(13), color: 'var(--color-text-tertiary)' }}>{emptyText}</span>
             ) : (
               <div role="radiogroup" aria-label="Model" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {options.map((o) => {
@@ -122,9 +123,9 @@ export function ModelChip({ owner, label, active, options, busy, emptyText = 'Th
                         {saving === o.value ? <Spinner size={12} /> : on && <Check size={14} weight="bold" />}
                       </span>
                       <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-                        <span style={{ fontSize: isMobile ? 15 : 13.5, fontWeight: 500 }}>{o.label}</span>
+                        <span style={{ fontSize: fontVar(isMobile ? 15 : 13.5), fontWeight: 500 }}>{o.label}</span>
                         {o.hint && o.hint !== o.label && (
-                          <span style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <span style={{ font: `400 ${fontVar(11)} var(--font-mono)`, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {on && active && active !== o.value ? active : o.hint}
                           </span>
                         )}
@@ -136,7 +137,7 @@ export function ModelChip({ owner, label, active, options, busy, emptyText = 'Th
             )}
             {effort && (
               <>
-                <span style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginTop: 4 }}>Effort for this thread</span>
+                <span style={{ fontSize: fontVar(13), color: 'var(--color-text-secondary)', marginTop: 4 }}>Effort for this thread</span>
                 <div role="radiogroup" aria-label="Effort" style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {effort.levels.map((l) => {
                     const on = shownEffort === l;
@@ -146,19 +147,19 @@ export function ModelChip({ owner, label, active, options, busy, emptyText = 'Th
                         onClick={() => void pickLevel(l)}
                         style={{ ...row, width: 'auto', gap: 6, padding: isMobile ? '10px 14px' : '6px 12px', borderColor: on ? 'var(--color-accent)' : 'var(--color-border)', cursor: saving ? 'default' : 'pointer' }}>
                         {saving === `effort:${l}` ? <Spinner size={12} /> : on && <Check size={13} weight="bold" color="var(--color-accent)" />}
-                        <span style={{ fontSize: isMobile ? 14 : 13 }}>{l}</span>
-                        {isDefault && <span style={{ font: '400 11px var(--font-sans)', color: 'var(--color-text-tertiary)' }}>model default</span>}
+                        <span style={{ fontSize: fontVar(isMobile ? 14 : 13) }}>{l}</span>
+                        {isDefault && <span style={{ font: `400 ${fontVar(11)} var(--font-sans)`, color: 'var(--color-text-tertiary)' }}>model default</span>}
                       </button>
                     );
                   })}
                 </div>
                 {effort.current === null && !effort.defaultEffort && (
-                  <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>No effort set: the model's own default.</span>
+                  <span style={{ fontSize: fontVar(12), color: 'var(--color-text-tertiary)' }}>No effort set: the model's own default.</span>
                 )}
               </>
             )}
-            {note && <div role="status" style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>{note}</div>}
-            {error && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)' }}>{error}</div>}
+            {note && <div role="status" style={{ fontSize: fontVar(12.5), color: 'var(--color-text-secondary)' }}>{note}</div>}
+            {error && <div role="alert" style={{ fontSize: fontVar(12.5), color: 'var(--color-status-red)' }}>{error}</div>}
           </div>
         </Modal>
       )}
@@ -189,7 +190,7 @@ export function ModelNotice({ model }: { model: string }) {
   return (
     <div role="status" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0', color: 'var(--color-text-tertiary)' }}>
       <span aria-hidden="true" style={{ flex: 1, height: 1, background: 'var(--color-border)' }} />
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5 }} title={model}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: fontVar(11.5) }} title={model}>
         <ArrowsLeftRight size={12} weight="bold" />
         {`Model switched to ${name}`}
       </span>

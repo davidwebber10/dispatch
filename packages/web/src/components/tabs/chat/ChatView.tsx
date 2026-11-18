@@ -26,6 +26,7 @@ import { openFileTab } from '../../../lib/openFileTab';
 import { Composer } from './Composer';
 import { can } from '../../../lib/profile';
 import { renderTimeline, EmptyState, ReconnectingState, StickToEndOnLoad, BootstrapOlderPages, LoadEarlierButton, LoadingOlderPill, JumpButton, ThreadStartMarker } from './timeline';
+import { fontVar } from '../../../lib/fontSize';
 
 /**
  * ChatView — the structured (stream-json) thread surface, built on shadcn's
@@ -166,7 +167,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
           {tab && tab.type !== 'shell' && can('model-picker') && <ModelSwitcher tab={tab} busy={turnRuns} />}
           {/* OS-aware send hint (Control Plane parity): ⌘↵ on a Mac, Ctrl+↵ elsewhere. */}
           {!isMobile && (
-            <span style={{ font: '400 10px var(--font-mono)', color: 'var(--color-text-tertiary)', marginLeft: 10 }}>{modLabel('↵')} send</span>
+            <span style={{ font: `400 ${fontVar(10)} var(--font-mono)`, color: 'var(--color-text-tertiary)', marginLeft: 10 }}>{modLabel('↵')} send</span>
           )}
           <span style={{ marginLeft: 'auto' }} />
           <ContextIndicator contextTokens={contextTokens} contextWindow={contextWindow} compacting={compacting} compactResult={compactResult} model={model} terminalId={terminalId} compact={compact} showModel={false} />
@@ -295,7 +296,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
       {(adviceError || advice) && (
         <div style={{ flexShrink: 0, padding: '10px 14px 0' }}>
           {adviceError && (
-            <div style={{ maxWidth: 768, margin: '0 auto 8px', font: '400 12px var(--font-sans)', color: 'var(--color-status-red)' }}>
+            <div style={{ maxWidth: 768, margin: '0 auto 8px', font: `400 ${fontVar(12)} var(--font-sans)`, color: 'var(--color-status-red)' }}>
               Couldn't summarize: {adviceError}
             </div>
           )}

@@ -25,8 +25,12 @@ import { fileURLToPath } from 'node:url';
 export const BUDGETS = {
   /** The plan's budget for the entry chunk. */
   entryGzip: 260_000,
-  /** JS and CSS of a first-paint path, brotli. Set a little over the sizes at W2-E; lower them when the path gets smaller. */
-  firstPaintBrotli: { phone: 285_000, desktop: 340_000 },
+  /**
+   * JS and CSS of a first-paint path, brotli. Set a little over the sizes at W2-E; lower them when the path gets smaller.
+   * Phone: 285_000 until 2026-11-12, then 286_000 for the text scale (the --fs-N variables and the
+   * fontVar() calls on the phone's first screen took the path to 285_052; owner decision).
+   */
+  firstPaintBrotli: { phone: 286_000, desktop: 340_000 },
   /**
    * JS files of a first-paint path. The daemon serves HTTP/1.1: a browser has six connections, and
    * theme-boot.js and the stylesheet use two. A fifth JS file waits one round trip for a free connection.

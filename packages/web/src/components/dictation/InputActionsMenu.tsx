@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Plus, Paperclip, Microphone } from '@phosphor-icons/react';
 import { Modal } from '../common/Modal';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { fontVar } from '../../lib/fontSize';
 
 interface Props {
   onAddFile: () => void;
@@ -22,7 +23,7 @@ const trigger = {
 
 const rowBtn = (disabled?: boolean) => ({
   display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '10px 12px', background: 'none', border: 'none',
-  color: disabled ? 'var(--color-text-tertiary)' : 'var(--color-text-primary)', font: '500 14px var(--font-sans)',
+  color: disabled ? 'var(--color-text-tertiary)' : 'var(--color-text-primary)', font: `500 ${fontVar(14)} var(--font-sans)`,
   cursor: disabled ? 'default' : 'pointer', textAlign: 'left' as const, borderRadius: 'var(--radius-md)',
 });
 
@@ -53,7 +54,7 @@ export function InputActionsMenu({ onAddFile, onDictate, dictateDisabled, dictat
         </button>
       )}
       {onDictate && dictateDisabled && dictateHint && (
-        <div style={{ padding: '2px 12px 8px', fontSize: 11, color: 'var(--color-text-tertiary)' }}>{dictateHint}</div>
+        <div style={{ padding: '2px 12px 8px', fontSize: fontVar(11), color: 'var(--color-text-tertiary)' }}>{dictateHint}</div>
       )}
     </>
   );

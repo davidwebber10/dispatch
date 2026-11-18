@@ -5,6 +5,7 @@ import { useDismissedNotices, USAGE_BANNER_SCOPE, usageBannerKey, usageBannerDis
 import { useUI } from '../../stores/ui';
 import { bannerText, CHAT_PARK_ID } from './usageGauge';
 import { useNow } from '../../hooks/useNow';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * The red global banner while any thread is paused on a usage limit (#127). One line per provider.
@@ -29,12 +30,12 @@ export function UsageBanner({ onOpenChat, compact = false }: { onOpenChat?: () =
       {groups.map((g) => (
         <div key={g.provider} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: compact ? '4px 6px 4px 12px' : '3px 6px 3px 14px', minWidth: 0 }}>
           <button type="button" onClick={() => open(g)}
-            style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 'none', padding: '4px 0', cursor: 'pointer', color: 'var(--color-status-red)', fontSize: compact ? 13 : 12.5, fontWeight: 600, lineHeight: 1.35, overflowWrap: 'anywhere', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+            style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 'none', padding: '4px 0', cursor: 'pointer', color: 'var(--color-status-red)', fontSize: fontVar(compact ? 13 : 12.5), fontWeight: 600, lineHeight: 1.35, overflowWrap: 'anywhere', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
             {bannerText(g, now)}
           </button>
           <button type="button" aria-label="Hide until the next pause" title="Hide until the next pause"
             onClick={() => useDismissedNotices.getState().dismiss(USAGE_BANNER_SCOPE, usageBannerKey(g.provider, startedAt(g)))}
-            style={{ flexShrink: 0, minWidth: compact ? 44 : 28, minHeight: compact ? 36 : 26, background: 'none', border: 'none', color: 'var(--color-status-red)', fontSize: 16, cursor: 'pointer', padding: 0 }}>
+            style={{ flexShrink: 0, minWidth: compact ? 44 : 28, minHeight: compact ? 36 : 26, background: 'none', border: 'none', color: 'var(--color-status-red)', fontSize: fontVar(16), cursor: 'pointer', padding: 0 }}>
             ×
           </button>
         </div>

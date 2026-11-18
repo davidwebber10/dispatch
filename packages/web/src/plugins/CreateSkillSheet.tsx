@@ -3,6 +3,7 @@ import { Modal } from '../components/common/Modal';
 import { api } from '../api/client';
 import { useProjects } from '../stores/projects';
 import { fieldInput, solidBtn, ghostBtn, chip, sectionLabel } from '../components/settings/ui';
+import { fontVar } from '../lib/fontSize';
 
 /** What a plugin hands `d.actions.createSkill` (coach spec section 4.8). */
 export interface SkillDraftIn { id?: string; name: string; description?: string; body: string; projects?: string[]; projectId?: string }
@@ -47,7 +48,7 @@ export function CreateSkillSheet({ draft, onDone }: { draft: SkillDraftIn; onDon
   const label = (text: string) => <div style={{ ...sectionLabel, marginTop: 12, marginBottom: 4 }}>{text}</div>;
   return (
     <Modal open onClose={() => onDone(null)} title="Create a skill" maxWidth={620}>
-      <div style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>
+      <div style={{ fontSize: fontVar(13), color: 'var(--color-text-secondary)' }}>
         Every thread gets a skill's text. Review it, then press Create: nothing is written before that.
       </div>
       {label('NAME')}
@@ -57,13 +58,13 @@ export function CreateSkillSheet({ draft, onDone }: { draft: SkillDraftIn; onDon
       {label('DESCRIPTION')}
       <input aria-label="Description" style={fieldInput} value={description} onChange={(e) => setDescription(e.target.value)} />
       {label('SKILL.MD')}
-      <textarea aria-label="SKILL.md" style={{ ...fieldInput, height: 180, fontFamily: 'var(--font-mono)', fontSize: 12, padding: 8, resize: 'vertical' }} value={body} onChange={(e) => setBody(e.target.value)} />
+      <textarea aria-label="SKILL.md" style={{ ...fieldInput, height: 180, fontFamily: 'var(--font-mono)', fontSize: fontVar(12), padding: 8, resize: 'vertical' }} value={body} onChange={(e) => setBody(e.target.value)} />
       {label('WHO GETS IT')}
       <div role="radiogroup" aria-label="Who gets it" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         <button type="button" role="radio" aria-checked={scope === 'all'} style={{ ...chip, ...(scope === 'all' ? { borderColor: 'var(--color-accent)', color: 'var(--color-accent)' } : {}) }} onClick={() => setScope('all')}>All projects</button>
         {here && <button type="button" role="radio" aria-checked={scope === 'here'} style={{ ...chip, ...(scope === 'here' ? { borderColor: 'var(--color-accent)', color: 'var(--color-accent)' } : {}) }} onClick={() => setScope('here')}>Only {here.name}</button>}
       </div>
-      {error && <div role="alert" style={{ marginTop: 10, fontSize: 12.5, color: 'var(--color-status-red)' }}>{error}</div>}
+      {error && <div role="alert" style={{ marginTop: 10, fontSize: fontVar(12.5), color: 'var(--color-status-red)' }}>{error}</div>}
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
         <button type="button" style={ghostBtn} onClick={() => onDone(null)}>Cancel</button>
         <button type="button" style={solidBtn(valid && !busy)} disabled={!valid || busy} onClick={() => { void create(); }}>{busy ? 'Creating…' : 'Create'}</button>

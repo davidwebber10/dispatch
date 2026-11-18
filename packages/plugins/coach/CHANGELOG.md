@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The Coach follows the text scale (Settings → Appearance): its font sizes are in `rem`. A field on a
+  phone stays at 16px or more. Nothing changes at 100%.
 - The Coach is off by default. A new install starts with it off, and so does an install where the
   owner never turned it on. An owner who turned it on (or who had turned the Prompt coach on) keeps
   it on. Turn it on in Settings, Plugins.

@@ -8,9 +8,10 @@ import { fieldFor, Toggle, IconGhost, Sheet, StatusMark, SettingsPage, SettingsG
 import { Select } from '../common/Select';
 import { ConfirmModal } from '../common/ConfirmModal';
 import { Button } from '../ui';
+import { fontVar } from '../../lib/fontSize';
 
-const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
-const errText: React.CSSProperties = { fontSize: 12, color: 'var(--color-status-red)', padding: '0 4px' };
+const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)', fontSize: fontVar(12), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
+const errText: React.CSSProperties = { fontSize: fontVar(12), color: 'var(--color-status-red)', padding: '0 4px' };
 const INTRO = 'Dispatch syncs environment variables from Doppler into your sessions. The token stays on this daemon.';
 
 /**
@@ -193,8 +194,8 @@ export function SecretsSection() {
   };
 
   const valueLine = (name: string) => (reveal[name] && values[name] !== undefined
-    ? <span style={{ ...mono, display: 'block', fontSize: 11.5, color: 'var(--color-text-secondary)' }}>{values[name]}</span>
-    : <span style={{ display: 'block', color: 'var(--color-text-tertiary)', letterSpacing: '2px', fontSize: 10, overflow: 'hidden', whiteSpace: 'nowrap' }}>••••••••••••</span>);
+    ? <span style={{ ...mono, display: 'block', fontSize: fontVar(11.5), color: 'var(--color-text-secondary)' }}>{values[name]}</span>
+    : <span style={{ display: 'block', color: 'var(--color-text-tertiary)', letterSpacing: '2px', fontSize: fontVar(10), overflow: 'hidden', whiteSpace: 'nowrap' }}>••••••••••••</span>);
 
   const where = status?.project ? `${status.project}${status.config ? ` / ${status.config}` : ''}` : '';
   const field = { ...fieldFor(isMobile), width: '100%' };
@@ -244,7 +245,7 @@ export function SecretsSection() {
   return (
     <SettingsPage intro={INTRO}>
       <SettingsGroup title="Doppler">
-        <SettingsRow label="Connection" hint={<span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5 }}>{where}</span>}
+        <SettingsRow label="Connection" hint={<span style={{ fontFamily: 'var(--font-mono)', fontSize: fontVar(11.5) }}>{where}</span>}
           control={<StatusMark tone="accent">Connected</StatusMark>} />
         <SettingsRow label="Read-only" hint={readOnly ? 'Values come from Doppler; nothing on this daemon can change them.' : 'Edits allowed. Changes write to Doppler.'}
           control={<Toggle on={readOnly} label="Read-only" disabled={busy} onClick={() => void toggleReadOnly()} />} />
@@ -260,7 +261,7 @@ export function SecretsSection() {
           {isMobile ? scopeSelect : null}
         </SettingsRow>
         {tokenScope === 'all' && (
-          <div key="scope-advice" data-testid="token-scope-advice" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: '10px 12px', fontSize: 12.5, color: 'var(--color-text-secondary)' }}>
+          <div key="scope-advice" data-testid="token-scope-advice" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: '10px 12px', fontSize: fontVar(12.5), color: 'var(--color-text-secondary)' }}>
             <ShieldWarning size={16} style={{ flexShrink: 0, color: 'var(--color-status-amber, var(--color-text-secondary))' }} />
             <span style={{ flex: '1 1 220px', minWidth: 0 }}>Every thread can read the Doppler token. Most threads need only the Doppler tools.</span>
             <Button onClick={() => void changeScope('opted-in')} disabled={busy} variant="ghost" size="sm" style={{ height: isMobile ? 36 : 28, flexShrink: 0 }}>Limit to threads that I turn on</Button>
@@ -281,8 +282,8 @@ export function SecretsSection() {
             <SettingsRow label={<span style={{ ...mono, display: 'block', color: 'var(--color-text-primary)' }}>{s.name}</span>} hint={valueLine(s.name)} control={actions(s.name)} />
           </div>
         ))}
-        {filtered.length === 0 && secrets.length > 0 && <div key="none" style={{ padding: '14px 12px', fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No variables match “{query}”.</div>}
-        {secrets.length === 0 && <div key="empty" style={{ padding: '14px 12px', fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No secrets in this config.</div>}
+        {filtered.length === 0 && secrets.length > 0 && <div key="none" style={{ padding: '14px 12px', fontSize: fontVar(12.5), color: 'var(--color-text-tertiary)' }}>No variables match “{query}”.</div>}
+        {secrets.length === 0 && <div key="empty" style={{ padding: '14px 12px', fontSize: fontVar(12.5), color: 'var(--color-text-tertiary)' }}>No secrets in this config.</div>}
         {!readOnly && <SettingsRow key="add" icon={Plus} label="Add variable" onClick={() => setSheet(true)} />}
       </SettingsGroup>
       {err && <div style={errText}>{err}</div>}
@@ -292,17 +293,17 @@ export function SecretsSection() {
       </SettingsGroup>
 
       <Sheet open={sheet} onClose={() => setSheet(false)} title="Add variable">
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12.5, color: 'var(--color-text-secondary)' }}>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: fontVar(12.5), color: 'var(--color-text-secondary)' }}>
           Name
           <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="API_KEY" autoComplete="off"
             style={{ ...field, fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }} />
         </label>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12.5, color: 'var(--color-text-secondary)' }}>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: fontVar(12.5), color: 'var(--color-text-secondary)' }}>
           Value
           <input value={newValue} onChange={(e) => setNewValue(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void add(); }} autoComplete="off"
             style={{ ...field, fontFamily: 'var(--font-mono)' }} />
         </label>
-        <span style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>Saves to Doppler in {where}.</span>
+        <span style={{ fontSize: fontVar(11.5), color: 'var(--color-text-tertiary)' }}>Saves to Doppler in {where}.</span>
         <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
           <Button onClick={() => setSheet(false)} variant="ghost" size="sm" style={{ flex: 1, height: isMobile ? 40 : 32 }}>Cancel</Button>
           <Button aria-label="Save variable" onClick={() => void add()} disabled={!canAdd} variant="primary" size="sm" style={{ flex: 1, height: isMobile ? 40 : 32 }}>{busy ? 'Saving…' : 'Add'}</Button>

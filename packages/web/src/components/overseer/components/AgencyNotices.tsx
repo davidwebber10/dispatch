@@ -9,6 +9,7 @@ import { Bell, ChatTeardropText, CheckCircle, Clock, PauseCircle, WarningCircle 
 import { useOverseer } from '../store';
 import { LedgerChipText } from './LedgerChips';
 import type { LedgerChips } from '../../../lib/ledgerRefs';
+import { fontVar } from '../../../lib/fontSize';
 
 // ---- Agency system notice (centered, muted) ---------------------------------
 // The coordinator conversation receives injected LIFECYCLE notices about its own agents
@@ -118,7 +119,7 @@ export function AgencyNoticeMsg({ notice, ledger }: { notice: AgencyNotice; ledg
           borderRadius: 'var(--radius-2xl)',
           background: clickable && hover ? 'var(--hover)' : 'var(--elev)',
           border: `1px solid ${clickable && hover ? 'var(--accLine)' : 'var(--border)'}`,
-          fontSize: 11.5,
+          fontSize: fontVar(11.5),
           color: 'var(--ts)',
           maxWidth: '86%',
           cursor: clickable ? 'pointer' : 'default',
@@ -200,13 +201,13 @@ export function DirectMessageNoticeMsg({ notice, ledger }: { notice: DirectMessa
         {/* label row — icon + agent name (prominent), mission de-emphasized alongside it */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
           <ChatTeardropText size={14} weight="fill" color="var(--acc)" style={{ flex: 'none' }} />
-          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--tp)', whiteSpace: 'nowrap' }}>
+          <span style={{ fontSize: fontVar(12), fontWeight: 600, color: 'var(--tp)', whiteSpace: 'nowrap' }}>
             Direct message to "{notice.name}"
           </span>
           {notice.mission && (
             <span
               style={{
-                fontSize: 10.5,
+                fontSize: fontVar(10.5),
                 color: 'var(--ts)',
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
@@ -220,7 +221,7 @@ export function DirectMessageNoticeMsg({ notice, ledger }: { notice: DirectMessa
         {/* focal content — the user's own words, quoted */}
         <div
           style={{
-            fontSize: 12.5,
+            fontSize: fontVar(12.5),
             lineHeight: 1.5,
             color: 'var(--tp)',
             paddingLeft: 20,
@@ -231,7 +232,7 @@ export function DirectMessageNoticeMsg({ notice, ledger }: { notice: DirectMessa
           “<LedgerChipText text={notice.quote} ledger={ledger} />”
         </div>
         {/* de-emphasized guidance — was the run-on sentence's tail, now a muted footnote */}
-        <div style={{ fontSize: 10.5, color: 'var(--tt)', paddingLeft: 20 }}>
+        <div style={{ fontSize: fontVar(10.5), color: 'var(--tt)', paddingLeft: 20 }}>
           This may change what you asked it to do — read how it responds and adjust.
         </div>
       </div>

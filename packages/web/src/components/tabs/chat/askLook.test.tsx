@@ -69,7 +69,8 @@ describe('the OS look of the Pretty thread', () => {
     expect(screen.getByText('YOU')).toBeTruthy();
     const b = screen.getByTestId('user-bubble');
     expect(b.style.borderRadius).toBe('var(--radius-lg)');
-    expect(b.style.font).toContain('14px');
+    // 14px text on a 20px line at 100%; both are text-scale variables, so the lines grow with the text.
+    expect(b.style.font).toContain('var(--fs-14)/var(--fs-20)');
     cleanup();
     render(composer('os'));
     const box = screen.getByTestId('pill-composer');

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { PRODUCT_NAME } from '../../../lib/hostCopy';
 import { loadOsShell, type OsShell } from './shellApi';
 import { osIcon, PRODUCT_ICON, CaretDownGlyph as CaretDown } from './OsIcon';
+import { fontVar } from '../../../lib/fontSize';
 
 /** The OS app list, once per page (null while loading or when OS did not answer). */
 export function useOsShell(): OsShell | null {
@@ -27,7 +28,7 @@ export function OsSwitcherTrigger({ open, onToggle }: { open: boolean; onToggle:
         background: open ? 'color-mix(in srgb, var(--color-hover) 50%, transparent)' : 'transparent', transition: 'background-color .15s',
       }}>
       <Icon size={18} style={{ flexShrink: 0 }} />
-      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', font: '600 20px/28px var(--font-sans)', letterSpacing: '-0.025em' }}>{PRODUCT_NAME}</span>
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', font: `600 ${fontVar(20)}/${fontVar(28)} var(--font-sans)`, letterSpacing: '-0.025em' }}>{PRODUCT_NAME}</span>
       <CaretDown size={20} style={{ marginLeft: 'auto', flexShrink: 0, color: 'var(--color-text-secondary)', transition: 'transform .2s', transform: open ? 'rotate(180deg)' : 'none' }} />
     </button>
   );

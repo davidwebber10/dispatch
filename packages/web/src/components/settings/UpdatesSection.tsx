@@ -9,6 +9,7 @@ import { SettingsGroup, SettingsRow, Sheet, StatusMark } from './ui';
 import { hostCopy, hostDetail, PLAIN } from '../../lib/hostCopy';
 import { usesPlainWording } from '../../lib/hostContext';
 import { Button } from '../ui';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * Settings → About & updates → the "Dispatch" group: the always-reachable update surface (the
@@ -103,7 +104,7 @@ export function UpdatesSection() {
                 person who can rebuild the fleet image. */}
             {hosted || usesPlainWording()
               ? PLAIN['update.failed.hint']
-              : <>Run <code style={{ font: '400 11px var(--font-mono)' }}>{ahead || needsSwitchBack ? 'dispatch update --switch-back' : 'dispatch update'}</code> manually instead.</>}
+              : <>Run <code style={{ font: `400 ${fontVar(11)} var(--font-mono)` }}>{ahead || needsSwitchBack ? 'dispatch update --switch-back' : 'dispatch update'}</code> manually instead.</>}
             {needsSwitchBack && available && !hosted && (
               <div style={{ marginTop: 8 }}>
                 <Button variant="ghost" size="sm" onClick={() => void apply(false, true)} disabled={applying}>Switch to {available.version}</Button>
@@ -141,13 +142,13 @@ function NoteEntry({ entry, first }: { entry: ReleaseNote; first: boolean }) {
   return (
     <section style={{ marginTop: first ? 0 : 16, paddingTop: first ? 0 : 14, borderTop: first ? 'none' : '1px solid var(--color-border)' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-        <span style={{ font: '600 13px var(--font-mono)', color: 'var(--color-accent)' }}>{entry.version}</span>
-        {date && <span style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>{date}</span>}
-        {entry.author && <span style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>by {entry.author}</span>}
+        <span style={{ font: `600 ${fontVar(13)} var(--font-mono)`, color: 'var(--color-accent)' }}>{entry.version}</span>
+        {date && <span style={{ fontSize: fontVar(11.5), color: 'var(--color-text-tertiary)' }}>{date}</span>}
+        {entry.author && <span style={{ fontSize: fontVar(11.5), color: 'var(--color-text-tertiary)' }}>by {entry.author}</span>}
       </div>
-      {headline && <div style={{ marginTop: 4, fontSize: 14, fontWeight: 600, lineHeight: 1.4, color: 'var(--color-text-primary)' }}>{headline}</div>}
+      {headline && <div style={{ marginTop: 4, fontSize: fontVar(14), fontWeight: 600, lineHeight: 1.4, color: 'var(--color-text-primary)' }}>{headline}</div>}
       {body ? <div style={{ marginTop: 6 }}><Markdown source={body} /></div>
-        : !headline && <div style={{ marginTop: 4, fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No notes for this release.</div>}
+        : !headline && <div style={{ marginTop: 4, fontSize: fontVar(12.5), color: 'var(--color-text-tertiary)' }}>No notes for this release.</div>}
     </section>
   );
 }

@@ -126,7 +126,7 @@ describe('button and field styles', () => {
     expect(dangerBtn.height).toBe(ghostBtn.height);
   });
   it('fieldFor gives the phone 16px text and a 36px box (no iOS zoom)', () => {
-    expect(fieldFor(true)).toMatchObject({ height: 36, fontSize: 16 });
+    expect(fieldFor(true)).toMatchObject({ height: 36, fontSize: 'max(16px, var(--fs-16))' });
     expect(fieldFor(false)).toMatchObject({ height: 30 });
   });
 });

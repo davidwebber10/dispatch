@@ -30,6 +30,7 @@ import { useTabs, findTerminal } from '../../../stores/tabs';
 import { modLabel } from '../../../lib/hostkeys';
 import { CoordinatorMenu } from './CoordinatorMenu';
 import { MODEL_IMAGE_MIME, fileToBase64 } from '../../../lib/image-attach';
+import { fontVar } from '../../../lib/fontSize';
 
 /** A staged (pre-send) image preview with an × to drop it from the buffer. */
 function StagedThumbnail({ src, onRemove }: { src: string; onRemove: () => void }) {
@@ -239,7 +240,7 @@ export function Composer() {
     >
       {/* drag cue / upload status text (drag cue takes precedence while dragging) */}
       {dragActive && (
-        <div style={{ maxWidth: 1200, margin: '0 auto 6px', fontSize: 11, color: 'var(--acc)' }}>Drop image to attach</div>
+        <div style={{ maxWidth: 1200, margin: '0 auto 6px', fontSize: fontVar(11), color: 'var(--acc)' }}>Drop image to attach</div>
       )}
       <div style={{ maxWidth: 1200, margin: '0 auto' }}><UploadTray uploads={uploader.uploads} onCancel={uploader.cancel} /></div>
 
@@ -293,7 +294,7 @@ export function Composer() {
 
       {/* what the last pinned-card click added — nothing is sent until the user presses Enter */}
       {draftHint && (
-        <div style={{ maxWidth: 1200, margin: '6px auto 0', fontSize: 11.5, color: 'var(--ts)' }}>
+        <div style={{ maxWidth: 1200, margin: '6px auto 0', fontSize: fontVar(11.5), color: 'var(--ts)' }}>
           Added {draftHint.text}. Press Enter to send, or keep adding.
         </div>
       )}
@@ -322,7 +323,7 @@ export function Composer() {
           <span
             style={{
               fontFamily: 'var(--mono)',
-              fontSize: 10,
+              fontSize: fontVar(10),
               color: 'var(--tt)',
               marginLeft: 'auto',
             }}

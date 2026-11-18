@@ -5,6 +5,7 @@ import { HighlightedCode } from '../HighlightedCode';
 import { getToolView, parseToolInput } from './toolviews/registry';
 import { can } from '../../lib/profile';
 import { useToolExpanded, useToolTab, uiKeyOf } from '../../hooks/useToolUIState';
+import { fontVar } from '../../lib/fontSize';
 import { askLook } from './chat/askLook';
 import { ConnectCard } from '../connections/ConnectCard';
 import { notConnectedOf } from '../../stores/osConnections';
@@ -143,7 +144,7 @@ export function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?
         <span style={{ width: 14, flexShrink: 0, display: 'flex', justifyContent: 'flex-start', alignItems: 'center' }}>
           {expandable
             ? <CaretRight size={10} weight="bold" style={{ color: 'var(--color-text-tertiary)', transition: 'transform .12s ease', transform: open ? 'rotate(90deg)' : 'none' }} />
-            : <span aria-hidden style={{ font: '400 10px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{toolGlyph(tool.toolName)}</span>}
+            : <span aria-hidden style={{ font: `400 ${fontVar(10)} var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>{toolGlyph(tool.toolName)}</span>}
         </span>
         {/* flexShrink 0: the name is the single most identifying thing on the row and is almost
             always short, so it never shrinks; the arg detail is the elastic half. maxWidth caps
@@ -163,8 +164,8 @@ export function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?
         {/* marginLeft:auto, not a flex-grow sibling — plenty of tools populate no detail at all,
             and without this the meta would wander instead of right-aligning. */}
         {meta
-          ? <span style={{ marginLeft: 'auto', flexShrink: 0, font: '400 11px var(--font-mono)', color: meta.color }}>{meta.text}</span>
-          : <span className="chat-shimmer" style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 11 }}>running…</span>}
+          ? <span style={{ marginLeft: 'auto', flexShrink: 0, font: `400 ${fontVar(11)} var(--font-mono)`, color: meta.color }}>{meta.text}</span>
+          : <span className="chat-shimmer" style={{ marginLeft: 'auto', flexShrink: 0, fontSize: fontVar(11) }}>running…</span>}
       </button>
       {/* A company tool that needs the person's consent first (a company system's `not_connected`): the Connect card, inline. */}
       {(() => { const nc = err ? notConnectedOf(out) : null; return nc ? <ConnectCard compact label={nc.label} connect={nc.connect} /> : null; })()}
@@ -179,13 +180,13 @@ export function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?
                   <button
                     onClick={() => onViewFile(tool.toolFile!)}
                     title={tool.toolFile}
-                    style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', color: 'var(--color-accent)', font: '500 11.5px var(--font-sans)', cursor: 'pointer', padding: '3px 4px' }}
+                    style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', color: 'var(--color-accent)', font: `500 ${fontVar(11.5)} var(--font-sans)`, cursor: 'pointer', padding: '3px 4px' }}
                   >
                     <FileText size={13} weight="bold" /> View file
                   </button>
                 )}
               </div>
-              <pre className="hljs" style={{ margin: 0, font: '400 11.5px var(--font-mono)', lineHeight: 1.5, padding: '9px 11px', maxHeight: 360, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+              <pre className="hljs" style={{ margin: 0, font: `400 ${fontVar(11.5)} var(--font-mono)`, lineHeight: 1.5, padding: '9px 11px', maxHeight: 360, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                 <HighlightedCode code={content} lang={lang} />
               </pre>
             </>
@@ -199,7 +200,7 @@ export function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?
 function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
     <button onClick={onClick} style={{
-      padding: '4px 11px', fontSize: 11.5, borderRadius: 'var(--radius-sm) var(--radius-sm) 0 0', border: 'none', cursor: 'pointer',
+      padding: '4px 11px', fontSize: fontVar(11.5), borderRadius: 'var(--radius-sm) var(--radius-sm) 0 0', border: 'none', cursor: 'pointer',
       background: active ? 'var(--color-elevated)' : 'transparent', color: active ? 'var(--color-text-primary)' : 'var(--color-text-secondary)', fontWeight: active ? 600 : 400,
     }}>{children}</button>
   );
@@ -229,13 +230,13 @@ export function ToolResult({ item }: { item: ConvItem }) {
     <div>
       <button
         onClick={() => setOpen((o) => !o)}
-        style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', cursor: 'pointer', padding: '1px 0', font: '400 11.5px var(--font-mono)', color }}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', cursor: 'pointer', padding: '1px 0', font: `400 ${fontVar(11.5)} var(--font-mono)`, color }}
       >
         <CaretRight size={10} weight="bold" style={{ transition: 'transform .12s ease', transform: open ? 'rotate(90deg)' : 'none' }} />
         {err ? 'Error output' : 'Output'}<span style={{ opacity: 0.6 }}> · {lines} line{lines !== 1 ? 's' : ''}</span>
       </button>
       {open && (
-        <pre style={{ margin: '4px 0 0', font: '400 11.5px var(--font-mono)', lineHeight: 1.5, color, background: 'var(--color-elevated)', border: `1px solid ${err ? 'color-mix(in srgb, var(--color-status-red) 30%, transparent)' : 'var(--color-border)'}`, borderRadius: 'var(--radius-md)', padding: '8px 10px', maxHeight: 280, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{text}</pre>
+        <pre style={{ margin: '4px 0 0', font: `400 ${fontVar(11.5)} var(--font-mono)`, lineHeight: 1.5, color, background: 'var(--color-elevated)', border: `1px solid ${err ? 'color-mix(in srgb, var(--color-status-red) 30%, transparent)' : 'var(--color-border)'}`, borderRadius: 'var(--radius-md)', padding: '8px 10px', maxHeight: 280, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{text}</pre>
       )}
     </div>
   );

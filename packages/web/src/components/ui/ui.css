@@ -27,7 +27,7 @@
 .ui-btn--md { height: 34px; border-radius: var(--radius-md); font-size: var(--text-base); }
 
 .ui-btn--primary { flex-shrink: 0; background: var(--color-accent); border: none; color: var(--color-on-accent); font-weight: 600; }
-.ui-btn--primary.ui-btn--sm { padding: 0 14px; font-size: 12.5px; }
+.ui-btn--primary.ui-btn--sm { padding: 0 14px; font-size: var(--fs-12-5); }
 .ui-btn--primary.ui-btn--md { padding: 0 18px; }
 
 .ui-btn--secondary { background: var(--color-elevated); border: 1px solid var(--color-border-strong); color: var(--color-text-secondary); }

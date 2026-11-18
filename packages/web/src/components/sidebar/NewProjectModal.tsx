@@ -3,6 +3,7 @@ import { Modal } from '../common/Modal';
 import { DirectoryPicker } from '../common/DirectoryPicker';
 import { api } from '../../api/client';
 import { useProjects } from '../../stores/projects';
+import { fontVar } from '../../lib/fontSize';
 import { can } from '../../lib/profile';
 import { isHosted } from '../../lib/hostContext';
 
@@ -37,7 +38,7 @@ export function NewProjectModal({ open, onClose }: { open: boolean; onClose: () 
     } finally { setBusy(false); }
   }
 
-  const input: React.CSSProperties = { height: 34, width: '100%', padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13 };
+  const input: React.CSSProperties = { height: 34, width: '100%', padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: fontVar(13) };
   const pathRow = (
     <div style={{ display: 'flex', gap: 8 }}>
       <input style={{ ...input, flex: 1 }} placeholder="/path/to/project" value={dir} onChange={(e) => setDir(e.target.value)} />
@@ -50,13 +51,13 @@ export function NewProjectModal({ open, onClose }: { open: boolean; onClose: () 
       {!nameFirst ? pathRow : showPath && (
         <div>
           <button type="button" aria-expanded={advanced} onClick={() => setAdvanced((v) => !v)}
-            style={{ background: 'none', border: 'none', padding: '2px 0', color: 'var(--color-text-secondary)', fontSize: 12.5, cursor: 'pointer' }}>
+            style={{ background: 'none', border: 'none', padding: '2px 0', color: 'var(--color-text-secondary)', fontSize: fontVar(12.5), cursor: 'pointer' }}>
             {advanced ? '▾' : '▸'} Advanced: use an existing folder
           </button>
           {advanced && <div style={{ marginTop: 8 }}>{pathRow}</div>}
         </div>
       )}
-      {error && <div role="alert" style={{ marginTop: 10, fontSize: 12.5, color: 'var(--color-status-red)' }}>{error}</div>}
+      {error && <div role="alert" style={{ marginTop: 10, fontSize: fontVar(12.5), color: 'var(--color-status-red)' }}>{error}</div>}
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
         <button onClick={onClose} style={{ height: 32, padding: '0 14px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)' }}>Cancel</button>
         <button disabled={busy} onClick={create} style={{ height: 32, padding: '0 18px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-on-accent)', fontWeight: 600 }}>Create Project</button>

@@ -5,6 +5,7 @@ import { useAgents } from '../../stores/agents';
 import { useProjects } from '../../stores/projects';
 import type { AgentSchedule, CreateScheduleInput } from '../../api/types';
 import { Select } from '../common/Select';
+import { fontVar } from '../../lib/fontSize';
 
 type Mode = 'manual' | 'interval' | 'daily' | 'weekly' | 'cron';
 const MODES: Mode[] = ['manual', 'interval', 'daily', 'weekly', 'cron'];
@@ -56,8 +57,8 @@ function initSched(existing: AgentSchedule | null): SchedState {
   return base;
 }
 
-const input: React.CSSProperties = { height: 34, width: '100%', padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13 };
-const seg = (active: boolean): React.CSSProperties => ({ padding: '6px 12px', borderRadius: 'var(--radius-sm)', border: 'none', cursor: 'pointer', fontSize: 12.5, textTransform: 'capitalize', background: active ? 'var(--color-accent)' : 'transparent', color: active ? 'var(--color-on-accent)' : 'var(--color-text-secondary)', fontWeight: active ? 600 : 400 });
+const input: React.CSSProperties = { height: 34, width: '100%', padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: fontVar(13) };
+const seg = (active: boolean): React.CSSProperties => ({ padding: '6px 12px', borderRadius: 'var(--radius-sm)', border: 'none', cursor: 'pointer', fontSize: fontVar(12.5), textTransform: 'capitalize', background: active ? 'var(--color-accent)' : 'transparent', color: active ? 'var(--color-on-accent)' : 'var(--color-text-secondary)', fontWeight: active ? 600 : 400 });
 
 /** Fields a plugin fills for a new automation (coach spec section 4.1): the person reviews them and saves. */
 export interface AutomationPrefill { prompt?: string; cron?: string; name?: string }
@@ -99,7 +100,7 @@ export function EditAgentModal({ scheduleId, presetProjectId, prefill, onClose, 
   return (
     <Modal open onClose={onClose} title={existing ? 'Edit Automation' : 'New Automation'}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
-        <Select ariaLabel="Project" value={projectId} onChange={setProjectId} options={sessions.map((s) => ({ value: s.id, label: s.name }))} style={{ height: 34, fontSize: 13 }} />
+        <Select ariaLabel="Project" value={projectId} onChange={setProjectId} options={sessions.map((s) => ({ value: s.id, label: s.name }))} style={{ height: 34, fontSize: fontVar(13) }} />
         <input style={input} placeholder="Automation name" value={name} onChange={(e) => setName(e.target.value)} />
         <div style={{ display: 'inline-flex', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', padding: 3, width: 'fit-content' }}>
           {(['claude-code', 'codex'] as const).map((p) => (
@@ -110,7 +111,7 @@ export function EditAgentModal({ scheduleId, presetProjectId, prefill, onClose, 
 
         {/* Schedule */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
-          <span style={{ font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' }}>SCHEDULE</span>
+          <span style={{ font: `500 ${fontVar(10)} var(--font-mono)`, letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' }}>SCHEDULE</span>
           <div style={{ display: 'inline-flex', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', padding: 3, gap: 2, width: 'fit-content' }}>
             {MODES.map((m) => <button key={m} onClick={() => set({ mode: m })} style={seg(sched.mode === m)}>{m}</button>)}
           </div>
@@ -130,7 +131,7 @@ export function EditAgentModal({ scheduleId, presetProjectId, prefill, onClose, 
                   const on = sched.days.includes(w.d);
                   return (
                     <button key={i} onClick={() => set({ days: on ? sched.days.filter((x) => x !== w.d) : [...sched.days, w.d] })}
-                      style={{ width: 26, height: 26, borderRadius: '50%', cursor: 'pointer', font: '600 11px var(--font-mono)', background: on ? 'var(--color-accent)' : 'var(--color-elevated)', color: on ? 'var(--color-on-accent)' : 'var(--color-text-tertiary)', border: on ? 'none' : '1px solid var(--color-border-strong)' }}>{w.l}</button>
+                      style={{ width: 26, height: 26, borderRadius: '50%', cursor: 'pointer', font: `600 ${fontVar(11)} var(--font-mono)`, background: on ? 'var(--color-accent)' : 'var(--color-elevated)', color: on ? 'var(--color-on-accent)' : 'var(--color-text-tertiary)', border: on ? 'none' : '1px solid var(--color-border-strong)' }}>{w.l}</button>
                   );
                 })}
               </div>
@@ -138,7 +139,7 @@ export function EditAgentModal({ scheduleId, presetProjectId, prefill, onClose, 
             {sched.mode === 'cron' && <input value={sched.cron} onChange={(e) => set({ cron: e.target.value })} placeholder="0 9 * * 1-5" style={{ ...input, width: 200, fontFamily: 'var(--font-mono)' }} />}
           </div>
 
-          <div style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>
+          <div style={{ font: `400 ${fontVar(11.5)} var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>
             {sched.mode === 'manual' ? 'No schedule — run manually with “Run now”.' : <>cron <span style={{ color: 'var(--color-text-secondary)' }}>{cronPreview(sched)}</span> · {Intl.DateTimeFormat().resolvedOptions().timeZone}</>}
           </div>
         </div>

@@ -5,6 +5,7 @@ import { api } from '../../api/client';
 import { useTabs } from '../../stores/tabs';
 import { DEFAULT_AUTO_ARCHIVE_MS, getAutoArchiveMs } from '../../lib/autoArchive';
 import type { Terminal } from '../../api/types';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * Edit an existing thread's auto-archive policy. Saves through the dedicated
@@ -29,7 +30,7 @@ export function AutoArchiveModal({ tab, onClose }: { tab: Terminal; onClose: () 
 
   return (
     <Modal open onClose={onClose} title="Auto-archive thread">
-      <div style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>
+      <div style={{ fontSize: fontVar(13), color: 'var(--color-text-secondary)' }}>
         “{tab.label}” will archive itself once it has been idle this long.
       </div>
 
@@ -37,11 +38,11 @@ export function AutoArchiveModal({ tab, onClose }: { tab: Terminal; onClose: () 
 
       <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
         <button onClick={onClose}
-          style={{ flex: 1, height: 38, background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontWeight: 500, fontSize: 14, cursor: 'pointer' }}>
+          style={{ flex: 1, height: 38, background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontWeight: 500, fontSize: fontVar(14), cursor: 'pointer' }}>
           Cancel
         </button>
         <button disabled={busy} onClick={() => void save()}
-          style={{ flex: 1, height: 38, background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: 14, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1 }}>
+          style={{ flex: 1, height: 38, background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: fontVar(14), cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1 }}>
           Save
         </button>
       </div>

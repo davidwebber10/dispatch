@@ -9,13 +9,14 @@ import { useAccounts, threadAccount } from '../../stores/accounts';
 import { useActiveModel, activeModelOf } from '../../stores/activeModel';
 import { can } from '../../lib/profile';
 import { friendlyModelName } from '../../lib/modelName';
+import { fontVar } from '../../lib/fontSize';
 import { ThreadMenu, type ThreadMenuAt } from '../sidebar/ThreadMenu';
 
 function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '3px 0' }}>
       <span style={{ color: 'var(--color-text-secondary)' }}>{label}</span>
-      <span style={{ fontFamily: mono ? 'var(--font-mono)' : undefined, color: 'var(--color-text-primary)', fontSize: mono ? 11 : 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>{value}</span>
+      <span style={{ fontFamily: mono ? 'var(--font-mono)' : undefined, color: 'var(--color-text-primary)', fontSize: fontVar(mono ? 11 : 13), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>{value}</span>
     </div>
   );
 }
@@ -24,7 +25,7 @@ function homePath(p: string): string {
   return (p || '').replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~');
 }
 
-const label: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
+const label: React.CSSProperties = { font: `500 ${fontVar(10)} var(--font-mono)`, letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
 
 /**
  * The thread's facts, then its actions (owner, 2026-11-13): the right-click menu's own tiles and rows, so
@@ -69,7 +70,7 @@ export function DetailsPane({ projectId, terminalId }: { projectId: string | nul
   const showDetails = hasActivity || !!lim;
   const status = tab?.status ?? term?.status;
   return (
-    <div style={{ padding: 12, fontSize: 13 }}>
+    <div style={{ padding: 12, fontSize: fontVar(13) }}>
       {showDetails && (
         <>
           <div style={{ ...label, marginBottom: 8 }}>THREAD DETAILS</div>

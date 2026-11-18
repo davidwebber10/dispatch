@@ -2,6 +2,7 @@ import { ArrowSquareOut, ArrowClockwise, PlugsConnected } from '@phosphor-icons/
 import { PLATFORM_NAME } from '../../lib/hostCopy';
 import { Button } from '../ui';
 import { osLink, useOsConnections } from '../../stores/osConnections';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * "Connect <label>": one company system the person must connect in POLYWOOD OS before a thread can
@@ -19,7 +20,7 @@ export function ConnectCard({ label, connect, compact }: { label: string; connec
       border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', background: 'var(--color-elevated)',
     }}>
       <PlugsConnected size={16} style={{ flexShrink: 0, color: 'var(--color-text-secondary)' }} />
-      <span style={{ flex: 1, minWidth: 160, fontSize: 13, color: 'var(--color-text-body)' }}>
+      <span style={{ flex: 1, minWidth: 160, fontSize: fontVar(13), color: 'var(--color-text-body)' }}>
         Connect {label} in {PLATFORM_NAME} so your threads can use it.
       </span>
       {href && (

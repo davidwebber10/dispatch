@@ -7,6 +7,7 @@ import { usePluginRegistry, useInspectorTabs } from '../../plugins/registry';
 import { PluginBoundary } from '../../plugins/PluginBoundary';
 import { tabIcon } from '../../plugins/sdk';
 import { MenuBadgeCount } from '../../plugins/menuBadge';
+import { fontVar } from '../../lib/fontSize';
 
 const tabStyle = (on: boolean): React.CSSProperties => ({
   // Each tab is as wide as its name, then they share the rest (2026-11-09: four equal tabs cut "Previews").
@@ -14,7 +15,7 @@ const tabStyle = (on: boolean): React.CSSProperties => ({
   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '0 6px',
   borderBottom: on ? '2px solid var(--color-accent)' : '2px solid transparent',
   color: on ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
-  fontSize: 13, fontWeight: on ? 500 : 400, cursor: 'pointer', whiteSpace: 'nowrap',
+  fontSize: fontVar(13), fontWeight: on ? 500 : 400, cursor: 'pointer', whiteSpace: 'nowrap',
 });
 
 export function Inspector({ projectId, terminalId, onOpenFile, detailsSlot }: { projectId: string | null; terminalId: string | null; onOpenFile: (terminalId: string) => void; detailsSlot?: React.ReactNode }) {
@@ -52,7 +53,7 @@ export function Inspector({ projectId, terminalId, onOpenFile, detailsSlot }: { 
             {t}
             {t === 'files' && changedCount > 0 && (
               <span title={`${changedCount} uncommitted change${changedCount === 1 ? '' : 's'}`} style={{
-                font: '700 10px var(--font-mono)', color: 'var(--color-on-accent)', background: 'var(--color-status-yellow)',
+                font: `700 ${fontVar(10)} var(--font-mono)`, color: 'var(--color-on-accent)', background: 'var(--color-status-yellow)',
                 borderRadius: 'var(--radius-md)', padding: '0 5px', lineHeight: '14px',
               }}>{changedCount}</span>
             )}

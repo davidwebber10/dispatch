@@ -5,6 +5,7 @@ import { GearGlyph as Gear, SidebarGlyph as SidebarIcon } from './OsIcon';
 export type Icon = ComponentType<{ className?: string }>;
 import { OsAppSwitcher, OsSpotlight, useOsShell } from './OsAppSwitcher';
 import { PRODUCT_ICON } from './OsIcon';
+import { fontVar } from '../../../lib/fontSize';
 
 // OS LeftRail (explorer web/src/shell/LeftRail.tsx): 288px by default, drag to resize up to 520,
 // below 160 it snaps to the 64px icon rail; a double-click or the bottom button toggles. Saved per browser.
@@ -27,7 +28,7 @@ export function OsRailItem({ icon: I, label, active, onSelect, collapsed, badge 
       <I className="os-item-icon" />
       {!collapsed && <span style={{ minWidth: 0, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>}
       {!collapsed && !!badge && (
-        <span style={{ marginLeft: 'auto', minWidth: 20, padding: '2px 6px', borderRadius: 'var(--radius-pill)', textAlign: 'center', font: '600 12px/16px var(--font-sans)', background: 'color-mix(in srgb, var(--color-status-amber) 22%, transparent)', color: 'var(--color-text-primary)' }}>{badge}</span>
+        <span style={{ marginLeft: 'auto', minWidth: 20, padding: '2px 6px', borderRadius: 'var(--radius-pill)', textAlign: 'center', font: `600 ${fontVar(12)}/${fontVar(16)} var(--font-sans)`, background: 'color-mix(in srgb, var(--color-status-amber) 22%, transparent)', color: 'var(--color-text-primary)' }}>{badge}</span>
       )}
     </button>
   );

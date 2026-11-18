@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { api } from '../../api/client';
 import { limitRows, type LimitRows } from './usageLimits';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * The thread's usage limits, ready to show (null until the first answer or when the fetch fails).
@@ -27,9 +28,9 @@ export function useUsageLimits(terminalId: string | null | undefined, refreshKey
 export function UsageLimitsRows({ lim, row, asOfStyle }: { lim: LimitRows; row: (label: string, value: string) => ReactNode; asOfStyle?: React.CSSProperties }) {
   return (
     <div data-testid="usage-limits">
-      {lim.paused && <div style={{ padding: '3px 0', fontSize: 13, color: 'var(--color-text-primary)' }}>{lim.paused}</div>}
+      {lim.paused && <div style={{ padding: '3px 0', fontSize: fontVar(13), color: 'var(--color-text-primary)' }}>{lim.paused}</div>}
       {lim.rows.map((r) => <div key={r.label}>{row(r.label, r.value)}</div>)}
-      {lim.asOf && <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', textAlign: 'right', ...asOfStyle }}>{lim.asOf}</div>}
+      {lim.asOf && <div style={{ fontSize: fontVar(11), color: 'var(--color-text-tertiary)', textAlign: 'right', ...asOfStyle }}>{lim.asOf}</div>}
     </div>
   );
 }

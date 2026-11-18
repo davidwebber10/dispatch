@@ -3,6 +3,7 @@ import { SignIn, X } from '@phosphor-icons/react';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { ClaudeLogin } from '../endless/ClaudeLogin';
 import { claudeConnected, useClaudeConnect } from '../connections/claudeConnect';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * The one sign-in step of a business person (no setup wizard, no terminal, lib/profile.ts): a small card
@@ -29,15 +30,15 @@ export function ConnectAccountPrompt() {
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--color-text-primary)' }}>Connect your Claude account</div>
-          <div style={{ marginTop: 2, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+          <div style={{ fontSize: fontVar(13.5), fontWeight: 600, color: 'var(--color-text-primary)' }}>Connect your Claude account</div>
+          <div style={{ marginTop: 2, fontSize: fontVar(12), color: 'var(--color-text-secondary)' }}>
             {signingIn ? 'Open the Claude page, sign in, then paste the code it shows.' : 'Your chats run on your own Claude account.'}
           </div>
         </div>
         {!signingIn && (
           <button type="button" onClick={() => setSigningIn(true)} style={{
             display: 'inline-flex', alignItems: 'center', gap: 6, height: 32, padding: '0 12px', border: 'none', borderRadius: 'var(--radius-md)',
-            background: 'var(--color-accent)', color: 'var(--color-on-accent)', font: '600 12.5px var(--font-sans)', cursor: 'pointer',
+            background: 'var(--color-accent)', color: 'var(--color-on-accent)', font: `600 ${fontVar(12.5)} var(--font-sans)`, cursor: 'pointer',
           }}>
             <SignIn size={14} weight="bold" /> Connect
           </button>

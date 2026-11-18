@@ -11,9 +11,10 @@ const token = (name: string) => stripComments(theme).match(new RegExp(`${name}:\
 
 describe('scale tokens (theme.css)', () => {
   it('has a type scale of six steps, each larger than the one before', () => {
+    // Each step is a text-scale variable `var(--fs-N)`: N px at 100% (lib/fontSize.ts).
     const steps = ['--text-xs', '--text-sm', '--text-base', '--text-md', '--text-lg', '--text-xl'].map((t) => token(t));
-    for (const s of steps) expect(s).toMatch(/^\d+(\.\d+)?px$/);
-    const px = steps.map((s) => parseFloat(s!));
+    for (const s of steps) expect(s).toMatch(/^var\(--fs-\d+(-\d+)?\)$/);
+    const px = steps.map((s) => parseFloat(s!.slice('var(--fs-'.length).replace('-', '.')));
     expect([...px].sort((a, b) => a - b)).toEqual(px);
     expect(new Set(px).size).toBe(6);
   });

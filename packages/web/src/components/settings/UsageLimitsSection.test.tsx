@@ -35,6 +35,14 @@ describe('UsageLimitsSection + UsageAlertSetting', () => {
     for (const name of ['Warning', 'This device', 'Current figures']) expect(screen.getByRole('group', { name })).toBeTruthy();
   });
 
+  it('the warning level box grows with the text scale, so the percent sign stays clear of the number', async () => {
+    renderBoth();
+    await waitFor(() => expect(level().value).toBe('80'));
+    // 58px at 100% (3.625rem); the right padding holds the percent sign (16px at 100%, 1rem).
+    expect(level().style.width).toBe('max(58px, 3.625rem)');
+    expect(level().style.paddingRight).toBe('max(16px, 1rem)');
+  });
+
   it('the ring choice is a segmented control, and the phone header switch is this device only', async () => {
     useSettings.setState({ usageRingCenter: 'logo', phoneHeaderUsage: true });
     renderBoth();

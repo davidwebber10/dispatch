@@ -172,7 +172,7 @@ describe('on a phone', () => {
     const input = screen.getByPlaceholderText(/localhost/);
     expect(parseInt(input.style.minWidth, 10)).toBe(0);
     // 16px stops iOS zooming the page when the field is focused.
-    expect(input.style.fontSize).toBe('16px');
+    expect(input.style.fontSize).toBe('max(16px, var(--fs-16))');
     expect(screen.getByText('Forward').style.flexShrink).toBe('0');
   });
 });

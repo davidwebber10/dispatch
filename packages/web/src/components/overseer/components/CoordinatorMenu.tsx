@@ -18,6 +18,7 @@ import type { Terminal } from '../../../api/types';
 import { useOverseer } from '../store';
 import { Icon } from '../atoms';
 import { SCHEMES, type Scheme, type Tokens } from './AutonomyControls';
+import { fontVar } from '../../../lib/fontSize';
 
 const itemStyle = (t: Tokens, color: string): React.CSSProperties => ({
   display: 'flex',
@@ -29,7 +30,7 @@ const itemStyle = (t: Tokens, color: string): React.CSSProperties => ({
   borderRadius: 'var(--radius-sm)',
   background: 'transparent',
   color,
-  fontSize: 12,
+  fontSize: fontVar(12),
   fontWeight: 500,
   lineHeight: 1.2,
   textAlign: 'left' as const,
@@ -140,7 +141,7 @@ export function CoordinatorMenu({ terminalId, sessionId, scheme = 'scoped', dire
 
             {confirmingNew ? (
               <div style={{ padding: '7px 9px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <span style={{ fontSize: 11.5, color: t.dim, lineHeight: 1.4 }}>
+                <span style={{ fontSize: fontVar(11.5), color: t.dim, lineHeight: 1.4 }}>
                   End this session? A fresh one starts now. The old conversation is archived.
                 </span>
                 <div style={{ display: 'flex', gap: 6 }}>
@@ -174,7 +175,7 @@ export function CoordinatorMenu({ terminalId, sessionId, scheme = 'scoped', dire
                 Previous sessions…
               </button>
             ) : previous.length === 0 ? (
-              <span style={{ padding: '7px 9px', fontSize: 11.5, color: t.dim }}>No previous sessions.</span>
+              <span style={{ padding: '7px 9px', fontSize: fontVar(11.5), color: t.dim }}>No previous sessions.</span>
             ) : (
               /* Every "New session" adds one archived row, so this list grows without bound
                  over a project's life. The app shell is fixed-height (the page never scrolls),

@@ -12,6 +12,7 @@ import { useIsMobile } from '../../hooks/useIsMobile';
 import { USAGE_ACCESS_TEXT, updatedAgo, usageAccessOf } from '../../stores/accounts';
 import { hostCopy } from '../../lib/hostCopy';
 import { Button } from '../ui';
+import { fontVar } from '../../lib/fontSize';
 import { CompanyConnections } from '../connections/CompanyConnections';
 
 /**
@@ -37,7 +38,7 @@ const MARK: Record<AccountProvider, PhosphorIcon> = {
   claude: HARNESS_MARK.claude as unknown as PhosphorIcon,
   codex: HARNESS_MARK.codex as unknown as PhosphorIcon,
 };
-const errText: React.CSSProperties = { fontSize: 12.5, color: 'var(--color-status-red)' };
+const errText: React.CSSProperties = { fontSize: fontVar(12.5), color: 'var(--color-status-red)' };
 const oneLine: React.CSSProperties = { display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
 const threadsLabel = (n: number) => `${n} thread${n === 1 ? '' : 's'}`;
 

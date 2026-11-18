@@ -1,6 +1,7 @@
 import type { ConvItem } from '../../../api/types';
 import { HighlightedCode } from '../../HighlightedCode';
 import { parseTable } from './tableParse';
+import { fontVar } from '../../../lib/fontSize';
 
 const MAX_ROWS = 200;
 
@@ -18,14 +19,14 @@ export function QueryView({ tool, result }: { tool: ConvItem; result?: ConvItem 
   return (
     <div>
       {sql && (
-        <pre className="hljs" style={{ margin: 0, font: '400 11.5px var(--font-mono)', lineHeight: 1.5, padding: '9px 11px', borderBottom: out ? '1px solid var(--color-border)' : 'none', maxHeight: 220, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+        <pre className="hljs" style={{ margin: 0, font: `400 ${fontVar(11.5)} var(--font-mono)`, lineHeight: 1.5, padding: '9px 11px', borderBottom: out ? '1px solid var(--color-border)' : 'none', maxHeight: 220, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
           <HighlightedCode code={sql} lang="sql" />
         </pre>
       )}
       {result && (table
         ? <ResultTable columns={table.columns} rows={table.rows} />
         : (out.trim()
-          ? <pre style={{ margin: 0, font: '400 11.5px var(--font-mono)', lineHeight: 1.5, padding: '9px 11px', maxHeight: 280, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: result.isError ? 'var(--color-status-red)' : 'var(--color-text-secondary)' }}>{out}</pre>
+          ? <pre style={{ margin: 0, font: `400 ${fontVar(11.5)} var(--font-mono)`, lineHeight: 1.5, padding: '9px 11px', maxHeight: 280, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: result.isError ? 'var(--color-status-red)' : 'var(--color-text-secondary)' }}>{out}</pre>
           : null))}
     </div>
   );
@@ -37,11 +38,11 @@ function ResultTable({ columns, rows }: { columns: string[]; rows: string[][] })
   const td: React.CSSProperties = { padding: '4px 9px', borderBottom: '1px solid var(--color-border)', color: 'var(--color-text-primary)', whiteSpace: 'nowrap', maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis' };
   return (
     <div style={{ maxHeight: 320, overflow: 'auto' }}>
-      <table style={{ borderCollapse: 'collapse', font: '400 11.5px var(--font-mono)', minWidth: '100%' }}>
+      <table style={{ borderCollapse: 'collapse', font: `400 ${fontVar(11.5)} var(--font-mono)`, minWidth: '100%' }}>
         <thead><tr>{columns.map((c, i) => <th key={i} style={th}>{c}</th>)}</tr></thead>
         <tbody>{shown.map((r, ri) => <tr key={ri}>{columns.map((_, ci) => <td key={ci} style={td} title={r[ci] ?? ''}>{r[ci] ?? ''}</td>)}</tr>)}</tbody>
       </table>
-      {rows.length > MAX_ROWS && <div style={{ padding: '6px 9px', color: 'var(--color-text-tertiary)', fontSize: 11 }}>+{rows.length - MAX_ROWS} more rows</div>}
+      {rows.length > MAX_ROWS && <div style={{ padding: '6px 9px', color: 'var(--color-text-tertiary)', fontSize: fontVar(11) }}>+{rows.length - MAX_ROWS} more rows</div>}
     </div>
   );
 }

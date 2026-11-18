@@ -2,6 +2,7 @@ import type { ConvItem } from '../../../api/types';
 import { langFromPath } from '../../../lib/markdown';
 import { HighlightedCode } from '../../HighlightedCode';
 import { lineDiff, type DiffLine } from './diff';
+import { fontVar } from '../../../lib/fontSize';
 
 /** One block of diff lines. Exported for the diff review (W3-G), which shows git's own patch with it. */
 export function Hunk({ lines }: { lines: DiffLine[] }) {
@@ -9,7 +10,7 @@ export function Hunk({ lines }: { lines: DiffLine[] }) {
   const fg = (t: DiffLine['type']) => t === 'add' ? 'var(--color-status-green)' : t === 'del' ? 'var(--color-status-red)' : 'var(--color-text-secondary)';
   const sign = (t: DiffLine['type']) => t === 'add' ? '+' : t === 'del' ? '-' : ' ';
   return (
-    <pre style={{ margin: 0, font: '400 11.5px var(--font-mono)', lineHeight: 1.5, overflow: 'auto', maxHeight: 360 }}>
+    <pre style={{ margin: 0, font: `400 ${fontVar(11.5)} var(--font-mono)`, lineHeight: 1.5, overflow: 'auto', maxHeight: 360 }}>
       {lines.map((l, i) => (
         <div key={i} style={{ background: bg(l.type), color: fg(l.type), padding: '0 11px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
           <span style={{ opacity: 0.6, userSelect: 'none' }}>{sign(l.type)} </span>{l.text}
@@ -26,7 +27,7 @@ export function DiffView({ tool }: { tool: ConvItem }) {
   if (tool.toolName === 'Write') {
     const content = String(input.content ?? '');
     return (
-      <pre className="hljs" style={{ margin: 0, font: '400 11.5px var(--font-mono)', lineHeight: 1.5, padding: '9px 11px', maxHeight: 360, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+      <pre className="hljs" style={{ margin: 0, font: `400 ${fontVar(11.5)} var(--font-mono)`, lineHeight: 1.5, padding: '9px 11px', maxHeight: 360, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
         <HighlightedCode code={content} lang={langFromPath(tool.toolFile)} />
       </pre>
     );

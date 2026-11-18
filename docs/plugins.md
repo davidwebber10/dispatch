@@ -69,7 +69,7 @@ export default function activate(d) {
   function Rundown() {
     const projects = useProjects();   // plain data: [{ id, name, workingDir, archived }]
     return h('div', { style: { padding: 24 } },
-      h('h1', { style: { fontSize: 18 } }, 'Daily rundown'),
+      h('h1', { style: { fontSize: '1.125rem' } }, 'Daily rundown'),
       ...projects.map((p) => h('div', { key: p.id, style: ui.styles.item }, p.name)));
   }
 
@@ -335,6 +335,14 @@ that needs a real color value (a canvas, a chart library) can read one with
 `getComputedStyle(document.documentElement).getPropertyValue('--color-accent')`; read it again
 when `document.documentElement.dataset.theme` changes. The full list is the `:root` block of
 `packages/web/src/theme.css`. `ui.styles` already uses these variables.
+
+**Font sizes: use `rem`, not `px`.** The person sets a text scale in Settings → Appearance (75% to
+150%). The app sets the root font size to 16px times that scale, so `1rem` is 16px at 100%. A size in
+`rem` follows the scale; a size in `px` does not. Write `fontSize: '0.8125rem'` for 13px at 100% (the
+pixel size divided by 16), or use a helper: ``const rem = (px) => `${px / 16}rem` ``. The app's own
+sizes are also variables, `var(--fs-13)` for 13px at 100% (the list is in the same `:root` block). For a
+text box on a phone use `max(16px, 1rem)`: iOS zooms the page when a focused box is under 16px. Keep
+spacing, icons and box sizes in `px`.
 
 ## Permissions and the plugin key
 

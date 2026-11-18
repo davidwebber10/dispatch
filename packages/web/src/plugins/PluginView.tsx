@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { usePluginRegistry, useContributions } from './registry';
 import { useUI } from '../stores/ui';
 import { PluginBoundary } from './PluginBoundary';
+import { fontVar } from '../lib/fontSize';
 
 /** A plugin's screen, by its view key (`plugin:<plugin>:<view>`). */
 export function PluginView({ viewKey }: { viewKey: string }) {
@@ -9,9 +10,9 @@ export function PluginView({ viewKey }: { viewKey: string }) {
   const status = usePluginRegistry((s) => (view ? s.status[view.plugin] : undefined));
   if (!view) {
     return (
-      <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'flex-start', color: 'var(--color-text-tertiary)', fontSize: 13 }}>
+      <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'flex-start', color: 'var(--color-text-tertiary)', fontSize: fontVar(13) }}>
         <span>This plugin screen is not loaded.</span>
-        <button type="button" onClick={() => useUI.getState().setView('workspace')} style={{ height: 30, padding: '0 12px', background: 'transparent', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-secondary)', fontSize: 12, cursor: 'pointer' }}>Back to Threads</button>
+        <button type="button" onClick={() => useUI.getState().setView('workspace')} style={{ height: 30, padding: '0 12px', background: 'transparent', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-secondary)', fontSize: fontVar(12), cursor: 'pointer' }}>Back to Threads</button>
       </div>
     );
   }

@@ -36,6 +36,7 @@ import { AllAgentsView } from '../agents/AllAgentsView';
 import { usesOsLook } from '../../lib/hostContext';
 import { useActiveTheme } from '../../themes/apply';
 import { useNavigation } from '../../stores/navigation';
+import { fontVar } from '../../lib/fontSize';
 const OsTopBarActions = lazy(() => import('./os').then((m) => ({ default: m.OsTopBarActions })));
 
 // The desktop shell: the icon rail and the view it shows (engineering program 2026-11-09, W2-E).
@@ -155,7 +156,7 @@ function AutomationsView() {
   };
   return (
     <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: 'var(--color-base)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', height: 56, padding: '0 20px', flexShrink: 0, borderBottom: '1px solid var(--color-border)', font: '600 16px var(--font-sans)', color: 'var(--color-text-primary)' }}>Automations</div>
+      <div style={{ display: 'flex', alignItems: 'center', height: 56, padding: '0 20px', flexShrink: 0, borderBottom: '1px solid var(--color-border)', font: `600 ${fontVar(16)} var(--font-sans)`, color: 'var(--color-text-primary)' }}>Automations</div>
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', maxWidth: 900, width: '100%', margin: '0 auto' }}>
         <AllAgentsView onOpenAgent={open} />
       </div>

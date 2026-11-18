@@ -11,6 +11,7 @@ import { languageFor } from '../../lib/editorLanguage';
 import { CsvGrid } from './CsvGrid';
 import { useTabs } from '../../stores/tabs';
 import { clearDraft, getDraft, hasDraft, setDraft } from '../../lib/fileDrafts';
+import { fontVar } from '../../lib/fontSize';
 
 // Across tab switches (TabHost unmounts the inactive tab) we keep, in-memory for the
 // session: each tab's rendered-markdown scroll position (by terminal id) and each file's
@@ -143,27 +144,27 @@ export function FileEditorTab({ terminal }: { terminal: Terminal }) {
   // markdown reads "view | edit"; a CSV reads "table | raw" — same two modes underneath.
   const label = (m: 'view' | 'edit') => (csv ? (m === 'view' ? 'table' : 'raw') : m);
   const tab = (m: 'view' | 'edit') => (
-    <button key={m} onClick={() => setMode(m)} style={{ padding: '3px 12px', borderRadius: 'var(--radius-sm)', border: 'none', cursor: 'pointer', fontSize: 12, textTransform: 'capitalize', background: mode === m ? 'var(--color-accent)' : 'transparent', color: mode === m ? 'var(--color-on-accent)' : 'var(--color-text-secondary)', fontWeight: mode === m ? 600 : 400 }}>{label(m)}</button>
+    <button key={m} onClick={() => setMode(m)} style={{ padding: '3px 12px', borderRadius: 'var(--radius-sm)', border: 'none', cursor: 'pointer', fontSize: fontVar(12), textTransform: 'capitalize', background: mode === m ? 'var(--color-accent)' : 'transparent', color: mode === m ? 'var(--color-on-accent)' : 'var(--color-text-secondary)', fontWeight: mode === m ? 600 : 400 }}>{label(m)}</button>
   );
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, background: 'var(--color-terminal)' }}>
-      <div style={{ height: 40, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', background: 'var(--color-terminal)', borderBottom: '1px solid var(--color-border)', fontSize: 13 }}>
+      <div style={{ height: 40, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', background: 'var(--color-terminal)', borderBottom: '1px solid var(--color-border)', fontSize: fontVar(13) }}>
         <span style={{ fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{path}</span>
-        {dirty && <span style={{ color: 'var(--color-status-yellow)', fontSize: 11 }}>● unsaved</span>}
+        {dirty && <span style={{ color: 'var(--color-status-yellow)', fontSize: fontVar(11) }}>● unsaved</span>}
         {rich && (
           <div style={{ display: 'inline-flex', marginLeft: 6, background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', padding: 2 }}>
             {tab('view')}{tab('edit')}
           </div>
         )}
-        <button onClick={trySave} disabled={!dirty} style={{ marginLeft: 'auto', height: 26, padding: '0 12px', background: dirty ? 'var(--color-accent)' : 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', color: dirty ? 'var(--color-on-accent)' : 'var(--color-text-secondary)', fontWeight: 600, fontSize: 12 }}>Save</button>
+        <button onClick={trySave} disabled={!dirty} style={{ marginLeft: 'auto', height: 26, padding: '0 12px', background: dirty ? 'var(--color-accent)' : 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', color: dirty ? 'var(--color-on-accent)' : 'var(--color-text-secondary)', fontWeight: 600, fontSize: fontVar(12) }}>Save</button>
       </div>
       {loadError && !dirty && !fileCache.has(ck)
-        ? <div style={{ padding: 16, color: 'var(--color-text-secondary)', font: '400 12px var(--font-mono)', display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'flex-start' }}>
+        ? <div style={{ padding: 16, color: 'var(--color-text-secondary)', font: `400 ${fontVar(12)} var(--font-mono)`, display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'flex-start' }}>
             <span>This file could not be read. It may have been deleted, or it is not a regular file.</span>
             <span style={{ color: 'var(--color-text-tertiary)' }}>{loadError}</span>
             <button onClick={() => setRetry((n) => n + 1)}
-              style={{ padding: '4px 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 12 }}>
+              style={{ padding: '4px 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: fontVar(12) }}>
               Retry
             </button>
           </div>

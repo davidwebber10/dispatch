@@ -27,6 +27,7 @@ import { LedgerRefPopover } from './components/LedgerChips';
 import { LedgerSourcePanel } from './components/LedgerSourcePanel';
 import { ThreadDetail } from './components/ThreadDetail';
 import { WorkerLightbox } from './components/WorkerLightbox';
+import { fontVar } from '../../lib/fontSize';
 
 // Pulsing count pill that rides the "Work" tab title — surfaces the live working-agent count
 // (the value the old header badge showed) with a breathing accent dot as a subtle "active
@@ -49,7 +50,7 @@ function WorkCountPill({ count, queuedCount }: { count: number; queuedCount: num
         border: '1px solid var(--accLine)',
         color: 'var(--acc)',
         fontFamily: 'var(--mono)',
-        fontSize: 10.5,
+        fontSize: fontVar(10.5),
         fontWeight: 700,
         lineHeight: 1.4,
       }}
@@ -83,7 +84,7 @@ function DecisionCountPill({ count }: { count: number }) {
         border: '1px solid var(--yellowLine)',
         color: 'var(--yellow)',
         fontFamily: 'var(--mono)',
-        fontSize: 10.5,
+        fontSize: fontVar(10.5),
         fontWeight: 700,
         lineHeight: 1.4,
       }}
@@ -118,7 +119,7 @@ export function OverseerMobile({ onBack }: { onBack?: () => void }) {
     borderRadius: 'var(--radius-md)',
     border: 'none',
     fontFamily: 'inherit',
-    fontSize: 12,
+    fontSize: fontVar(12),
     fontWeight: 600,
     cursor: 'pointer',
   } as const;
@@ -150,7 +151,7 @@ export function OverseerMobile({ onBack }: { onBack?: () => void }) {
             <Icon name="ph-arrow-left" size={20} color="var(--acc)" />
           </button>
         )}
-        <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--tp)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+        <span style={{ fontSize: fontVar(15), fontWeight: 600, color: 'var(--tp)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
         <span style={{ flex: 1 }} />
         {/* session menu (⋯) — Restart / New session / Previous sessions. Opens downward:
             the header is at the top of the pane. */}

@@ -1,4 +1,5 @@
 import { useBoxRestart } from '../../lib/boxRestart';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * The quiet "Reconnecting…" pill while a hosted workspace restarts (lib/boxRestart.ts). Token-styled,
@@ -13,10 +14,10 @@ export function BoxRestartPill() {
     <div role="status" aria-live="polite" data-testid="box-restart" style={{
       position: 'fixed', left: '50%', bottom: 24, transform: 'translateX(-50%)', zIndex: 1000,
       padding: '6px 14px', borderRadius: 'var(--radius-md)', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)',
-      color: 'var(--color-text-secondary)', fontSize: 12.5, textAlign: 'center',
+      color: 'var(--color-text-secondary)', fontSize: fontVar(12.5), textAlign: 'center',
     }}>
       Reconnecting…
-      {slow && <div data-testid="box-restart-slow" style={{ marginTop: 2, fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>This takes longer than usual.</div>}
+      {slow && <div data-testid="box-restart-slow" style={{ marginTop: 2, fontSize: fontVar(11.5), color: 'var(--color-text-tertiary)' }}>This takes longer than usual.</div>}
     </div>
   );
 }

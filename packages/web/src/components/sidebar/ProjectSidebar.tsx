@@ -12,6 +12,7 @@ import { revealIn } from '../../lib/reveal';
 import { useProjectsView } from '../../stores/projectsView';
 import { AllThreadsView } from '../mobile/AllThreadsView';
 import { useAgentUI } from '../../stores/agentUI';
+import { fontVar } from '../../lib/fontSize';
 
 type Sort = 'recent' | 'alpha' | 'custom';
 
@@ -139,7 +140,7 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent, onDispa
           const on = view === key;
           return (
             <button key={key} type="button" role="tab" aria-selected={on} onClick={() => useProjectsView.getState().setView(key)}
-              style={{ flex: 1, height: 28, border: 'none', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontSize: 12.5, fontWeight: on ? 600 : 500, background: on ? 'var(--color-pane)' : 'transparent', color: on ? 'var(--color-text-primary)' : 'var(--color-text-secondary)', boxShadow: on ? '0 1px 2px var(--color-shadow)' : 'none' }}>
+              style={{ flex: 1, height: 28, border: 'none', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontSize: fontVar(12.5), fontWeight: on ? 600 : 500, background: on ? 'var(--color-pane)' : 'transparent', color: on ? 'var(--color-text-primary)' : 'var(--color-text-secondary)', boxShadow: on ? '0 1px 2px var(--color-shadow)' : 'none' }}>
               {label}
             </button>
           );
@@ -149,16 +150,16 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent, onDispa
       {/* The Threads view owns its search row: the shared FilterBar (search + Filters). */}
       {!threads && <div data-testid="sidebar-search-row" style={{ position: 'sticky', top: 0, zIndex: 2, display: 'flex', gap: 6, alignItems: 'center', padding: '8px 8px 10px', background: 'color-mix(in srgb, var(--color-pane) 62%, transparent)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderBottom: '1px solid color-mix(in srgb, var(--color-text-emphasis) 6%, transparent)' }}>
         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search projects"
-          style={{ flex: 1, minWidth: 0, height: 32, padding: '0 10px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontSize: 13 }} />
+          style={{ flex: 1, minWidth: 0, height: 32, padding: '0 10px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontSize: fontVar(13) }} />
         <div style={{ position: 'relative' }}>
           <button title="Sort" aria-label="Sort projects" onClick={() => setSortOpen((o) => !o)} style={{ ...icon, background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', color: 'var(--color-text-secondary)' }}><ArrowsDownUp size={16} weight="bold" /></button>
           {sortOpen && (
             <>
               <div onClick={() => setSortOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 90 }} />
               <div style={{ position: 'absolute', top: 36, right: 0, zIndex: 91, minWidth: 160, background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', padding: 4, boxShadow: '0 20px 50px -20px var(--color-shadow-strong)' }}>
-                <div style={{ font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)', padding: '4px 8px' }}>SORT BY</div>
+                <div style={{ font: `500 ${fontVar(10)} var(--font-mono)`, letterSpacing: '1.2px', color: 'var(--color-text-tertiary)', padding: '4px 8px' }}>SORT BY</div>
                 {SORTS.map(([v, label]) => (
-                  <button key={v} onClick={() => { setSort(v); setSortOpen(false); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 8px', background: sort === v ? 'var(--color-hover)' : 'transparent', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>
+                  <button key={v} onClick={() => { setSort(v); setSortOpen(false); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 8px', background: sort === v ? 'var(--color-hover)' : 'transparent', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: fontVar(13) }}>
                     {label}{sort === v ? '  ·' : ''}
                   </button>
                 ))}
@@ -179,7 +180,7 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent, onDispa
           <ProjectCard session={s} active={s.id === activeId} open={expanded.has(s.id)} onToggle={toggleExpand} onSelectTab={selectTab} onSelectAgent={onSelectAgent ? selectAgent : undefined} onNewAgent={onNewAgent ? newAgent : undefined} onDispatch={onDispatch ? dispatch : undefined} />
         )}
       />
-      {!filtered.length && <div style={{ color: 'var(--color-text-tertiary)', fontSize: 12.5, padding: '4px 6px' }}>No projects</div>}
+      {!filtered.length && <div style={{ color: 'var(--color-text-tertiary)', fontSize: fontVar(12.5), padding: '4px 6px' }}>No projects</div>}
       </div>
       )}
       </div>

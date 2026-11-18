@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { MoonGlyph as Moon, SunGlyph as Sun, UserGlyph as User } from './OsIcon';
 import { useOsShell } from './OsAppSwitcher';
+import { fontVar } from '../../../lib/fontSize';
 
 function initials(name: string): string {
   const parts = name.replace(/@.*/, '').split(/[\s._-]+/).filter(Boolean);
@@ -23,7 +24,7 @@ export function OsTopBarActions({ kind, onFlipTheme, onAccount, before }: { kind
       </button>
       <button type="button" className="os-icon-btn" title={shell?.user?.email ?? 'Account'} aria-label="Account"
         onClick={onAccount}
-        style={{ width: 32, height: 32, borderRadius: '50%', background: 'color-mix(in srgb, var(--color-accent) 18%, transparent)', color: 'var(--color-text-primary)', font: '600 12px var(--font-sans)' }}>
+        style={{ width: 32, height: 32, borderRadius: '50%', background: 'color-mix(in srgb, var(--color-accent) 18%, transparent)', color: 'var(--color-text-primary)', font: `600 ${fontVar(12)} var(--font-sans)` }}>
         {name ? initials(name) : <UserGlyph />}
       </button>
     </div>

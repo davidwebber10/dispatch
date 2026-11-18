@@ -7,11 +7,12 @@ import { Segmented } from '../common/Segmented';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { useDispatchName } from '../../stores/settings';
 import { Button } from '../ui';
+import { fontVar } from '../../lib/fontSize';
 
 type Mode = 'claude' | SpinnerVerbs['mode'];
 const MODES: [Mode, string][] = [['claude', "Claude's own"], ['append', "Add to Claude's"], ['replace', 'Only mine']];
 
-const chip = { height: 28, padding: '0 11px', background: 'transparent', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-pill)', color: 'var(--color-text-secondary)', fontSize: 12, cursor: 'pointer' } as const;
+const chip = { height: 28, padding: '0 11px', background: 'transparent', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-pill)', color: 'var(--color-text-secondary)', fontSize: fontVar(12), cursor: 'pointer' } as const;
 
 /**
  * Settings → Agents → Claude Code: the words shown while Claude works ("Flibbertigibbeting…").
@@ -62,16 +63,16 @@ export function SpinnerWordsField({ value, onSave, sets = [], onSaveSets }: {
               onChange={(e) => setText(e.target.value)} onBlur={() => save(mode, text)}
               style={{ ...fieldFor(isMobile), height: 'auto', minHeight: 72, padding: '8px 10px', resize: 'vertical', width: '100%', boxSizing: 'border-box', lineHeight: 1.45 }}
             />
-            <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>Separate the words with commas. CLI threads get them when they start or restart.</div>
+            <div style={{ fontSize: fontVar(12), color: 'var(--color-text-tertiary)' }}>Separate the words with commas. CLI threads get them when they start or restart.</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
-              <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginRight: 2 }}>Start from</span>
+              <span style={{ fontSize: fontVar(12), color: 'var(--color-text-tertiary)', marginRight: 2 }}>Start from</span>
               {WORD_SETS.map((s) => (
                 <button key={s.name} type="button" style={chip} title={s.words.join(', ')}
                   onClick={() => { const t = s.words.join(', '); setText(t); save(mode, t); }}>{s.name}</button>
               ))}
               {sets.map((s) => (
                 <span key={`mine-${s.name}`} data-testid="my-word-set" style={{ ...chip, display: 'inline-flex', alignItems: 'center', gap: 4, paddingRight: 4, color: 'var(--color-text-primary)', borderColor: 'var(--color-accent)' }}>
-                  <button type="button" title={s.words.join(', ')} style={{ background: 'none', border: 'none', color: 'inherit', fontSize: 12, cursor: 'pointer', padding: 0 }}
+                  <button type="button" title={s.words.join(', ')} style={{ background: 'none', border: 'none', color: 'inherit', fontSize: fontVar(12), cursor: 'pointer', padding: 0 }}
                     onClick={() => { const t = s.words.join(', '); setText(t); save(mode, t); }}>{s.name}</button>
                   {onSaveSets && (
                     <button type="button" aria-label={`Delete set ${s.name}`} title="Delete this set"

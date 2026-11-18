@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Sidebar } from '@phosphor-icons/react';
 import { useUI } from '../../stores/ui';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * The projects/details panel collapse toggles. They sit at the two ENDS of the
@@ -37,7 +38,7 @@ export function PanelToggle({ side, count = 0 }: { side: 'left' | 'right'; count
         <span data-testid="panel-toggle-count" style={{
           position: 'absolute', top: 6, right: 3, minWidth: 14, height: 14, padding: '0 3px', borderRadius: 'var(--radius-sm)',
           background: 'var(--color-status-yellow)', color: 'var(--color-pane)',
-          font: '700 9.5px var(--font-mono)', lineHeight: '14px', textAlign: 'center',
+          font: `700 ${fontVar(9.5)} var(--font-mono)`, lineHeight: '14px', textAlign: 'center',
         }}>{count}</span>
       )}
     </button>

@@ -43,6 +43,7 @@ import { controlPlaneTimeline } from '../timeline';
 import { ControlPlaneSetupCard } from './SetupCard';
 import { useLedgerChips } from './LedgerChips';
 import { useDispatchName } from '../../../stores/settings';
+import { fontVar } from '../../../lib/fontSize';
 
 // ---- Error notice (centered, red) -------------------------------------------
 // A transient "Failed to send message" surfaced when a directive POST is rejected
@@ -61,7 +62,7 @@ function ErrorMsg({ text }: { text: string }) {
           borderRadius: 'var(--radius-2xl)',
           background: 'color-mix(in srgb, var(--red) 14%, transparent)',
           border: '1px solid color-mix(in srgb, var(--red) 45%, transparent)',
-          fontSize: 11.5,
+          fontSize: fontVar(11.5),
           color: 'var(--red)',
           maxWidth: '80%',
         }}

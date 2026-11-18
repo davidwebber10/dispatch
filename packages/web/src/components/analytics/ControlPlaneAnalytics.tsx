@@ -12,6 +12,8 @@ import type {
   AgentSeriesKey, ControlPlaneAnalytics as Payload, ControlPlaneProjectRow, MissionStatus,
 } from '../../api/types';
 import { useDispatchName } from '../../stores/settings';
+import { fontVar } from '../../lib/fontSize';
+import { useSettings } from '../../stores/settings';
 
 /*
  * The Control Plane view of the Analytics screen
@@ -83,6 +85,8 @@ export function ControlPlaneAnalytics({ from, projectId, provider }: { from?: st
   // Recharts takes real colors, read from the theme tokens; read again when the theme changes.
   const themeId = useActiveTheme((s) => s.theme.id);
   const theme = useMemo(() => resolveChartTheme(), [themeId]);
+  // Chart text is SVG that Recharts sizes and measures itself, so it gets a number: the pixel size times the text scale.
+  const textScale = useSettings((s) => s.textScale);
   // The same live signal as Usage: the daemon bumps it every time a turn closes.
   const rev = useAnalyticsFeed((s) => s.rev);
   const [data, setData] = useState<Payload | null>(null);
@@ -124,10 +128,10 @@ export function ControlPlaneAnalytics({ from, projectId, provider }: { from?: st
   const settling = data.weeks.filter((week) => weekEnd(week) > data.settlingSince);
 
   const chartH = isMobile ? 200 : 240;
-  const axisTick = { fill: theme.muted, fontSize: 11 };
+  const axisTick = { fill: theme.muted, fontSize: 11 * textScale };
   const legend = (
     <Legend
-      formatter={(v: string) => <span style={{ color: theme.muted, fontSize: 11 }}>{v}</span>}
+      formatter={(v: string) => <span style={{ color: theme.muted, fontSize: fontVar(11) }}>{v}</span>}
       wrapperStyle={{ paddingTop: 4 }}
     />
   );
@@ -164,7 +168,7 @@ export function ControlPlaneAnalytics({ from, projectId, provider }: { from?: st
               <BarChart data={rows.agents} margin={margin}>
                 {grid}
                 {xDays}
-                <YAxis allowDecimals={false} tick={axisTick} tickLine={false} axisLine={false} width={36} />
+                <YAxis allowDecimals={false} tick={axisTick} tickLine={false} axisLine={false} width={Math.round(36 * textScale)} />
                 {chartTooltip(theme, (v, name, item) => [
                   name === 'review' ? `${Number(v)} (${Number(item?.payload?.reviewGates ?? 0)} gates)` : String(v),
                   String(name),
@@ -190,7 +194,7 @@ export function ControlPlaneAnalytics({ from, projectId, provider }: { from?: st
               <BarChart data={rows.tokens} margin={margin}>
                 {grid}
                 {xDays}
-                <YAxis tickFormatter={fmtTokens} tick={axisTick} tickLine={false} axisLine={false} width={48} />
+                <YAxis tickFormatter={fmtTokens} tick={axisTick} tickLine={false} axisLine={false} width={Math.round(48 * textScale)} />
                 {chartTooltip(theme, (v, name) => [fmtTokens(Number(v)), String(name)])}
                 {legend}
                 <Bar dataKey="agents" name="Agents" stackId="tokens" fill={OTHER} stroke={theme.surface} strokeWidth={2} radius={[4, 4, 0, 0]} isAnimationActive={false} />
@@ -208,7 +212,7 @@ export function ControlPlaneAnalytics({ from, projectId, provider }: { from?: st
               <LineChart data={rows.messages} margin={margin}>
                 {grid}
                 {xDays}
-                <YAxis allowDecimals={false} tick={axisTick} tickLine={false} axisLine={false} width={36} />
+                <YAxis allowDecimals={false} tick={axisTick} tickLine={false} axisLine={false} width={Math.round(36 * textScale)} />
                 {chartTooltip(theme)}
                 {legend}
                 <Line type="monotone" dataKey="you" name={`You → ${dispatchName}`} stroke={OTHER} strokeWidth={2} dot={false} isAnimationActive={false} />
@@ -232,12 +236,12 @@ export function ControlPlaneAnalytics({ from, projectId, provider }: { from?: st
                 </defs>
                 {grid}
                 <XAxis dataKey="week" tickFormatter={fmtDay} tick={axisTick} tickLine={false} axisLine={{ stroke: theme.grid }} />
-                <YAxis allowDecimals={false} tick={axisTick} tickLine={false} axisLine={false} width={36} />
+                <YAxis allowDecimals={false} tick={axisTick} tickLine={false} axisLine={false} width={Math.round(36 * textScale)} />
                 {chartTooltip(theme, (v) => [String(v), 'missions completed'])}
                 {settling.length > 0 && (
                   <ReferenceArea
                     x1={settling[0]} x2={settling[settling.length - 1]} fill="url(#cp-settling)" fillOpacity={1} stroke="none"
-                    label={{ value: 'still settling · 7-day idle rule', position: 'insideTop', fill: theme.muted, fontSize: 10 }}
+                    label={{ value: 'still settling · 7-day idle rule', position: 'insideTop', fill: theme.muted, fontSize: 10 * textScale }}
                   />
                 )}
                 {/* One series, named by the title. Pink: a mission is the Control Plane's unit of work. */}
@@ -318,7 +322,7 @@ function ProjectTable({ rows }: { rows: ControlPlaneProjectRow[] }) {
 function Table({ head, align, rows, footer }: {
   head: string[]; align: ('left' | 'right')[]; rows: React.ReactNode[][]; footer?: string;
 }) {
-  const cell: React.CSSProperties = { padding: '7px 10px', borderBottom: '1px solid var(--color-border)', whiteSpace: 'nowrap', fontSize: 12.5 };
+  const cell: React.CSSProperties = { padding: '7px 10px', borderBottom: '1px solid var(--color-border)', whiteSpace: 'nowrap', fontSize: fontVar(12.5) };
   return (
     <div style={{ overflowX: 'auto' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', color: 'var(--color-text-primary)' }}>
@@ -350,7 +354,7 @@ function StatusChip({ status }: { status: MissionStatus }) {
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: 5, border: '1px solid var(--color-border)', borderRadius: 'var(--radius-pill)',
-      padding: '1px 8px', fontSize: 11, color: done ? 'var(--color-text-secondary)' : 'var(--color-text-primary)',
+      padding: '1px 8px', fontSize: fontVar(11), color: done ? 'var(--color-text-secondary)' : 'var(--color-text-primary)',
     }}>
       <span aria-hidden="true">{done ? '✓' : '○'}</span>
       <span>{done ? 'Completed' : 'Active'}</span>

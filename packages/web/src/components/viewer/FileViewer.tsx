@@ -7,6 +7,7 @@ import { isSafeDownloadUrl } from '../../lib/safeUrl';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { Markdown } from '../Markdown';
 import { FIT, atFit, contentSize, distance, midpoint, panTo, swipeOutcome, toggleZoom, zoomAt, type Point, type Size, type View } from './zoom';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * The full-screen file viewer (2026-11-07): one or more files, swiped through on a phone and
@@ -409,8 +410,8 @@ export function FileViewer({ files, index: initial = 0, onClose, label }: { file
       <div onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 3, display: 'flex', alignItems: 'center', gap: 8, padding: 'max(10px, env(safe-area-inset-top)) 12px 10px', background: 'linear-gradient(color-mix(in srgb, var(--color-media-bg) 65%, transparent), transparent)', pointerEvents: 'none' }}>
         <button ref={closeRef} type="button" onClick={onClose} title="Close" aria-label="Close" style={{ ...btn(), pointerEvents: 'auto' }}><X size={18} weight="bold" /></button>
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1, pointerEvents: 'auto' }}>
-          {file.name && <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--color-on-media)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textShadow: '0 1px 2px color-mix(in srgb, var(--color-media-bg) 60%, transparent)' }}>{file.name}</span>}
-          {n > 1 && <span aria-label={`File ${index + 1} of ${n}`} style={{ font: '500 11px var(--font-mono)', color: 'color-mix(in srgb, var(--color-on-media) 70%, transparent)' }}>{index + 1} / {n}</span>}
+          {file.name && <span style={{ fontSize: fontVar(13.5), fontWeight: 600, color: 'var(--color-on-media)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textShadow: '0 1px 2px color-mix(in srgb, var(--color-media-bg) 60%, transparent)' }}>{file.name}</span>}
+          {n > 1 && <span aria-label={`File ${index + 1} of ${n}`} style={{ font: `500 ${fontVar(11)} var(--font-mono)`, color: 'color-mix(in srgb, var(--color-on-media) 70%, transparent)' }}>{index + 1} / {n}</span>}
         </div>
         <div style={{ display: 'flex', gap: 6, pointerEvents: 'auto' }}>
           {kind === 'image' && !mobile && (
@@ -426,7 +427,7 @@ export function FileViewer({ files, index: initial = 0, onClose, label }: { file
           )}
           {kind === 'image' && hasCopies(file) && (
             <a href={file.src} target="_blank" rel="noopener noreferrer" title="Open the original" aria-label="Open the original"
-              style={{ ...btn(), width: 'auto', padding: '0 10px', gap: 5, textDecoration: 'none', font: '600 12.5px var(--font-sans)' }}>
+              style={{ ...btn(), width: 'auto', padding: '0 10px', gap: 5, textDecoration: 'none', font: `600 ${fontVar(12.5)} var(--font-sans)` }}>
               <ArrowSquareOut size={15} weight="bold" />Original
             </a>
           )}
@@ -504,11 +505,11 @@ function TextSlide({ kind, name, body, mobile }: { kind: 'markdown' | 'text'; na
   return (
     <div onClick={(e) => e.stopPropagation()} aria-label={name}
       style={{ width: '100%', maxWidth: 860, height: '100%', overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y', background: 'var(--color-pane)', border: mobile ? 'none' : '1px solid var(--color-border)', borderRadius: mobile ? 0 : 'var(--radius-lg)', padding: mobile ? '14px 16px' : '20px 24px', userSelect: 'text', WebkitUserSelect: 'text', cursor: 'auto' }}>
-      {body === undefined && <div style={{ color: 'var(--color-text-tertiary)', fontSize: 13 }}>Loading…</div>}
-      {body === '\u0000' && <div role="alert" style={{ color: 'var(--color-status-red)', fontSize: 13 }}>Could not load the file.</div>}
+      {body === undefined && <div style={{ color: 'var(--color-text-tertiary)', fontSize: fontVar(13) }}>Loading…</div>}
+      {body === '\u0000' && <div role="alert" style={{ color: 'var(--color-status-red)', fontSize: fontVar(13) }}>Could not load the file.</div>}
       {body !== undefined && body !== '\u0000' && (kind === 'markdown'
         ? <Markdown source={body} />
-        : <pre style={{ margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: '13px/1.55 var(--font-mono)', color: 'var(--color-text-primary)' }}>{body}</pre>)}
+        : <pre style={{ margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: `${fontVar(13)}/1.55 var(--font-mono)`, color: 'var(--color-text-primary)' }}>{body}</pre>)}
     </div>
   );
 }
@@ -518,7 +519,7 @@ function FrameSlide({ file, kind, mobile }: { file: ViewerFile; kind: 'pdf' | 'h
   return (
     <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: kind === 'html' ? 1100 : 900, height: '100%', display: 'flex', flexDirection: 'column', gap: 8, cursor: 'auto' }}>
       {kind === 'pdf' && mobile && (
-        <a href={file.src} target="_blank" rel="noopener noreferrer" style={{ alignSelf: 'center', display: 'inline-flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: 13, textDecoration: 'none' }}>
+        <a href={file.src} target="_blank" rel="noopener noreferrer" style={{ alignSelf: 'center', display: 'inline-flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: fontVar(13), textDecoration: 'none' }}>
           <ArrowSquareOut size={15} weight="bold" /> Open the full pdf
         </a>
       )}

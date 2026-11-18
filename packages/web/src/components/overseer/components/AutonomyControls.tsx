@@ -13,6 +13,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../../api/client';
 import { Icon } from '../atoms';
+import { fontVar } from '../../../lib/fontSize';
 
 type Mode = 'supervised' | 'autonomous';
 export type Scheme = 'scoped' | 'global';
@@ -64,7 +65,7 @@ export function AutonomyToggle({ terminalId, autonomy, scheme = 'scoped' }: { te
           borderRadius: 'var(--radius-sm)',
           background: on ? t.accent : 'transparent',
           color: on ? t.accentFg : t.dim,
-          fontSize: 11,
+          fontSize: fontVar(11),
           fontWeight: 600,
           lineHeight: 1,
           cursor: busy ? 'default' : 'pointer',
@@ -127,7 +128,7 @@ export function InterruptButton({ terminalId, scheme = 'scoped' }: { terminalId:
         background: 'transparent',
         border: `1px solid ${t.border}`,
         color: t.danger,
-        fontSize: 11,
+        fontSize: fontVar(11),
         fontWeight: 500,
         lineHeight: 1,
         cursor: busy ? 'default' : 'pointer',
@@ -152,7 +153,7 @@ const actionBtn = (t: Tokens, color: string, busy: boolean): React.CSSProperties
   background: 'transparent',
   border: `1px solid ${t.border}`,
   color,
-  fontSize: 11,
+  fontSize: fontVar(11),
   fontWeight: 500,
   lineHeight: 1,
   cursor: busy ? 'default' : 'pointer',

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../../api/client';
 import { ClaudeLogin } from '../endless/ClaudeLogin';
 import { claudeCardShown, claudeConnected, useClaudeConnect } from './claudeConnect';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * "Connect your Claude account": the one guided step a person on a hosted box takes before the first
@@ -22,8 +23,8 @@ export function ConnectClaudeCard({ onConnected }: { onConnected?: () => void })
   if (state !== 'needed' || connected) return null;
   return (
     <div data-testid="connect-claude" style={{ flexShrink: 0, maxWidth: 768, width: 'calc(100% - 28px)', boxSizing: 'border-box', margin: '10px auto 0', padding: '14px 16px', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', background: 'var(--color-elevated)', display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--color-text-primary)' }}>Connect your Claude account</div>
-      <div style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>
+      <div style={{ fontWeight: 600, fontSize: fontVar(14), color: 'var(--color-text-primary)' }}>Connect your Claude account</div>
+      <div style={{ fontSize: fontVar(13), color: 'var(--color-text-secondary)' }}>
         Your threads run on your own Claude subscription. Open the Claude page, sign in, then paste the code it shows.
       </div>
       <ClaudeLogin buttonLabel="Connect Claude" onDone={() => { setState('ok'); claudeConnected(); onConnected?.(); }} />

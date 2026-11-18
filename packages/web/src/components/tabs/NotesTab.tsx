@@ -3,6 +3,7 @@ import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { api } from '../../api/client';
 import type { Terminal } from '../../api/types';
+import { fontVar } from '../../lib/fontSize';
 
 export function NotesTab({ terminal }: { terminal: Terminal }) {
   const html = (terminal.config?.html as string) || '';
@@ -22,7 +23,7 @@ export function NotesTab({ terminal }: { terminal: Terminal }) {
   useEffect(() => () => clearTimeout(saveTimer.current), []);
 
   return (
-    <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 20, background: 'var(--color-base)', fontSize: 14, lineHeight: 1.6 }}>
+    <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 20, background: 'var(--color-base)', fontSize: fontVar(14), lineHeight: 1.6 }}>
       <EditorContent editor={editor} />
     </div>
   );

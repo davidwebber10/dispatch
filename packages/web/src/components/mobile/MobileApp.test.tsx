@@ -1,6 +1,7 @@
 import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react';
 import { vi, beforeEach, afterEach, describe, it, expect } from 'vitest';
 import { MobileApp } from './MobileApp';
+import { PHONE_HEADER_H } from '../layout/headerButton';
 import { useProjectsView } from '../../stores/projectsView';
 import { useTabs } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
@@ -60,6 +61,16 @@ afterEach(() => {
 });
 
 describe('MobileApp project header (2026-11-06): the same shape as the thread header', () => {
+  it('the header is 50px at 100% and grows with a larger text scale, so a two-line thread title fits', () => {
+    useProjects.setState({ sessions: [{ id: 's1', name: 'Proj', workingDir: '/tmp/p', provider: 'claude-code', status: 'idle' } as any] });
+    render(<MobileApp />);
+    expect(PHONE_HEADER_H).toBe('max(50px, 3.125rem)'); // 3.125rem is 50px at 100%, 75px at 150%
+    // jsdom rewrites a max() inside a calc() (the browser keeps it), so this checks the parts only.
+    const height = (document.querySelector('header') as HTMLElement).style.height;
+    expect(height).toContain('3.125rem');
+    expect(height).toContain('env(safe-area-inset-top)');
+  });
+
   it('shows usage then a ⋯ project menu, no Previews button; the menu holds Rename and Archive (Previews is a plugin row now)', () => {
     useProjects.setState({ sessions: [{ id: 's1', name: 'Proj', workingDir: '/tmp/p', provider: 'claude-code', status: 'idle' } as any] });
     window.history.pushState({}, '', '/p/s1');

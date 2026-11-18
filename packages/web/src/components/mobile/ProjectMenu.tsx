@@ -6,8 +6,9 @@ import { ConfirmModal } from '../common/ConfirmModal';
 import { RenameProjectModal } from '../sidebar/RenameProjectModal';
 import { useProjects } from '../../stores/projects';
 import { useContributions } from '../../plugins/registry';
+import { fontVar } from '../../lib/fontSize';
 
-const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '13px 12px', background: 'transparent', border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 15, font: 'inherit' };
+const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '13px 12px', background: 'transparent', border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: fontVar(15), font: 'inherit' };
 
 /**
  * The phone's project ⋯ menu (2026-11-06): the project screen's header matches the thread

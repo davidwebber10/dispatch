@@ -3,6 +3,7 @@ import { CloudWarning, Sparkle } from '@phosphor-icons/react';
 import { Spinner } from './common/Spinner';
 import { useSpinnerWords } from '../stores/spinnerWords';
 import { pickWord } from '../lib/spinnerWords';
+import { fontVar } from '../lib/fontSize';
 
 /**
  * The single indeterminate "Working…" indicator, shared by the agent chat and the
@@ -20,7 +21,7 @@ export function WorkingIndicator() {
       <div style={{ flexShrink: 0, width: 24, height: 24, borderRadius: 'var(--radius-sm)', background: 'var(--color-elevated)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <Sparkle size={14} weight="fill" color="var(--color-accent)" className="dispatch-wiggle" />
       </div>
-      <span className="chat-shimmer" style={{ font: '500 13.5px var(--font-sans)' }}>{word}…</span>
+      <span className="chat-shimmer" style={{ font: `500 ${fontVar(13.5)} var(--font-sans)` }}>{word}…</span>
     </div>
   );
 }
@@ -47,14 +48,14 @@ export function CompactingBar({ queued }: { queued: number }) {
     <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <Spinner size={13} />
-        <span className="chat-shimmer" style={{ font: '500 13.5px var(--font-sans)' }}>Compacting context…</span>
-        <span style={{ marginLeft: 'auto', font: '500 12px var(--font-mono)', color: 'var(--color-text-tertiary)', fontVariantNumeric: 'tabular-nums' }}>{elapsed}</span>
+        <span className="chat-shimmer" style={{ font: `500 ${fontVar(13.5)} var(--font-sans)` }}>Compacting context…</span>
+        <span style={{ marginLeft: 'auto', font: `500 ${fontVar(12)} var(--font-mono)`, color: 'var(--color-text-tertiary)', fontVariantNumeric: 'tabular-nums' }}>{elapsed}</span>
       </div>
       <div style={{ position: 'relative', height: 3, borderRadius: 'var(--radius-xs)', background: 'var(--color-hover)', overflow: 'hidden' }}>
         <div className="dispatch-compact-sweep" style={{ position: 'absolute', top: 0, bottom: 0, width: '35%', borderRadius: 'var(--radius-xs)', background: 'var(--color-accent)' }} />
       </div>
       {queued > 0 && (
-        <div style={{ font: '400 11.5px var(--font-sans)', color: 'var(--color-text-tertiary)' }}>
+        <div style={{ font: `400 ${fontVar(11.5)} var(--font-sans)`, color: 'var(--color-text-tertiary)' }}>
           {queued === 1 ? 'The message below sends' : 'The messages below send'} when compacting finishes.
         </div>
       )}
@@ -77,7 +78,7 @@ export function ApiRetryIndicator({ retry }: { retry: { attempt: number; maxRetr
       <div style={{ flexShrink: 0, width: 24, height: 24, borderRadius: 'var(--radius-sm)', background: 'var(--color-elevated)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <CloudWarning size={14} weight="fill" color="var(--color-status-amber)" />
       </div>
-      <span className="chat-shimmer" style={{ font: '500 13.5px var(--font-sans)' }}>{what} — retrying{attempts}…</span>
+      <span className="chat-shimmer" style={{ font: `500 ${fontVar(13.5)} var(--font-sans)` }}>{what} — retrying{attempts}…</span>
     </div>
   );
 }

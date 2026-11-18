@@ -7,6 +7,7 @@ import { useSettings } from '../../stores/settings';
 import { ConfirmModal } from '../common/ConfirmModal';
 import { SettingsGroup, SettingsRow, EmptyState, miniChip } from './ui';
 import { Button } from '../ui';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * Settings → Notifications: devices that receive push notifications (all devices).
@@ -88,7 +89,7 @@ export function PushSubscriptionsList({ now = Date.now }: { now?: () => number }
             <SettingsRow
               icon={deviceIcon(s.label)}
               label={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>{s.label}{s.deviceId === mine && <span style={{ ...miniChip, color: 'var(--color-accent)' }}>This device</span>}</span>}
-              hint={<>{s.lastSentAt ? `Last alert ${timeAgo(s.lastSentAt, t)} ago` : 'No alert yet'} · <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>{s.host}</span></>}
+              hint={<>{s.lastSentAt ? `Last alert ${timeAgo(s.lastSentAt, t)} ago` : 'No alert yet'} · <span style={{ fontFamily: 'var(--font-mono)', fontSize: fontVar(11) }}>{s.host}</span></>}
               control={<Button disabled={busy} aria-label={`Revoke ${s.label}`} variant="ghost" size="sm" style={{ height: 28 }} onClick={() => setPending(s)}>Revoke</Button>}
             />
           </div>

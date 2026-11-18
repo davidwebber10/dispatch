@@ -4,6 +4,7 @@ import { PRODUCT_NAME } from '../../../lib/hostCopy';
 import { OsAppSwitcher, useOsShell } from './OsAppSwitcher';
 import { OsRailItem } from './OsLeftRail';
 import { PRODUCT_ICON } from './OsIcon';
+import { fontVar } from '../../../lib/fontSize';
 
 /**
  * The phone's way into the OS shell (explorer AppShell, mobile): a menu button and the app's name in the
@@ -22,7 +23,7 @@ export function OsMobileMenu({ onSettings }: { onSettings: () => void }) {
       <button type="button" className="os-icon-btn" aria-label="Open navigation" onClick={() => setOpen(true)} style={{ width: 36, height: 36 }}>
         <List size={20} />
       </button>
-      <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, font: '600 18px/28px var(--font-sans)', color: 'var(--color-text-primary)' }}>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, font: `600 ${fontVar(18)}/${fontVar(28)} var(--font-sans)`, color: 'var(--color-text-primary)' }}>
         <Icon size={24} style={{ flexShrink: 0 }} />
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{PRODUCT_NAME}</span>
       </span>

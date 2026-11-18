@@ -3,6 +3,7 @@ import { CaretRight } from '@phosphor-icons/react';
 import type { ReleaseNote } from '../../api/types';
 import { Markdown } from '../Markdown';
 import { splitNoteHeadline } from '../../lib/releaseNotes';
+import { fontVar } from '../../lib/fontSize';
 
 interface Props {
   /** Notes for the pending update — every version between here and the newest, newest first. */
@@ -17,7 +18,7 @@ interface Props {
 const toggle: React.CSSProperties = {
   display: 'flex', alignItems: 'center', gap: 6, width: '100%',
   padding: '6px 2px', background: 'none', border: 'none',
-  color: 'var(--color-text-secondary)', font: '500 12px var(--font-sans, inherit)', cursor: 'pointer',
+  color: 'var(--color-text-secondary)', font: `500 ${fontVar(12)} var(--font-sans, inherit)`, cursor: 'pointer',
 };
 
 const panel: React.CSSProperties = {
@@ -53,10 +54,10 @@ function ReleaseEntry({ entry, first }: { entry: ReleaseNote; first: boolean }) 
       {/* Title row: the version leads; the date and the publishing account are
           metadata beside it. The author comes off the GitHub release itself. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <span style={{ font: '600 13px var(--font-mono)', color: 'var(--color-accent)', letterSpacing: '-.01em' }}>{entry.version}</span>
-        {date && <span style={{ font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{date}</span>}
+        <span style={{ font: `600 ${fontVar(13)} var(--font-mono)`, color: 'var(--color-accent)', letterSpacing: '-.01em' }}>{entry.version}</span>
+        {date && <span style={{ font: `400 ${fontVar(10.5)} var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>{date}</span>}
         {entry.author && (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, font: `400 ${fontVar(10.5)} var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>
             {entry.authorAvatarUrl && (
               <img src={entry.authorAvatarUrl} alt="" width={12} height={12}
                 style={{ borderRadius: '50%', display: 'block' }} />
@@ -68,13 +69,13 @@ function ReleaseEntry({ entry, first }: { entry: ReleaseNote; first: boolean }) 
 
       {/* The one line that answers "what changed". */}
       {headline
-        ? <div style={{ marginTop: 3, fontSize: 13, lineHeight: 1.45, color: 'var(--color-text-secondary)' }}>{headline}</div>
-        : !body && <div style={{ marginTop: 3, fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No notes for this release.</div>}
+        ? <div style={{ marginTop: 3, fontSize: fontVar(13), lineHeight: 1.45, color: 'var(--color-text-secondary)' }}>{headline}</div>
+        : !body && <div style={{ marginTop: 3, fontSize: fontVar(12.5), color: 'var(--color-text-tertiary)' }}>No notes for this release.</div>}
 
       {body && (
         <>
           <button type="button" onClick={() => setShowAll((v) => !v)} aria-expanded={showAll}
-            style={{ ...toggle, marginTop: 4, padding: '3px 0', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>
+            style={{ ...toggle, marginTop: 4, padding: '3px 0', fontSize: fontVar(11.5), color: 'var(--color-text-tertiary)' }}>
             <CaretRight size={10} weight="bold" style={{ transform: showAll ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }} />
             {showAll ? 'Hide detail' : 'Full notes'}
           </button>

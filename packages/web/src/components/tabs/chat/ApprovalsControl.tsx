@@ -3,6 +3,7 @@ import { ShieldCheck } from '@phosphor-icons/react';
 import { api } from '../../../api/client';
 import { useTabs, findTerminal } from '../../../stores/tabs';
 import { can } from '../../../lib/profile';
+import { fontVar } from '../../../lib/fontSize';
 
 type Mode = 'auto' | 'ask' | 'smart';
 const LABEL: Record<Mode, string> = { auto: 'Auto', ask: 'Ask', smart: 'Smart' };
@@ -55,7 +56,7 @@ export function ApprovalsControl({ terminalId, floating = false }: { terminalId:
       <ShieldCheck size={15} style={{ margin: '0 4px 0 6px', color: 'var(--color-text-secondary)', flexShrink: 0 }} aria-hidden />
       {(['auto', 'ask', 'smart'] as const).map((m) => (
         <button key={m} type="button" aria-pressed={mode === m} title={HINT[m]} onClick={() => void pick(m)} style={{
-          height: '100%', padding: '0 9px', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', font: '500 12px var(--font-sans)',
+          height: '100%', padding: '0 9px', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', font: `500 ${fontVar(12)} var(--font-sans)`,
           background: mode === m ? 'color-mix(in srgb, var(--color-text-emphasis) 14%, transparent)' : 'transparent',
           color: mode === m ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
         }}>{LABEL[m]}</button>

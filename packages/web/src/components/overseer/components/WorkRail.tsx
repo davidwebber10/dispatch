@@ -16,6 +16,7 @@ import { Spinner } from '../../common/Spinner';
 import { useOverseer, useRenderVals } from '../store';
 import type { AgentThread, Mission, Outcome } from '../types';
 import { useDispatchName } from '../../../stores/settings';
+import { fontVar } from '../../../lib/fontSize';
 
 // Which slice of each mission the rail shows: LIVE (in-progress AgentThreadChips) — the
 // default, keeping the view to only active work — QUEUED (accepted-but-unlaunched workers,
@@ -81,7 +82,7 @@ function AgentThreadChip({ thread }: { thread: AgentThread }) {
             style={{
               flex: 1,
               minWidth: 0,
-              fontSize: 13,
+              fontSize: fontVar(13),
               fontWeight: 600,
               color: 'var(--tp)',
               whiteSpace: 'nowrap',
@@ -101,14 +102,14 @@ function AgentThreadChip({ thread }: { thread: AgentThread }) {
           ) : thread.isScheduled ? (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, flex: 'none' }}>
               <Icon name="ph-moon" size={11} color={thread.dotColor} />
-              <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--ts)' }}>
+              <span style={{ fontFamily: 'var(--mono)', fontSize: fontVar(10.5), color: 'var(--ts)' }}>
                 {thread.statusLabel}
               </span>
             </span>
           ) : (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, flex: 'none' }}>
               <StatusDot color={thread.dotColor} anim={thread.dotAnim} size={6} />
-              <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--ts)' }}>
+              <span style={{ fontFamily: 'var(--mono)', fontSize: fontVar(10.5), color: 'var(--ts)' }}>
                 {thread.statusLabel}
               </span>
             </span>
@@ -117,15 +118,15 @@ function AgentThreadChip({ thread }: { thread: AgentThread }) {
 
         {/* row 2: secondary meta — type · #id (· model, when known) + elapsed */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--ts)' }}>
+          <span style={{ fontFamily: 'var(--mono)', fontSize: fontVar(10.5), color: 'var(--ts)' }}>
             {thread.typeLabel} · #{thread.id}
           </span>
           {thread.model && (
-            <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--tt)' }}>{thread.model}</span>
+            <span style={{ fontFamily: 'var(--mono)', fontSize: fontVar(10), color: 'var(--tt)' }}>{thread.model}</span>
           )}
           <span style={{ flex: 1 }} />
           {thread.elapsed && (
-            <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--tt)', flex: 'none' }}>
+            <span style={{ fontFamily: 'var(--mono)', fontSize: fontVar(10), color: 'var(--tt)', flex: 'none' }}>
               {thread.elapsed}
             </span>
           )}
@@ -138,7 +139,7 @@ function AgentThreadChip({ thread }: { thread: AgentThread }) {
           <div
             className={thread.isWorking ? 'chat-shimmer' : undefined}
             style={{
-              fontSize: 12.5,
+              fontSize: fontVar(12.5),
               whiteSpace: 'nowrap',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
@@ -194,7 +195,7 @@ function QueuedChip({ thread }: { thread: AgentThread }) {
             style={{
               flex: 1,
               minWidth: 0,
-              fontSize: 13,
+              fontSize: fontVar(13),
               fontWeight: 600,
               color: 'var(--tp)',
               whiteSpace: 'nowrap',
@@ -206,7 +207,7 @@ function QueuedChip({ thread }: { thread: AgentThread }) {
           </span>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, flex: 'none' }}>
             <StatusDot color={thread.dotColor} anim="none" size={6} />
-            <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--ts)' }}>
+            <span style={{ fontFamily: 'var(--mono)', fontSize: fontVar(10.5), color: 'var(--ts)' }}>
               {thread.statusLabel}
             </span>
           </span>
@@ -214,7 +215,7 @@ function QueuedChip({ thread }: { thread: AgentThread }) {
 
         {/* row 2: secondary meta — type · #id */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--ts)' }}>
+          <span style={{ fontFamily: 'var(--mono)', fontSize: fontVar(10.5), color: 'var(--ts)' }}>
             {thread.typeLabel} · #{thread.id}
           </span>
         </div>
@@ -235,7 +236,7 @@ function QueuedChip({ thread }: { thread: AgentThread }) {
           color: 'var(--color-on-accent)',
           border: 'none',
           fontFamily: 'inherit',
-          fontSize: 12,
+          fontSize: fontVar(12),
           fontWeight: 600,
           cursor: 'pointer',
         }}
@@ -291,7 +292,7 @@ function OutcomeCard({ outcome }: { outcome: Outcome }) {
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
         <span
           style={{
-            fontSize: 12.5,
+            fontSize: fontVar(12.5),
             color: 'var(--ts)',
             whiteSpace: 'nowrap',
             overflow: 'hidden',
@@ -300,7 +301,7 @@ function OutcomeCard({ outcome }: { outcome: Outcome }) {
         >
           {outcome.title}
         </span>
-        <span style={{ fontFamily: 'var(--mono)', fontSize: 9.5, color: 'var(--tt)' }}>
+        <span style={{ fontFamily: 'var(--mono)', fontSize: fontVar(9.5), color: 'var(--tt)' }}>
           {outcome.typeLabel} #{outcome.id} · {outcome.meta}
           {outcome.outputTokens !== undefined && ` · ${formatTokens(outcome.outputTokens)}`}
         </span>
@@ -344,7 +345,7 @@ function MissionGroup({ mission, tab }: { mission: Mission; tab: RailTab }) {
             display: 'inline-block',
           }}
         />
-        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--tp)' }}>{mission.name}</span>
+        <span style={{ fontSize: fontVar(13), fontWeight: 600, color: 'var(--tp)' }}>{mission.name}</span>
         <span style={{ flex: 1 }} />
         <MonoLabel size={10} color="var(--tt)" spacing="0">
           {mission.summary}
@@ -390,7 +391,7 @@ function FilterToggle({
           background: active ? 'var(--elev)' : 'transparent',
           color: active ? 'var(--tp)' : 'var(--ts)',
           fontFamily: 'var(--mono)',
-          fontSize: 10.5,
+          fontSize: fontVar(10.5),
           letterSpacing: '.06em',
           textTransform: 'uppercase',
           fontWeight: 600,
@@ -431,7 +432,7 @@ function FilterToggle({
 function EmptyFilter({ tab }: { tab: RailTab }) {
   return (
     <div style={{ marginTop: 18, padding: '0 4px', textAlign: 'center' }}>
-      <p style={{ fontSize: 12.5, color: 'var(--ts)', lineHeight: 1.5, margin: 0 }}>
+      <p style={{ fontSize: fontVar(12.5), color: 'var(--ts)', lineHeight: 1.5, margin: 0 }}>
         {tab === 'live'
           ? 'No active work right now.'
           : tab === 'queued'
@@ -472,14 +473,14 @@ function EmptyMissions() {
           alignItems: 'center',
           justifyContent: 'center',
           color: 'var(--tt)',
-          fontSize: 22,
+          fontSize: fontVar(22),
         }}
       >
         <Icon name="ph-stack" size={22} color="var(--tt)" />
       </div>
 
       {/* text */}
-      <p style={{ fontSize: 13, color: 'var(--ts)', lineHeight: 1.5, margin: 0 }}>
+      <p style={{ fontSize: fontVar(13), color: 'var(--ts)', lineHeight: 1.5, margin: 0 }}>
         No missions yet.
         <br />
         Tell {dispatchName} what to work on.

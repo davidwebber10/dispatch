@@ -13,6 +13,7 @@ import { docName, projectForPath } from '../../lib/docPaths';
 import { classifyLink } from '../../lib/docLinks';
 import { useProjects } from '../../stores/projects';
 import { formatStart } from './paneParts';
+import { fontVar } from '../../lib/fontSize';
 
 /** The editors "Open in editor" can use: the browser opens the editor's URL, the daemon runs nothing. */
 const EDITOR_SCHEME: Record<string, string> = { vscode: 'vscode', cursor: 'cursor', zed: 'zed' };
@@ -42,7 +43,7 @@ const ERROR_TEXT: Record<number, string> = {
   413: 'This file is larger than 2 MB, so it does not open here.',
 };
 
-const mono = (size: number, color = 'var(--color-text-tertiary)'): React.CSSProperties => ({ fontFamily: 'var(--font-mono)', fontSize: size, color });
+const mono = (size: number, color = 'var(--color-text-tertiary)'): React.CSSProperties => ({ fontFamily: 'var(--font-mono)', fontSize: fontVar(size), color });
 
 /** The path of `abs` inside `folder`, or null when it is not inside it. */
 function relativeTo(abs: string, folder: string | undefined): string | null {
@@ -159,7 +160,7 @@ export function DocViewer({ owner }: { owner?: string } = {}) {
   };
   const action: React.CSSProperties = {
     height: mobile ? 44 : 32, display: 'inline-flex', alignItems: 'center', gap: 6, padding: mobile ? '0 12px' : '0 10px', borderRadius: 'var(--radius-md)',
-    border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: 12.5, cursor: 'pointer', whiteSpace: 'nowrap',
+    border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: fontVar(12.5), cursor: 'pointer', whiteSpace: 'nowrap',
   };
   const chip: React.CSSProperties = {
     display: 'inline-flex', alignItems: 'center', gap: 5, minHeight: 22, padding: '1px 7px', boxSizing: 'border-box', borderRadius: 'var(--radius-sm)', maxWidth: '100%',
@@ -169,7 +170,7 @@ export function DocViewer({ owner }: { owner?: string } = {}) {
   const copyButton = <button type="button" onClick={() => void copyPath()} style={action}><Copy size={15} aria-hidden />Copy path</button>;
 
   const message = (icon: React.ReactNode, text: string, alert: boolean, actions?: React.ReactNode) => (
-    <div role={alert ? 'alert' : undefined} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '32px 16px', textAlign: 'center', fontSize: 13.5, color: 'var(--color-text-secondary)' }}>
+    <div role={alert ? 'alert' : undefined} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '32px 16px', textAlign: 'center', fontSize: fontVar(13.5), color: 'var(--color-text-secondary)' }}>
       {icon}{text}{actions && <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>{actions}</div>}
     </div>
   );
@@ -189,7 +190,7 @@ export function DocViewer({ owner }: { owner?: string } = {}) {
             </button>
           ) : !mobile && <FileText size={15} aria-hidden style={{ color: 'var(--color-text-secondary)', flex: 'none' }} />}
           <h2 title={doc?.path ?? open.path}
-            style={{ margin: mobile ? '12px 0 0' : 0, flex: 1, minWidth: 0, font: `600 ${mobile ? 13.5 : 14}px/1.45 var(--font-mono)`, color: 'var(--color-text-primary)', ...(mobile ? { overflowWrap: 'anywhere' } : { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }) }}>
+            style={{ margin: mobile ? '12px 0 0' : 0, flex: 1, minWidth: 0, font: `600 ${fontVar(mobile ? 13.5 : 14)}/1.45 var(--font-mono)`, color: 'var(--color-text-primary)', ...(mobile ? { overflowWrap: 'anywhere' } : { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }) }}>
             {name}
           </h2>
           <button type="button" aria-label="Close" onClick={close} style={iconButton}><X size={15} /></button>
@@ -230,7 +231,7 @@ export function DocViewer({ owner }: { owner?: string } = {}) {
             </div>
             <div key={`${open.project}:${open.branch ?? ''}:${open.worktree ?? ''}:${open.path}`}
               style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-base)' }}>
-              <article onClick={onLink} onAuxClick={(e) => { if (e.button === 1) onLink(e); }} style={{ maxWidth: 680, margin: '0 auto', padding: mobile ? '24px 20px 34px' : '32px 24px', fontSize: 14.5, lineHeight: 1.75 }}>
+              <article onClick={onLink} onAuxClick={(e) => { if (e.button === 1) onLink(e); }} style={{ maxWidth: 680, margin: '0 auto', padding: mobile ? '24px 20px 34px' : '32px 24px', fontSize: fontVar(14.5), lineHeight: 1.75 }}>
                 <Markdown source={doc.markdown} docs={docs} />
               </article>
             </div>

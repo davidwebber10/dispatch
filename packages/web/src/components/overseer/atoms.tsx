@@ -51,6 +51,7 @@ import {
   WifiHigh,
   X,
 } from '@phosphor-icons/react';
+import { fontVar } from '../../lib/fontSize';
 
 // ph-* class → @phosphor-icons/react component (spec §8 — every class covered).
 const ICONS: Record<string, PhosphorIcon> = {
@@ -197,7 +198,7 @@ export function MonoLabel({
     <span
       style={{
         fontFamily: 'var(--mono)',
-        fontSize: size,
+        fontSize: fontVar(size),
         letterSpacing: spacing,
         textTransform: 'uppercase',
         color,
@@ -239,7 +240,7 @@ export function PillButton({
         color: fg,
         border: bd,
         fontFamily: 'inherit',
-        fontSize: 12,
+        fontSize: fontVar(12),
         fontWeight: 600,
         cursor: 'pointer',
         ...style,
@@ -281,5 +282,5 @@ export const overseerRootStyle: CSSProperties = {
   background: 'var(--canvas)',
   color: 'var(--tp)',
   fontFamily: "'IBM Plex Sans', sans-serif",
-  fontSize: 13,
+  fontSize: fontVar(13),
 } as CSSProperties;
