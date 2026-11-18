@@ -46,11 +46,11 @@ export default function activate(d) {
       ...(rows ?? []).map(({ session, threads }) => card([
         h('div', { key: 'h', style: { display: 'flex', alignItems: 'baseline', gap: 8 } },
           h('span', { style: { fontSize: '0.90625rem', fontWeight: 600, color: 'var(--color-text-primary)' } }, session.name),
-          h('span', { style: { font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' } }, `${threads.length} thread${threads.length === 1 ? '' : 's'}`)),
+          h('span', { style: { font: '400 0.6875rem var(--font-mono)', color: 'var(--color-text-tertiary)' } }, `${threads.length} thread${threads.length === 1 ? '' : 's'}`)),
         ...threads.map((t) => h('div', { key: t.id, style: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, fontSize: '0.8125rem' } },
           h('span', { style: { width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: t.status === 'done' ? 'var(--color-accent)' : t.status === 'needs_input' ? 'var(--color-status-yellow)' : '#46464d' } }),
           h('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--color-text-primary)' } }, t.label),
-          h('span', { style: { font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' } }, `${t.kind} · ${t.status} · ${timeAgo(t.lastActivityAt ?? t.createdAt)}`))),
+          h('span', { style: { font: '400 0.6875rem var(--font-mono)', color: 'var(--color-text-tertiary)' } }, `${t.kind} · ${t.status} · ${timeAgo(t.lastActivityAt ?? t.createdAt)}`))),
       ])),
     );
   }

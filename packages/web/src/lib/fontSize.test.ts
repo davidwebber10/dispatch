@@ -36,47 +36,83 @@ describe('--fs-N variables in theme.css', () => {
 describe('no fixed pixel font size', () => {
   const SRC = resolve(__dirname, '..');
   const PLUGINS = resolve(__dirname, '../../../plugins');
-  /** Text in a fixed-size box (an icon badge, a usage ring): it must NOT grow, so it stays in px. */
-  const ALLOWED_FILES = ['components/common/FileIcon.tsx', 'components/layout/UsageChip.tsx'];
+  /**
+   * Text in a fixed-size box (an icon badge, a usage ring) must NOT grow, so it stays in px. Each file
+   * lists how many such lines it has: one more is a failure, so the exception does not spread.
+   */
+  const ALLOWED: Record<string, number> = { 'components/common/FileIcon.tsx': 1, 'components/layout/UsageChip.tsx': 3 };
   const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const p = join(dir, e.name);
     if (e.isDirectory()) return e.name === 'node_modules' ? [] : walk(p);
     return /\.(tsx?|css)$/.test(e.name) && !/\.test\.tsx?$/.test(e.name) ? [p] : [];
   });
   const files = [
-    ...walk(SRC).filter((f) => !ALLOWED_FILES.some((a) => f.endsWith(a))),
+    ...walk(SRC),
     ...readdirSync(PLUGINS, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => join(PLUGINS, e.name, 'web.js')).filter((f) => existsSync(f)),
   ];
-  const RULES: [string, RegExp][] = [
-    // fontSize: 13   (a number times the text scale is fine: a chart or a canvas needs a number)
-    ['fontSize: <number>', /\bfontSize:\s*\d+(\.\d+)?(?!\s*\*\s*textScale)(?=\s*[,}\n)]|\s*$)/],
+  /** Script rules (ts, tsx, js). Each stays inside one value, so a later `padding: '8px'` on the line is not a hit. */
+  const SCRIPT_RULES: [string, RegExp][] = [
+    // fontSize: 13   (0 is not a size; a number times the text scale is fine: a chart or a canvas needs a number)
+    ['fontSize: <number>', /\bfontSize:\s*(?!0\s*[,})])\d+(\.\d+)?(?!\s*\*\s*textScale)(?=\s*[,}\n)]|\s*$)/],
     // fontSize: phone ? 15 : 13
     ['fontSize: a ? <number> : <number>', /\bfontSize:\s*[\w.!]+\s*\?\s*\d+(\.\d+)?\s*:\s*\d+(\.\d+)?(?=\s*[,}\n)])/],
+    // fontSize: '13px'
+    ["fontSize: '<number>px'", /\bfontSize:\s*['"`]\d+(\.\d+)?px['"`]/],
     // font: '600 12px var(--font-sans)' and font: `500 ${m ? 14 : 12}px ...` (a line height after "/" may stay in px)
-    ['font shorthand with a px size', /\bfont:\s*['"`][^'"`\n]*?(?<![/\w.])(\d+(\.\d+)?|\$\{[^}]*\})px/],
-    // CSS: font-size: 14px; font: 400 12px/18px ...
-    ['CSS font size in px', /(?:^|[;{\s])font(?:-size)?:\s*[^;}\n]*?(?<![/\w.-])\d+(\.\d+)?px/],
+    ['font shorthand with a px size', /\bfont:\s*(['"`])(?:(?!\1).)*?(?<![\w.])(?<!\/\s*)(\d+(\.\d+)?|\$\{[^}]*\})px/],
   ];
+  /** The size of a CSS declaration's value: `font-size: V`, or the size part of the `font: V` shorthand (before "/"). */
+  const cssHit = (line: string): boolean => {
+    for (const m of line.matchAll(/(?:^|[;{\s])(font(?:-size)?)\s*:\s*([^;}]*)/g)) {
+      const value = m[2].trim();
+      if (m[1] === 'font-size') { if (/^\d+(\.\d+)?px\b/.test(value)) return true; continue; }
+      const size = value.replace(/\s*\/\s*/g, '/').split(/\s+/).find((t) => /^(\d|var\(|calc\(|max\()/.test(t) && !/^\d+$/.test(t));
+      if (size && /^\d+(\.\d+)?px$/.test(size.split('/')[0])) return true;
+    }
+    return false;
+  };
+  /** The file's lines with comments blanked (line and block comments), so a size in a comment is not a hit. */
+  const codeLines = (text: string): string[] => text
+    .replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' '))
+    .split('\n').map((l) => l.replace(/(^|\s)\/\/.*$/, '$1'));
+  const hitsOf = (line: string, css: boolean): string[] => (css
+    ? (cssHit(line) ? ['CSS font size in px'] : [])
+    : SCRIPT_RULES.filter(([, re]) => re.test(line)).map(([name]) => name));
+  const scan = (file: string): string[] => {
+    const css = file.endsWith('.css');
+    return codeLines(readFileSync(file, 'utf8')).flatMap((line, i) => {
+      // The one fixed size: the base that the scale multiplies (theme.css).
+      if (css && /^html \{ font-size: 16px; \}/.test(line)) return [];
+      return hitsOf(line, css).map((name) => `${file.replace(SRC, 'src').replace(PLUGINS, 'plugins')}:${i + 1} (${name})`);
+    });
+  };
+
   test('the scan finds the files', () => {
     expect(files.length).toBeGreaterThan(300);
     expect(files.some((f) => f.endsWith(join('plugins', 'previews', 'web.js')))).toBe(true);
+    for (const a of Object.keys(ALLOWED)) expect(files.some((f) => f.endsWith(a)), a).toBe(true);
   });
-  test('the rules catch each fixed form, and let the scaled forms pass', () => {
-    const hit = (line: string) => RULES.some(([, re]) => re.test(line));
-    for (const bad of ["{ fontSize: 13, color: 'red' }", '{ fontSize: 12.5 }', '{ fontSize: phone ? 15 : 13 }', "font: '600 12px var(--font-sans)'", 'font: `500 ${m ? 14 : 12}px var(--font-mono)`', "font: '13px/1.5 var(--font-mono)'", '.x { font-size: 14px; }', '.x { font: 400 12px/18px var(--font-mono); }'])
+  test('the script rules catch each fixed form, and let the scaled forms and other code pass', () => {
+    const hit = (line: string) => hitsOf(codeLines(line)[0], false).length > 0;
+    for (const bad of ["{ fontSize: 13, color: 'red' }", '{ fontSize: 12.5 }', '{ fontSize: phone ? 15 : 13 }', "{ fontSize: '13px' }", "font: '600 12px var(--font-sans)'", 'font: `500 ${m ? 14 : 12}px var(--font-mono)`', "font: '13px/1.5 var(--font-mono)'"])
       expect(hit(bad), bad).toBe(true);
-    for (const ok of ['{ fontSize: fontVar(13) }', '{ fontSize: fontVar(phone ? 15 : 13) }', '{ fontSize: 11 * textScale }', 'font: `600 ${fontVar(12)} var(--font-sans)`', 'font: `600 ${fontVar(13)}/30px var(--font-mono)`', '{ fontSize: rem(13) }', '.x { font: 400 var(--fs-12)/18px var(--font-mono); }', '.x { font-size: var(--fs-14); line-height: 20px; }', "font: 'inherit'"])
+    for (const ok of ['{ fontSize: fontVar(13) }', '{ fontSize: fontVar(phone ? 15 : 13) }', '{ fontSize: 11 * textScale }', '{ fontSize: 0 }', 'font: `600 ${fontVar(12)} var(--font-sans)`', 'font: `600 ${fontVar(13)}/30px var(--font-mono)`', 'font: `600 ${fontVar(13)} / 30px var(--font-mono)`', '{ fontSize: rem(13) }', "{ font: 'inherit', padding: '8px' }", "{ font: 'inherit', fontWeight: 600, borderRadius: `${r}px` }", '// was fontSize: 13, before the text scale', "const x = 1; // font: '600 12px sans'", "{ fontSize: 'inherit' }"])
       expect(hit(ok), ok).toBe(false);
   });
+  test('the CSS rule reads one declaration at a time', () => {
+    for (const bad of ['.x { font-size: 14px; }', '.x { font: 400 12px/18px var(--font-mono); }', '.x { color: red; font: 12px sans-serif }'])
+      expect(cssHit(bad), bad).toBe(true);
+    for (const ok of ['.x { font: 400 var(--fs-12)/18px var(--font-mono); }', '.x { font: 400 var(--fs-12)/ 18px sans-serif; }', '.x { font-size: var(--fs-14); line-height: 20px; }', '.x { font: inherit; padding: 8px; }', '.x { font-size: .88em; }', '.x { font-family: var(--font-mono); width: 12px; }', '.x { font-weight: 600; height: 30px; }'])
+      expect(cssHit(ok), ok).toBe(false);
+  });
   test('no source file sets a font size in fixed pixels', () => {
-    const found: string[] = [];
-    for (const f of files) {
-      readFileSync(f, 'utf8').split('\n').forEach((line, i) => {
-        // The one fixed size: the base that the scale multiplies (theme.css).
-        if (/^html \{ font-size: 16px; \}/.test(line)) return;
-        for (const [name, re] of RULES) if (re.test(line)) found.push(`${f.replace(SRC, 'src').replace(PLUGINS, 'plugins')}:${i + 1} (${name})`);
-      });
-    }
+    const found = files.filter((f) => !Object.keys(ALLOWED).some((a) => f.endsWith(a))).flatMap(scan);
     expect(found, `use fontVar() from lib/fontSize.ts (rem in a bundled plugin):\n${found.join('\n')}`).toEqual([]);
+  });
+  test('the files with text in a fixed-size box have exactly their known fixed lines', () => {
+    for (const [a, count] of Object.entries(ALLOWED)) {
+      const found = scan(files.find((f) => f.endsWith(a))!);
+      expect(found, `${a}: a fixed size is allowed only for text in a fixed-size box. If this one is, raise the count:\n${found.join('\n')}`).toHaveLength(count);
+    }
   });
 });
