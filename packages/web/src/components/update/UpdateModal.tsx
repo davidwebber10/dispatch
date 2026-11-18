@@ -4,6 +4,8 @@ import { IDLE_RELOAD_MS, UpdateBadge, UpdateDone, UpdateDoneBadge, UpdateFailed,
 import { useUpdate } from '../../stores/update';
 import { useApplyUpdate } from './useApplyUpdate';
 import { ReleaseNotes } from './ReleaseNotes';
+import { hostCopy, hostDetail, PLAIN } from '../../lib/hostCopy';
+import { usesPlainWording } from '../../lib/hostContext';
 import { blasterActivity } from './blaster/activity';
 import { fontVar } from '../../lib/fontSize';
 
@@ -26,7 +28,7 @@ export function UpdateModal() {
   const dismissedVersion = useUpdate((s) => s.dismissedVersion);
   const currentVersion = useUpdate((s) => s.currentVersion);
   const notes = useUpdate((s) => s.notes);
-  const { apply, applying, failReason, failDirty, failDirtyOverflow, canForce, inProgress, hosted } = useApplyUpdate();
+  const { apply, applying, failReason, failDirty, failDirtyOverflow, canForce, needsSwitchBack, inProgress, hosted } = useApplyUpdate();
   const runFailed = useUpdate((s) => s.runFailed);
   const hidden = useUpdate((s) => s.progressHidden);
   const doneVersion = useUpdate((s) => s.doneVersion);
@@ -99,20 +101,22 @@ export function UpdateModal() {
         ) : (
           <>
             <ArrowCircleUp size={34} weight="fill" color="var(--color-accent)" />
-            <div style={{ marginTop: 8, fontWeight: 600, fontSize: fontVar(16), color: 'var(--color-text-primary)' }}>Update available</div>
+            <div style={{ marginTop: 8, fontWeight: 600, fontSize: fontVar(16), color: 'var(--color-text-primary)' }}>{hostCopy('update.available', 'Update available')}</div>
             <div style={{ marginTop: 6, fontSize: fontVar(13), lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
-              Dispatch {available!.version} is ready to install{currentVersion ? <> — you're on v{currentVersion}</> : null}.
+              {usesPlainWording() || !available!.version
+                ? hostCopy('update.apply.hint', 'A new version is ready to install.')
+                : <>Dispatch {available!.version} is ready to install{currentVersion ? <> — you're on v{currentVersion}</> : null}.</>}
             </div>
             <ReleaseNotes notes={notes} onToggle={setNotesOpen} />
             {failReason && (
               <div style={{ marginTop: 12, fontSize: fontVar(12), lineHeight: 1.5, color: 'var(--color-text-secondary)', textAlign: 'left', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', padding: '9px 11px' }}>
-                Couldn't update automatically: {failReason}
-                <br />
+                {usesPlainWording() ? null : <>Couldn't update automatically: {failReason}<br /></>}
+                {usesPlainWording() && hostDetail(failReason) && <>{hostDetail(failReason)}<br /></>}
                 {/* A hosted workspace has no checkout and no shell, so the manual
                     command is advice the reader cannot follow. */}
-                {hosted
-                  ? 'Your workspace updates when it is rebuilt onto a newer image — ask an administrator if this keeps failing.'
-                  : <>Run it manually instead: <code style={{ font: `400 ${fontVar(11)} var(--font-mono)` }}>dispatch update</code></>}
+                {hosted || usesPlainWording()
+                  ? PLAIN['update.failed.hint']
+                  : <>Run it manually instead: <code style={{ font: `400 ${fontVar(11)} var(--font-mono)` }}>{needsSwitchBack ? 'dispatch update --switch-back' : 'dispatch update'}</code></>}
                 {failDirty && failDirty.length > 0 && (
                   <div style={{ marginTop: 8, maxHeight: 136, overflowY: 'auto', font: `400 ${fontVar(11)} var(--font-mono)`, color: 'var(--color-text-tertiary)', background: 'color-mix(in srgb, var(--color-canvas) 50%, transparent)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', padding: '6px 8px' }}>
                     {/* `pre` on the status only: porcelain codes carry a meaningful leading
@@ -121,6 +125,11 @@ export function UpdateModal() {
                       <div key={i}><span style={{ whiteSpace: 'pre' }}>{d.status}</span> {d.path}</div>
                     ))}
                     {failDirtyOverflow > 0 && <div>+{failDirtyOverflow} more</div>}
+                  </div>
+                )}
+                {needsSwitchBack && available && (
+                  <div style={{ marginTop: 10 }}>
+                    <button onClick={() => void apply(false, true)} disabled={applying} style={{ ...ghost, opacity: applying ? 0.7 : 1 }}>Switch to {available.version}</button>
                   </div>
                 )}
                 {canForce && (

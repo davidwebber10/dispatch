@@ -7,7 +7,8 @@ import { clientMessage } from '../http/client-message.js';
 // v1-light priming: bias Whisper-family models toward technical spellings.
 const DEFAULT_PROMPT = 'Technical dictation; may include file paths, camelCase identifiers, and CLI flags.';
 
-export function createTranscribeRouter(svc: TranscriptionService): Router {
+/** `cleanFillers` is read on every request, so the Settings switch takes effect at once. */
+export function createTranscribeRouter(svc: TranscriptionService, opts: { cleanFillers?: () => boolean } = {}): Router {
   const router = policyRouter();
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 
@@ -31,6 +32,7 @@ export function createTranscribeRouter(svc: TranscriptionService): Router {
           mimeType,
           language: b.language ? String(b.language) : undefined,
           prompt: DEFAULT_PROMPT,
+          cleanFillers: opts.cleanFillers ? opts.cleanFillers() : true,
         });
         res.json({ text: r.text, language: r.language });
       } catch (e) {

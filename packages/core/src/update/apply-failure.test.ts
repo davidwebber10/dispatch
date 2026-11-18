@@ -5,11 +5,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const h = vi.hoisted(() => ({ tmp: '', child: null as any }));
+const h = vi.hoisted(() => ({ tmp: '', child: null as any, spawned: [] as any[] }));
 vi.mock('../platform/index.js', () => ({
   platform: { logDir: () => `${h.tmp}/logs`, dataDir: () => `${h.tmp}/data` },
 }));
-vi.mock('child_process', async (orig) => ({ ...(await orig<typeof import('child_process')>()), spawn: () => h.child }));
+vi.mock('child_process', async (orig) => ({ ...(await orig<typeof import('child_process')>()), spawn: (...a: any[]) => { h.spawned = a; return h.child; } }));
 
 import { applyUpdate } from './apply.js';
 import { EventEmitter } from 'node:events';
@@ -38,5 +38,17 @@ describe('applyUpdate failure text', () => {
     h.child.emit('exit', 1, null);
     expect(seen[0]).toMatch(/Update failed \(exit 1\)/);
     expect(seen[0]).not.toMatch(/\/|someone/);
+  });
+});
+
+describe('applyUpdate argv', () => {
+  it('runs `dispatch update` alone by default', () => {
+    applyUpdate('/repo', () => {});
+    expect(h.spawned[1]).toEqual(['update']);
+  });
+
+  it('adds --switch-back only when the caller says so', () => {
+    applyUpdate('/repo', () => {}, { switchBack: true });
+    expect(h.spawned[1]).toEqual(['update', '--switch-back']);
   });
 });

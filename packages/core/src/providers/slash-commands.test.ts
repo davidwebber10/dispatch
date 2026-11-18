@@ -61,7 +61,9 @@ describe('resolveModelArg / resolveEffortArg', () => {
     expect(resolveModelArg(claude, 'Opus')).toEqual({ model: 'opus' });
     const codex = catalogModelChoices('codex');
     expect(resolveModelArg(codex, '6 astra')).toEqual({ model: 'gpt-6-astra' });
-    expect(resolveModelArg(codex, 'gpt-5.6-sol')).toEqual({ model: 'gpt-5.6-sol' });
+    expect(resolveModelArg(codex, 'GPT-6.1 Terra')).toEqual({ model: 'gpt-6.1-terra' });
+    expect(resolveModelArg(codex, 'gpt-6.1-sol')).toEqual({ model: 'gpt-6.1-sol' });
+    expect((resolveModelArg(codex, 'gpt-5.6-sol') as any).error).toMatch(/Unknown model/);
     expect(resolveModelArg([{ value: 'x/y', label: 'My model' }], 'my model')).toEqual({ model: 'x/y' });
   });
   it('has no Default: a live switch needs a concrete model', () => {

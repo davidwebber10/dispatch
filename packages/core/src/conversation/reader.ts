@@ -13,6 +13,7 @@ import * as messageSourceDb from '../db/message-source.js';
 import { readTail } from '../sessions/tail-read.js';
 import { LineIndex, readFully, yieldToLoop, type LineSnapshot } from './line-index.js';
 import type { ConvItem } from './transcript.js';
+import { TRANSCRIPT_OPEN_FLAGS, openedTranscriptTrusted } from './transcript-trust.js';
 
 export interface ConvPage {
   items: ConvItem[];
@@ -45,6 +46,8 @@ export interface ConversationReaderDeps {
   db: Database.Database;
   /** `null`: the thread has no transcript yet. `'unsupported'`: its type never has one. */
   locate(terminalId: string): TranscriptLocation | null | 'unsupported';
+  /** Whether an OPEN transcript may be read (its fstat). Default: a plain file of the agent user (transcript-trust.ts). */
+  trusted?(st: fs.Stats): boolean;
 }
 
 /** Lines are read in groups of about this many bytes. A longer single line is one group. */
@@ -75,6 +78,24 @@ export class ConversationReader {
   constructor(private readonly deps: ConversationReaderDeps) {}
 
   /**
+   * Opens the transcript with O_NOFOLLOW, checks the OPEN file (a plain file of the agent user), and
+   * only then indexes it. Null when any step fails; the caller answers as for a missing file.
+   */
+  private async openTrusted(file: string): Promise<{ fh: fs.promises.FileHandle; snap: LineSnapshot; ino: number } | null> {
+    let fh: fs.promises.FileHandle;
+    try { fh = await fs.promises.open(file, TRANSCRIPT_OPEN_FLAGS); } catch { return null; }
+    try {
+      const st = await fh.stat();
+      if (!(this.deps.trusted ?? openedTranscriptTrusted)(st)) { await fh.close(); return null; }
+      const snap = (await LineIndex.open(file)).snapshot();
+      return { fh, snap, ino: st.ino };
+    } catch {
+      await fh.close().catch(() => undefined);
+      return null;
+    }
+  }
+
+  /**
    * One window of the transcript. The window rules, in order:
    *  - `beforeUuid` found in the file: the `limit` lines before that line;
    *  - `before` > 0: the `limit` lines before line `before`;
@@ -95,19 +116,14 @@ export class ConversationReader {
   }
 
   private async pageOnce(terminalId: string, located: TranscriptLocation, opts: ConvPageOptions): Promise<ConvPage | Changed> {
-    let fh: fs.promises.FileHandle;
-    let snap: LineSnapshot;
-    try {
-      snap = (await LineIndex.open(located.file)).snapshot();
-      fh = await fs.promises.open(located.file, 'r');
-    } catch {
-      return emptyPage(); // no file, or not readable: the same answer as before
-    }
+    const opened = await this.openTrusted(located.file);
+    if (!opened) return emptyPage(); // no file, not readable, or not a plain file of the agent: the same answer
+    const { fh, snap, ino } = opened;
     let items: ConvItem[] | Changed;
     let start: number;
     const total = snap.lineCount;
     try {
-      if ((await fh.stat()).ino !== snap.ino) return CHANGED;
+      if (ino !== snap.ino) return CHANGED;
       const limit = opts.limit && opts.limit > 0 ? opts.limit : DEFAULT_LIMIT;
 
       // The anchor is a recently rendered item, so it is near the end: scan backward from the tail.
@@ -177,18 +193,13 @@ export class ConversationReader {
   }
 
   private async searchOnce(located: TranscriptLocation, q: string, limit: number): Promise<SearchMatch[] | Changed> {
-    let fh: fs.promises.FileHandle;
-    let snap: LineSnapshot;
-    try {
-      snap = (await LineIndex.open(located.file)).snapshot();
-      fh = await fs.promises.open(located.file, 'r');
-    } catch {
-      return [];
-    }
+    const opened = await this.openTrusted(located.file);
+    if (!opened) return [];
+    const { fh, snap, ino } = opened;
     const matches: SearchMatch[] = [];
     const slicer = new Slicer();
     try {
-      if ((await fh.stat()).ino !== snap.ino) return CHANGED;
+      if (ino !== snap.ino) return CHANGED;
       let hi = snap.lineCount;
       while (hi > 0 && matches.length < limit) {
         const lo = groupStartBackward(snap, hi, GROUP_BYTES);
@@ -227,6 +238,7 @@ export class ConversationReader {
     if (!located || located === 'unsupported') return [];
     let lines: string[];
     try {
+      if (!(this.deps.trusted ?? openedTranscriptTrusted)(fs.lstatSync(located.file))) return [];
       for (let bytes = TAIL_FIRST_BYTES; ; bytes *= 2) {
         const tail = readTail(located.file, bytes);
         // Complete lines only: the last element is '' after a final newline, or a half-written line.

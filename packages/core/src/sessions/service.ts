@@ -1,3 +1,5 @@
+import { expandHome, hostedProjectDir } from './project-dir.js';
+import { isHostedBox } from '../os/hosted-mode.js';
 import { StatusService } from '../status/service.js';
 import type { UsageLimitService } from '../limits/service.js';
 import type { PromptSource } from '../plugins/thread-events.js';
@@ -46,6 +48,7 @@ import { isAgentType, type AgentType } from '../providers/agent-types.js';
 import { findLiveCoordinator } from '../auth/key-scope.js';
 import { DEFAULT_AUTO_ARCHIVE_MS } from './auto-archive.js';
 import { ThreadConfigStore, pickClientSettable } from './thread-config.js';
+import { agentMkdir } from '../privsep/agent-fs.js';
 
 export { disallowedToolsFor, type SpawnKey } from './thread-spawner.js';
 
@@ -147,7 +150,20 @@ export class SessionService {
     this.transcripts = new ThreadTranscripts(db);
     this.harnesses = new HarnessRegistry({
       db, configStore: this.configStore, wiring: this.wiring,
-      threads: { undoRefusedPick: (id, info) => this.undoRefusedPick(id, info) },
+      threads: {
+        undoRefusedPick: (id, info) => this.undoRefusedPick(id, info),
+        recoverLostConversation: (id, messages) => {
+          // The id is cleared, so this starts a new conversation (with a recap from the journal) and
+          // the thread says so. Then the messages the old one never answered go to it.
+          const texts = messages.map((m) => (typeof m.content === 'string' ? m.content : m.content.map((b: any) => (b?.type === 'text' ? b.text ?? '' : '')).join('')));
+          this.spawner.recoveringMessages.set(id, texts);
+          try {
+            if (!this.ensureStructuredAlive(id)) throw new Error(this.spawner.lastSpawnError.get(id) ?? 'the thread did not start');
+          } finally { this.spawner.recoveringMessages.delete(id); }
+          const manager = this.structuredManagerForTerminal(id);
+          for (const m of messages) manager?.sendMessage(id, m.content, m.source);
+        },
+      },
     });
     // The parts call back through `this`, so a caller that replaces a facade method still reaches every path.
     this.notifier = new CoordinatorNotifier({
@@ -330,7 +346,10 @@ export class SessionService {
   create(input: CreateSessionInput): Session {
     const id = uuid();
     const name = input.name || 'New Project';
-    const workingDir = input.workingDir || '~';
+    // `~` is expanded here, once (box defect #3: a stored `~/x` reached chdir(2) unexpanded). A hosted box
+    // creates a project from a name alone: ~/projects/<safe-name>, made and de-duplicated (defect #4).
+    const given = input.workingDir?.trim();
+    const workingDir = given ? expandHome(given) : isHostedBox() ? hostedProjectDir(name) : '~';
 
     // Ensure the project directory exists. A session row alone is not enough: the
     // first thread spawns a PTY with cwd=workingDir and dies with ENOENT if the
@@ -341,7 +360,7 @@ export class SessionService {
     // than refusing to create the project at all.
     if (workingDir !== '~' && !workingDir.startsWith('~')) {
       try {
-        fs.mkdirSync(workingDir, { recursive: true });
+        agentMkdir(workingDir);
       } catch (err) {
         console.warn(`could not create project directory ${workingDir}:`, err);
       }
@@ -467,8 +486,8 @@ export class SessionService {
     this.assertRoomForLiveThread(sessionId);
 
     const resolvedDir = workingDir
-      ? workingDir.replace(/^~/, os.homedir())
-      : session.working_dir;
+      ? expandHome(workingDir)
+      : expandHome(session.working_dir);
 
     if (workingDir && !isWorktreeFolder(resolvedDir)) {
       appState.set(this.db, 'last_directory', resolvedDir);

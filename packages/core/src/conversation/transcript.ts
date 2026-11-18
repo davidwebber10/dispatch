@@ -8,7 +8,7 @@
  * render as user turns; see the queued_command branch in parseEntry).
  */
 
-import { classifyUserText } from './task-notification.js';
+import { classifyUserText, CONTEXT_NOTICE, SENT_MARK, isTaskNotification } from './task-notification.js';
 
 export interface ConvItem {
   /** 'notice' — a system-injected event Claude Code writes as a `user` line but which is not
@@ -67,7 +67,7 @@ function parseEntry(o: any): ConvItem[] {
     const c = msg.content;
     if (typeof c === 'string') {
       if (!c.trim()) return [];
-      const it = userOrNotice(c, ts, uuid);
+      const it = userOrNotice(c, ts, uuid, o);
       return it ? [it] : [];
     }
     if (Array.isArray(c)) {
@@ -75,7 +75,7 @@ function parseEntry(o: any): ConvItem[] {
       for (const b of c) {
         if (!b || typeof b !== 'object') continue;
         if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
-          const it = userOrNotice(b.text, ts, uuid);
+          const it = userOrNotice(b.text, ts, uuid, o);
           if (it) out.push(it);
         } else if (b.type === 'tool_result') {
           out.push({ kind: 'tool-result', toolId: str(b.tool_use_id), text: stringifyContent(b.content), isError: b.is_error === true, ts, uuid });
@@ -122,7 +122,7 @@ function parseEntry(o: any): ConvItem[] {
     const p = o.attachment.prompt;
     if (typeof p === 'string') {
       if (!p.trim()) return [];
-      const it = userOrNotice(p, ts, uuid);
+      const it = userOrNotice(p, ts, uuid, o);
       return it ? [it] : [];
     }
     if (Array.isArray(p)) {
@@ -130,7 +130,7 @@ function parseEntry(o: any): ConvItem[] {
       for (const b of p) {
         if (!b || typeof b !== 'object') continue;
         if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
-          const it = userOrNotice(b.text, ts, uuid);
+          const it = userOrNotice(b.text, ts, uuid, o);
           if (it) out.push(it);
         } else if (b.type === 'image') {
           const img = imageItem(b);
@@ -172,11 +172,26 @@ function imageItem(b: any): ConvItem | undefined {
  * to a muted 'notice' (the notification is what CAUSES the assistant's next action; a `/compact`
  * echo is a useful "this happened here" marker); a contentless echo is dropped → null.
  */
-function userOrNotice(text: string, ts?: string, uuid?: string): ConvItem | null {
+function userOrNotice(text: string, ts?: string, uuid?: string, line?: any): ConvItem | null {
+  // A message someone SENT (an event that carries the daemon's mark) is the sender's words, shown as written.
+  if (line && line[SENT_MARK] === true) return { kind: 'user', text, ts, uuid };
   const c = classifyUserText(text);
-  if (c.kind === 'drop') return null;
-  if (c.kind === 'notice') return { kind: 'notice', text: c.text, ts, uuid };
+  // A task notification is the CLI's only when the line says so (origin.kind, written on disk by the CLI):
+  // otherwise the text is someone's message that looks like one, shown as written.
+  if (c.kind === 'notice' && isTaskNotification(text) && line?.origin?.kind !== 'task-notification') return { kind: 'user', text, ts, uuid };
+  // Harness context (a system reminder, a caveat): a muted line, never a bubble, never nothing.
+  if (c.kind === 'context') return { kind: 'notice', text: CONTEXT_NOTICE, ts, uuid };
+  // A command echo: a muted line with ALL of its text (no tag hides words; a contentless echo is not dropped).
+  if (c.kind === 'drop' || c.kind === 'notice') {
+    const all = c.kind === 'notice' && isTaskNotification(text) ? c.text : collapseTags(text);
+    return all ? { kind: 'notice', text: all, ts, uuid } : null;
+  }
   return { kind: 'user', text, ts, uuid };
+}
+
+/** The words of a body of tags: every tag removed, white space collapsed. */
+function collapseTags(text: string): string {
+  return text.replace(/<\/?[A-Za-z][\w-]*>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 function toolTitle(name: string, input: any): string {

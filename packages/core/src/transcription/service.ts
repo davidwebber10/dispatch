@@ -1,5 +1,6 @@
 import type { TranscribeResult } from './types.js';
 import { REGISTRY, type ProviderEntry } from './registry.js';
+import { removeFillers, shouldCleanLanguage } from './cleanup.js';
 
 interface SecretsLike { getSecret(name: string): Promise<string | null>; }
 
@@ -11,6 +12,8 @@ export interface TranscribeOptions {
   mimeType: string;
   language?: string;
   prompt?: string;
+  /** false passes the provider text through as it came. Anything else removes fillers. */
+  cleanFillers?: boolean;
 }
 
 export class TranscriptionService {
@@ -28,8 +31,11 @@ export class TranscriptionService {
     if (!opts.secretName) throw new Error('secretName is required');
     const key = await this.secrets.getSecret(opts.secretName);
     if (!key) throw new Error(`Secret not found: ${opts.secretName}`);
-    return entry.adapter.transcribe(opts.model, key, {
+    const r = await entry.adapter.transcribe(opts.model, key, {
       audio: opts.audio, mimeType: opts.mimeType, language: opts.language, prompt: opts.prompt,
     });
+    // Same cleanup for every provider. The provider's own text stays in `raw`.
+    if (opts.cleanFillers === false || !shouldCleanLanguage(opts.language, r.language)) return r;
+    return { ...r, text: removeFillers(r.text) };
   }
 }

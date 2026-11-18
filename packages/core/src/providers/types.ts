@@ -123,5 +123,5 @@ export interface SessionProvider {
    * `--settings {"autoMemoryDirectory": …}`: the overseer's own memory folder (overseer
    * memory scope spec 2026-10-07, Unit 1). Omitted → the CLI's per-project memory folder.
    */
-  buildStructuredCommand?(args: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string; model?: string; effort?: string; grokPluginDir?: string; disallowedTools?: string[]; autoMemoryDirectory?: string }): { command: string; args: string[] };
+  buildStructuredCommand?(args: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string; model?: string; effort?: string; grokPluginDir?: string; disallowedTools?: string[]; autoMemoryDirectory?: string; smartApprovals?: { settings: string | null } }): { command: string; args: string[] };
 }

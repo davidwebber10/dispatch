@@ -1,7 +1,7 @@
 import type { Router } from 'express';
 import { policyRouter } from '../auth/route-policy.js';
 import type Database from 'better-sqlite3';
-import { readHarnessSettings, updateHarnessSettings, opencodeKeySecretName, opencodeModels } from '../settings/harness-settings.js';
+import { readHarnessSettings, updateHarnessSettings, opencodeKeySecretName, opencodeModels, withHostedDefaults } from '../settings/harness-settings.js';
 import { readOverseerWorkers, updateOverseerWorkers } from '../settings/overseer-workers.js';
 import { loadCatalog, searchCatalog } from '../settings/openrouter-catalog.js';
 import { clientMessage } from '../http/client-message.js';
@@ -39,7 +39,7 @@ export function createHarnessSettingsRouter(db: Database.Database, secrets?: Sec
     return { secret, present };
   };
 
-  const payload = async () => ({ settings: readHarnessSettings(db), opencodeKey: await keyStatus(), opencodeModels: opencodeModels(db), overseerWorkers: readOverseerWorkers(db) });
+  const payload = async () => ({ settings: withHostedDefaults(readHarnessSettings(db)), opencodeKey: await keyStatus(), opencodeModels: opencodeModels(db), overseerWorkers: readOverseerWorkers(db) });
 
   router.get('/', async (_req, res) => {
     res.json(await payload());

@@ -5,13 +5,15 @@ import * as appState from '../db/app-state.js';
 import type { EventBroadcaster } from '../ws/events.js';
 import { applyUpdate, preflightUpdate, type GitExec } from '../update/apply.js';
 import { checkForUpdateOnce } from '../update/checker.js';
-import { getRunningVersion, isNewerVersion } from '../update/version.js';
-import { markUpdateStarted, readUpdateProgress } from '../update/progress.js';
+import { getRunningVersion } from '../update/version.js';
+import { storedUpdateView } from '../update/stored.js';
+import { markUpdateStarted, markHostedUpdateStarted, readUpdateProgress } from '../update/progress.js';
 import { platform } from '../platform/index.js';
 import path from 'path';
 import {
   applyHostedUpdate,
   checkHostedUpdate,
+  resetHostedUpdateCache,
   hostedTarget,
   type HostedTarget,
 } from '../update/hosted.js';
@@ -20,7 +22,9 @@ export interface CreateUpdateRouterOptions {
   /** Test seam: inject a fake git runner instead of shelling out to real git. */
   gitExec?: GitExec;
   /** Test seam: replace the real detached-spawn of `bin/dispatch update`. */
-  applyFn?: (repoDir: string) => void;
+  applyFn?: (repoDir: string, opts?: { switchBack?: boolean }) => void;
+  /** Test seam: replace the GitHub release list the apply preflight asks (the shared rule in update/target.ts). */
+  releasesFetch?: typeof fetch;
   /** Test seam: replace the real GitHub release poll. */
   checkFn?: (db: Database.Database, broadcaster: EventBroadcaster) => Promise<void>;
   /** Test seam: how long apply/check wait on GitHub (default CHECK_WAIT_MS). */
@@ -48,8 +52,8 @@ export const CHECK_WAIT_MS = 6_000;
 
 export function createUpdateRouter(broadcaster: EventBroadcaster, repoDir: string, db: Database.Database, opts?: CreateUpdateRouterOptions): Router {
   const router = policyRouter();
-  const apply = opts?.applyFn ?? ((dir: string) => applyUpdate(dir, reason => broadcaster.broadcast({ type: 'update:failed', reason })));
-  const check = opts?.checkFn ?? checkForUpdateOnce;
+  const apply = opts?.applyFn ?? ((dir: string, o?: { switchBack?: boolean }) => applyUpdate(dir, reason => broadcaster.broadcast({ type: 'update:failed', reason }), o));
+  const check = opts?.checkFn ?? ((d: Database.Database, b: EventBroadcaster) => checkForUpdateOnce(d, b, { repoDir, git: opts?.gitExec, fetchImpl: opts?.releasesFetch }));
   // Resolved once at construction: a box does not become un-hosted at runtime.
   const hosted = opts?.hosted !== undefined ? opts.hosted : hostedTarget();
   const hostedApply = opts?.hostedApplyFn ?? applyHostedUpdate;
@@ -78,7 +82,7 @@ export function createUpdateRouter(broadcaster: EventBroadcaster, repoDir: strin
   // GET /api/update/progress — the running (or last) update's step, error and output tail,
   // from the updater's status file (update/progress.ts). The update window polls it.
   router.get('/progress', (_req, res) => {
-    res.json(readUpdateProgress({ dataDir, logPath: updateLogPath }));
+    res.json(readUpdateProgress({ dataDir, logPath: updateLogPath, hosted: !!hosted }));
   });
 
   // POST /api/update/check — poll GitHub for the latest release right now (the
@@ -90,23 +94,16 @@ export function createUpdateRouter(broadcaster: EventBroadcaster, repoDir: strin
     // that nobody has built into an image is not an update this box can take.
     if (hosted) {
       const state = await hostedCheck(hosted, getRunningVersion());
+      resetHostedUpdateCache({ version: getRunningVersion(), state }); // GET /api/state/update agrees at once
       res.json({ ...state, url: null, publishedAt: null, hosted: true });
       return;
     }
     await freshCheck();
-    const tag = appState.get(db, 'latest_release_tag');
     const currentVersion = getRunningVersion();
-    const available = !!tag && isNewerVersion(tag, currentVersion);
-    res.json({
-      available,
-      version: available ? tag : null,
-      url: available ? appState.get(db, 'latest_release_url') : null,
-      publishedAt: available ? appState.get(db, 'latest_release_published_at') : null,
-      currentVersion,
-    });
+    res.json({ ...storedUpdateView(db, currentVersion), currentVersion });
   });
 
-  // POST /api/update/apply — preflight (clean tree + fast-forwardable), then spawn
+  // POST /api/update/apply — preflight (clean tree, a release to move to, and a safe move), then spawn
   // `bin/dispatch update` detached and let the daemon's existing safe-restart path
   // (launchctl kickstart -k) take it from there.
   router.post('/apply', async (req, res) => {
@@ -120,6 +117,7 @@ export function createUpdateRouter(broadcaster: EventBroadcaster, repoDir: strin
         res.status(409).json({ ok: false, reason: out.reason, hosted: true });
         return;
       }
+      markHostedUpdateStarted(dataDir); // one step, "Move your workspace to the new version"
       // Same event the git path emits, so the client shows the same progress UI.
       // The rollover ends with this process being replaced; the client sees the
       // socket drop and reconnects to the new task.
@@ -129,7 +127,10 @@ export function createUpdateRouter(broadcaster: EventBroadcaster, repoDir: strin
     }
 
     const force = req.body?.force === true;
-    const result = preflightUpdate(repoDir, opts?.gitExec, { force });
+    // The explicit switch back: only a body that says so lets the update move a copy that runs a version
+    // newer than the newest release. Never inferred from the state, so no client moves back by accident.
+    const switchBack = req.body?.switchBack === true;
+    const result = await preflightUpdate(repoDir, opts?.gitExec, { force, switchBack, fetchImpl: opts?.releasesFetch });
     if (!result.ok) {
       res.status(409).json({
         ok: false,
@@ -137,6 +138,7 @@ export function createUpdateRouter(broadcaster: EventBroadcaster, repoDir: strin
         dirty: result.dirty,
         dirtyOverflow: result.dirtyOverflow,
         forceable: result.forceable,
+        ...(result.needsSwitchBack ? { needsSwitchBack: true } : {}),
       });
       return;
     }
@@ -145,7 +147,9 @@ export function createUpdateRouter(broadcaster: EventBroadcaster, repoDir: strin
     await freshCheck();
     markUpdateStarted(dataDir);
     broadcaster.broadcast({ type: 'update:in-progress' });
-    apply(repoDir);
+    // The updater gets the permission to move back only when the plan IS a move back.
+    if (result.move === 'back') apply(repoDir, { switchBack: true });
+    else apply(repoDir);
     res.json({ ok: true });
   });
 

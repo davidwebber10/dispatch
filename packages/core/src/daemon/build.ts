@@ -19,6 +19,8 @@ import express from 'express';
 import type Database from 'better-sqlite3';
 import * as pendingQuestionsDb from '../db/pending-questions.js';
 import * as terminalsDb from '../db/terminals.js';
+import * as sessionsDb from '../db/sessions.js';
+import { expandHome } from '../sessions/project-dir.js';
 import * as appState from '../db/app-state.js';
 import * as usageDb from '../db/usage.js';
 import type { SessionService } from '../sessions/service.js';
@@ -39,13 +41,36 @@ import type { NoCredentialStats } from '../auth/no-credential-stats.js';
 import type { TailscaleAccess } from '../auth/tailscale-access.js';
 import { securityHeaders } from '../auth/security-headers.js';
 import { mountApiRoutes, type ApiRouteDeps } from '../server-routes.js';
+import { liveHostContext, readHostContext } from '../profile/host-context.js';
 import { jsonErrorHandler } from '../http/error-handler.js';
+import { requireCanonicalPath } from '../http/canonical-path.js';
+import { inboundBoxToken, osBoxToken } from '../platform/box-secrets.js';
+import { sealRoutes } from '../http/route-registry.js';
+import { GATE_LOCAL, type BusinessGateState } from '../profile/business-gate.js';
+import { BUSINESS_ROUTES, businessProjectsRoot } from '../profile/business-routes.js';
+import { principalOf } from '../auth/request-principal.js';
 import { createJsonBody } from '../http/json-body.js';
 import { jsonCompression } from '../http/compress.js';
 import { OsConnectionsProvider } from '../integrations/os-provider.js';
+import { notePersonMessage } from '../os/idle-info.js';
+import { createOsToolsRouter, OsToolCatalog, osSystemServerSpecs, systemsForSpawn } from '../os/tools-proxy.js';
+import { ClaudeCliLogin, planOf } from '../auth/claude-cli-login.js';
+import { useCleanClaudeLogin, isHostedBox } from '../os/hosted-mode.js';
+import { boxLog } from '../os/box-log.js';
+import { createProcessReaper, type ProcessReaper } from '../os/process-reaper.js';
+import { wireStopOnAuthFailure } from '../os/auth-stop.js';
+import { createApprovalsRouter } from '../os/approvals-routes.js';
+import { createContinuityRouter } from '../os/continuity.js';
+import { setProfileSource, resolveProfile } from '../os/profile.js';
+import { setCompanyModelSource } from '../os/company-model.js';
+import { createModelRelayRouter } from '../os/model-relay.js';
+import { syncLoginPolicy } from '../os/login-policy.js';
+import { detectProvider } from '../setup/detect.js';
 import { IntegrationsService, type IntegrationLauncher } from '../integrations/service.js';
 import { HeartbeatService } from '../platform/heartbeat.js';
-import { inheritedEnv } from '../platform/inherited-env.js';
+import { bestEffort, compactLimits, diskUse } from '../platform/fleet-stats.js';
+import { imageToolsNote } from '../tools/image-tools.js';
+import { childEnv } from '../platform/inherited-env.js';
 import { platform } from '../platform/index.js';
 import { UsageRecorder } from '../usage/recorder.js';
 import { closeInterruptedTurns } from '../analytics/recorder.js';
@@ -94,6 +119,8 @@ import { createDaemonSockets, createUpgradeHandler, type DaemonSockets } from '.
 import { defaultWebDist, mountWeb } from './web.js';
 import { daemonTimers, startDaemonTimers } from './timers.js';
 import { runBootRecovery } from './boot-recover.js';
+import { privsep } from '../privsep/config.js';
+import { agentDirFor, runDirFor } from '../privsep/paths.js';
 
 export { NoopPTYManager, type PtyLike };
 
@@ -183,6 +210,8 @@ export interface DaemonServices {
   terminalMonitor: TerminalMonitor;
   threadAutoNamer: ThreadAutoNamer;
   stallWatchdog: StallWatchdog;
+  /** Stops idle thread processes on a host that asks for it (os/process-reaper.ts). Null on every local install. */
+  processReaper: ProcessReaper | null;
   // Agents and roles
   agentService: AgentService;
   rolesService: RolesService;
@@ -324,7 +353,10 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   const timersOn = opts.timers ?? true;
   const basePath = normalizeBasePath(env.DISPATCH_BASE_PATH);
   /** Shared secret the router injects on every request to a hosted box. Unset ⇒ open (local). */
-  const boxToken = env.DISPATCH_BOX_TOKEN?.trim() || undefined;
+  const boxToken = inboundBoxToken(env);
+  // The host facts at boot (profile/host-context.ts). The profile in them is only the fallback: the
+  // live one is OS's answer (os/profile.ts), read by `hostContext()` below once the provider exists.
+  const bootHostContext = readHostContext(env);
   // The daemon's own address for first-party callers (hooks, the shim, MCP helpers): loopback, the
   // bound port and the base path. It is also the only destination that a thread key may be sent to.
   // null until a port is known: a build that never listens tells no thread an address.
@@ -333,12 +365,22 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
 
   // ── The app and the gate ────────────────────────────────────────────────────
   const app = express();
+  // One spelling per route (http/canonical-path.ts): the router matches case-sensitively and strictly,
+  // and a path that is not in canonical form is refused before any gate or route reads it. Set BEFORE
+  // the first `use`: Express reads both settings when it makes the app's router.
+  app.set('case sensitive routing', true);
+  app.set('strict routing', true);
+  app.disable('x-powered-by'); // no answer names the framework
   app.use(securityHeaders);
   // Strip the mount prefix ONCE, before anything routes. Everything downstream —
   // all the route mounts, the static handler, the SPA fallback — keeps its existing
   // root-relative paths and is unaware the app is served under a prefix.
   if (basePath) app.use(stripBasePath(basePath));
-  const auth = wireAuth({ db, dataDir, mode: opts.auth ?? 'gate', basePath, boxToken, network, keys: opts.keys, clock: opts.clock, cfAccess: opts.cfAccess, tailscale: opts.tailscale });
+  app.use(requireCanonicalPath);
+  // The live profile, for the parts built before the provider that reads it (the box gate): the
+  // fallback until `profileNow` exists further down.
+  let profileRef: () => 'business' | 'developer' = () => resolveProfile(null, env);
+  const auth = wireAuth({ db, dataDir, mode: opts.auth ?? 'gate', basePath, boxToken, network, profile: () => profileRef(), keys: opts.keys, clock: opts.clock, cfAccess: opts.cfAccess, tailscale: opts.tailscale });
   const { keys } = auth;
   app.locals.keys = keys;
   auth.install(app);
@@ -373,7 +415,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     catch { return null; }
   };
   const accounts = new AccountsStore(dataDir);
-  const titleCliDeps = { env: () => ({ ...inheritedEnv(), ...spawnEnv.current() }) };
+  const titleCliDeps = { env: () => childEnv(spawnEnv.current()) };
   /** Every account assist may sign in as, the default of each harness first; OpenRouter last, when a key is set. */
   const assistSignedIn = async (): Promise<{ harness: AssistHarness; accountId: string }[]> => {
     const out: { harness: AssistHarness; accountId: string }[] = [];
@@ -408,7 +450,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     : {});
 
   // ── Threads: SessionService, agents, roles, delivery, status ────────────────
-  const sessionService = createSessionService({ db, pty: ptyManager, mcpConfigPath: path.join(dataDir, 'mcp.json'), keys, keyDir: path.join(dataDir, 'keys') });
+  const sessionService = createSessionService({ db, pty: ptyManager, mcpConfigPath: path.join(privsep() ? runDirFor(dataDir, 'mcp') : dataDir, 'mcp.json'), keys, keyDir: runDirFor(dataDir, 'keys') });
   if (opts.port !== undefined) sessionService.setDaemonPort(opts.port); // corrected by listening() if the daemon falls back to another port
   if (opts.structuredCommand) sessionService.setStructuredCommandOverride(opts.structuredCommand);
   const agentService = new AgentService(db, sessionService, broadcaster, path.join(dataDir, 'runs'));
@@ -438,7 +480,25 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   // Plugins observe hook payloads, spawns, declarations and prompts (plugins design, section 3.3).
   statusService.setHookListener((p, id, payload) => threadEvents.onHookPayload(p, id, payload));
   const harnesses = wireHarnesses({ db, sessionService, statusService, threadEvents, env, injected: opts.managers });
+  // Hosted box log (os/box-log.ts): each thread's exit, with its harness and exit code. Local: no line.
+  if (isHostedBox(env)) {
+    for (const [harness, manager] of harnesses.managers) manager.on('exit', (terminalId: string, code?: number) => boxLog('thread.exit', { thread: terminalId, harness, transport: 'structured', exitCode: code ?? null }));
+    ptyManager.on('exit', (id: string, code?: number) => {
+      let harness: string | null = null;
+      try { harness = terminalsDb.getById(db, id)?.type ?? null; } catch { /* the row is gone */ }
+      boxLog('thread.exit', { thread: id, harness, transport: 'pty', exitCode: code ?? null });
+    });
+  }
   const journalWiring = wireJournal(db, harnesses.managers.values()); // W3-D: the message journal
+  // Idle thread processes (os/process-reaper.ts): only when the host sets DISPATCH_IDLE_PROCESS_MINUTES or
+  // DISPATCH_MAX_LIVE_PROCESSES. A local install sets neither: no reaper, no hook, nothing changes.
+  const processReaper = createProcessReaper({
+    db, managers: harnesses.managers,
+    stop: (id) => sessionService.stopTerminal(id),
+    log: (event, fields, level) => { if (isHostedBox(env)) boxLog(event, fields, level); else console.log(`[reaper] ${event} ${JSON.stringify(fields)}`); },
+    ...(opts.clock ? { now: opts.clock } : {}),
+  });
+  processReaper?.attach();
   wireRestoredQuestions(db, sessionService, harnesses.managers.values(), statusService); // a pending question survives a restart (W2-C)
   agentService.setLifecycleService(statusService);
   statusService.onHarnessCommitted((event) => { if (event.type === 'process.exited') rolesService.handleTerminalExit(event.terminalId); });
@@ -450,8 +510,15 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   const endless = new EndlessService({
     ledger: ledgerService,
     db, broadcaster, manager: endlessManager,
-    chatDir: path.join(dataDir, 'chat'),
+    chatDir: agentDirFor(dataDir, 'chat'),
     home: os.homedir(),
+    // A turn the user starts gets the servers a thread gets from Dispatch (owner, 2026-11-13: "all
+    // tools should be given to Chat"): Doppler and every integration. Read at each such turn, after
+    // the build, so the services declared below exist by then.
+    toolSpecs: () => {
+      const sec = secretsService.getServerSpec();
+      return [...(sec ? [sec] : []), ...integrationsService.getServerSpecs(), ...osConnections.getServerSpecs()];
+    },
     limits: limitsFromEnv(env.DISPATCH_ENDLESS_LIMITS),
     openRouterKey: resolveOpenRouterKey,
     finalOutput: (id) => sessionService.finalOutput(id),
@@ -466,10 +533,18 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   // Terminal-free Claude login (design doc §11.2). Its token is injected by the spawn-env refresh,
   // so a box authenticated mid-session takes effect on the next spawn without a daemon restart.
   const claudeLogin = new ClaudeLoginService(dataDir);
+  // A hosted box (or DISPATCH_CLAUDE_LOGIN=cli) signs in with Claude Code's own `claude auth login`:
+  // no token is read, kept or injected (auth/claude-cli-login.ts). A local install keeps setup-token.
+  if (useCleanClaudeLogin(env)) {
+    claudeLogin.useCleanLogin(new ClaudeCliLogin({ env: () => childEnv(spawnEnv.current()) }), { ownerEmail: env.DISPATCH_OWNER_EMAIL });
+    claudeLogin.onAccountConfigDir = ({ id, label, configDir, status }) => {
+      accounts.upsertClaudeConfigDir({ id, label, configDir, ...(status.email ? { email: status.email } : {}), ...(planOf(status) ? { plan: planOf(status)! } : {}) });
+    };
+  }
   // Added Codex accounts sign in with `codex login --device-auth` under the threads' spawn env
   // (PATH with the bundled tools), so it runs the same `codex` the threads do.
   const codexLogin = new CodexLoginService({
-    env: () => ({ ...inheritedEnv(), ...spawnEnv.current() }),
+    env: () => childEnv(spawnEnv.current()),
     isSignedIn: (home) => fs.existsSync(path.join(home, 'auth.json')),
   });
   const limits = wireLimits({
@@ -477,6 +552,10 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     accounts, claudeLogin, pushService, broadcaster, spawnEnv: () => spawnEnv.current(), network, clock: opts.clock,
   });
   const { usageLimits, limitSnapshots, usageGauge } = limits;
+  // A hosted box: a chat thread whose CLI is signed out gives its process back (os/auth-stop.ts).
+  const stopAuthWatch = isHostedBox(env) || useCleanClaudeLogin(env)
+    ? wireStopOnAuthFailure({ managers: harnesses.managers.values(), stop: (id) => sessionService.stopTerminal(id), onAuthFailure: () => claudeLogin.noteAuthFailure() })
+    : () => {};
   // Fleet totals are a read-only projection of the canonical analytics ledger.
   const usage = new UsageRecorder(db);
   wireThreadSettledPush(db, statusService, pushService);
@@ -497,14 +576,79 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   // an MCP server) so Claude Code / Codex agents can add & retrieve secrets.
   const integrationsService = new IntegrationsService(db, integrationLauncher(dataDir), () => { const st = secretsService.status(); return st.connected && st.enabled; });
   // Tools brokered by OS, resolved per spawn (design §4.2.1).
-  const osConnections = new OsConnectionsProvider();
-  const toolsBase = opts.toolsDir ?? path.join(dataDir, 'tools');
+  const osConnections = new OsConnectionsProvider({ baseUrl: env.OS_BASE_URL, boxToken: osBoxToken(env), ownerEmail: env.DISPATCH_OWNER_EMAIL });
+  // OS's tool list: which company systems get a server (os/tools-proxy.ts). Follows every change of OS's answer.
+  const osToolCatalog = new OsToolCatalog({ provider: osConnections });
+  if (osConnections.enabled) osToolCatalog.start();
+  // Claude Code's forced login (os/login-policy.ts): a root-owned drop-in, present unless the platform's
+  // CURRENT answer grants a company Claude model and turns the person's own login off. Fail closed: it is
+  // written at start, before the platform answers. Hosted boxes only; a daemon that is not root changes nothing.
+  if (isHostedBox(env)) {
+    const gateway = env.DISPATCH_ALLOW_MODEL_GATEWAY?.trim() === '1';
+    let lastForced: boolean | null = null;
+    let lastProblem: string | null = null;
+    const followLogin = () => {
+      const r = syncLoginPolicy(osConnections.modelAccess(), { gateway });
+      if (r.forced !== lastForced || r.problem !== lastProblem) boxLog('claude.login-policy', { forced: r.forced, ...(r.problem ? { problem: r.problem } : {}) }, r.problem ? 'warn' : 'info');
+      lastForced = r.forced;
+      lastProblem = r.problem;
+    };
+    followLogin();
+    osConnections.onChange(followLogin);
+  }
+  // ONE profile for this daemon: OS's live answer (kept while OS is unreachable), else DISPATCH_PROFILE,
+  // else business on a hosted box / developer locally. The gate, the sockets, the page and every spawn read it.
+  const profileNow = () => resolveProfile(osConnections.snapshot().profile, env);
+  setProfileSource(profileNow);
+  // Company models (os/company-model.ts): what the platform grants now, and whether the person has a
+  // Claude login of their own a thread could use (the account the thread names, else the default).
+  setCompanyModelSource({
+    access: () => osConnections.modelAccess(),
+    proxy: () => osConnections.modelProxy(),
+    personalClaudeSignedIn: async (config) => {
+      const wanted = typeof config.accountId === 'string' && config.accountId ? config.accountId : accounts.defaultId('claude');
+      const id = accounts.has('claude', wanted) ? wanted : accounts.defaultId('claude');
+      if (id !== 'cli') {
+        const dir = accounts.claudeConfigDir(id);
+        if (dir) return (await claudeLogin.cliStatus({ configDir: dir }).catch(() => null))?.loggedIn === true;
+        return accounts.claudeToken(id) !== null;
+      }
+      if (claudeLogin.usesCleanLogin) return (await claudeLogin.cliStatus().catch(() => null))?.loggedIn === true;
+      if (claudeLogin.isAuthenticated()) return true;
+      return (await detectProvider('claude').catch(() => null))?.signedIn === true;
+    },
+  });
+  profileRef = profileNow;
+  const hostContext = () => liveHostContext(bootHostContext, { profile: profileNow(), osPublicUrl: osConnections.snapshot().osPublicUrl });
+  // The business profile's table and what its guard may ask (profile/business-gate.ts). The guard is the
+  // first handler of every route; it reads this state per request, so a profile change applies at once.
+  const routeIds = new WeakMap<object, string>();
+  const gateState: BusinessGateState = {
+    profile: profileNow,
+    table: BUSINESS_ROUTES,
+    ids: routeIds,
+    facts: {
+      thread: (id) => {
+        const row = terminalsDb.getById(db, id);
+        if (!row) return null;
+        let config: Record<string, unknown> = {};
+        try { const parsed = JSON.parse(row.config || '{}'); if (parsed && typeof parsed === 'object') config = parsed; } catch { /* an unreadable config is an empty one */ }
+        return { type: row.type, config };
+      },
+      projectsRoot: () => businessProjectsRoot(),
+    },
+    keyKind: (req) => {
+      try { const p = principalOf(req); return p.kind === 'owner' || p.kind === 'none' ? null : p.kind; } catch { return null; }
+    },
+  };
+  app.locals[GATE_LOCAL] = gateState;
+  const toolsBase = opts.toolsDir ?? runDirFor(dataDir, 'tools');
   // Whether each bundled CLI can really sign in from a thread: runs its authCheck with the
   // thread spawn env (kept current by the refresh below), not this daemon's bare env.
   const toolsAuth = new ToolAuthProber({ base: toolsBase });
   const providerOfType = (type: string): AccountProvider | null => (type === 'claude-code' ? 'claude' : type === 'codex' ? 'codex' : null);
   wireSessionService(sessionService, {
-    onUserPrompt: (id, text, source) => { if (source === 'user') threadAutoNamer.notifyPrompt(id, text); threadEvents.onPrompt(id, text, source); },
+    onUserPrompt: (id, text, source) => { if (source === 'user') { threadAutoNamer.notifyPrompt(id, text); notePersonMessage(db, new Date()); } threadEvents.onPrompt(id, text, source); },
     onSpawned: (id, tools) => threadEvents.onSpawned(id, tools),
     onStatusDeclared: (id, decl) => threadEvents.onStatus(id, decl),
     pluginInjection: (harness, sessionId) => { const inj = plugins.modelInjection(harness); return { ...inj, prompts: [...inj.prompts, ...skills.injection(sessionId, harness)] }; },
@@ -517,13 +661,26 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
       has: (type, id) => { const p = providerOfType(type); return p ? accounts.has(p, id) : false; },
       defaultId: (type) => { const p = providerOfType(type); return p ? accounts.defaultId(p) : 'cli'; },
     },
-    secretsServerSpec: () => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }),
-    integrationsSpecs: () => [...integrationsService.getServerSpecs(), ...osConnections.getServerSpecs()],
+    // OS's standing instruction (systemPrompt of /api/dispatch/connections) rides with the Doppler note,
+    // so every harness gets it the way it gets that one (Claude --append-system-prompt, Codex
+    // developerInstructions, Grok --rules, OpenCode's rules file).
+    secretsServerSpec: () => ({ spec: secretsService.getServerSpec(), prompt: [secretsService.getSystemPrompt(), osConnections.getSystemPrompt()].filter(Boolean).join('\n\n') || null }),
+    // The company tools (os/os-servers.ts): one server per company system that has a tool for this
+    // person (a not-connected one has its `connect` tool), reaching OS only through this daemon's
+    // loopback route (os/tools-proxy.ts). A running thread keeps the SET of servers it started with;
+    // the tools of each change live (list_changed). A new system reaches the next spawn.
+    integrationsSpecs: () => {
+      const specs = [...integrationsService.getServerSpecs(), ...osConnections.getServerSpecs()];
+      if (osConnections.osToolsUrl() && daemonApi) specs.push(...osSystemServerSpecs(daemonApi, systemsForSpawn(osConnections, osToolCatalog)));
+      return specs;
+    },
     toolsAwareness: () => {
       // Sync, so it can only serve the cache; a stale one is refreshed behind this spawn.
       // Not without the network: the check runs each bundled CLI, and a test's tools folder can be a real one.
       if (network && toolsAuth.isStale()) void toolsAuth.refresh();
-      return awarenessNote(toolStatuses({ base: toolsBase, env: toolsAuth.threadEnv(), checks: toolsAuth.snapshot().results }));
+      const cli = awarenessNote(toolStatuses({ base: toolsBase, env: toolsAuth.threadEnv(), checks: toolsAuth.snapshot().results }));
+      // A hosted image lists its document tools in /etc/dispatch/tools.json: one line points to it.
+      return [cli, imageToolsNote()].filter(Boolean).join('\n\n');
     },
   });
   const spawnEnv = wireSpawnEnv({
@@ -556,8 +713,48 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     toolsReachable: osConnections.snapshot().reachable,
     usage7d: usage.total(7),
     usageByModel7d: usage.byModel(7),
+    // Fleet management (OS contract "Fleet management"): each is best effort; a failed read leaves the key out.
+    usage24h: bestEffort(() => usage.total(1)),
+    usageLimits: bestEffort(() => compactLimits(usageGauge.summary())),
+    disk: bestEffort(() => diskUse(os.homedir(), dataDir)),
+    pluginJobs: pluginWorkers.scheduledJobs(),
   }));
 
+  // Company tools (os/tools-proxy.ts): the loopback route of each company-system server, and the
+  // state the Company connections panel reads. On a local install OS is not configured, so the routes
+  // answer "not hosted" and inject nothing. Mounted by mountApiRoutes (osRouters) with approvals and continuity.
+  const osRouters = [
+    createOsToolsRouter({
+      provider: osConnections,
+      catalog: osToolCatalog,
+      onUnreachable: (terminalId, message) => {
+        sessionService.structuredManagerForTerminal(terminalId)?.postEvent?.(terminalId, { type: 'system', subtype: 'dispatch_notice', level: 'warning', message });
+      },
+      // An export result is saved into the thread's working folder (os/export-download.ts), the folder its process runs in.
+      workspaceFor: (terminalId) => {
+        const row = terminalsDb.getById(db, terminalId);
+        if (!row || row.archived_at) return null;
+        const dir = row.working_dir || sessionsDb.getById(db, row.session_id)?.working_dir;
+        return dir ? expandHome(dir) : null;
+      },
+      exportScratchDir: path.join(dataDir, 'export-downloads'),
+    }),
+    // Company models (os/model-relay.ts): a company-model Claude thread's Messages traffic, to the platform's proxy.
+    createModelRelayRouter({
+      access: () => osConnections.modelAccess(),
+      proxy: () => osConnections.modelProxy(),
+      boxHeaders: () => osConnections.boxHeaders(),
+      thread: (id) => {
+        const row = terminalsDb.getById(db, id);
+        if (!row || row.archived_at) return null;
+        let config: Record<string, unknown> = {};
+        try { const parsed = JSON.parse(row.config || '{}'); if (parsed && typeof parsed === 'object') config = parsed; } catch { /* an unreadable config is an empty one */ }
+        return { type: row.type, config };
+      },
+    }),
+    createApprovalsRouter(db, sessionService),
+    createContinuityRouter(db, sessionService),
+  ];
   bootAnalytics(db);
   // The one list of /api routes.
   mountApiRoutes(app, {
@@ -568,17 +765,25 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     noCredentialStats: auth.noCredentialStats, pairCodes: auth.pairCodes, devices: auth.devices, cookiePath: basePath || '/',
     reachableAddresses: auth.reachableAddresses, refreshPtyEnv: spawnEnv.refresh,
     endless: opts.endless ?? endless, usageLimits: opts.usageLimits ?? limits.routeDeps,
-    watchCatchUp: (id) => watchDispatcher.catchUp(id), outbox, journal: journalWiring.journal,
+    watchCatchUp: (id) => watchDispatcher.catchUp(id), outbox, journal: journalWiring.journal, osRouters,
+    hostContext,
+  });
+  osConnections.onChange(() => {
+    spawnEnv.refresh();
+    broadcaster.broadcast({ type: 'os:connections', state: osConnections.publicSnapshot() });
   });
   const webDist = opts.webDist === undefined ? defaultWebDist(env) : opts.webDist;
-  const servesWeb = mountWeb(app, { webDist, basePath, dataDir, plugins });
+  const servesWeb = mountWeb(app, { webDist, basePath, dataDir, plugins, hostContext });
+  // Every route is now registered. Give each its pattern for the profile guard, and refuse to build an
+  // app that holds a route registered around the guard (http/route-registry.ts).
+  sealRoutes(app, routeIds);
   // Last: every error that no route answered becomes a JSON status and message, never a stack trace.
   app.use(jsonErrorHandler);
 
   const services: DaemonServices = {
     db, dataDir, keys, noCredentialStats: auth.noCredentialStats, accessGate: auth.accessGate, pairCodes: auth.pairCodes, devices: auth.devices,
     authRequestService, claudeLogin, codexLogin, accounts, sockets, broadcaster, ptyManager, sessionService, statusService,
-    harnessManagers: harnesses.managers, structuredManager: harnesses.claude, terminalMonitor, threadAutoNamer, stallWatchdog,
+    harnessManagers: harnesses.managers, structuredManager: harnesses.claude, terminalMonitor, threadAutoNamer, stallWatchdog, processReaper,
     agentService, rolesService, outbox, watchDispatcher, ledgerService, pushService, endless, endlessManager,
     usageLimits, limitSnapshots, usageGauge, usage, boxHeartbeat, secretsService, integrationsService, osConnections, toolsAuth,
     refreshSpawnEnv: spawnEnv.refresh, plugins, marketplaces, installer, skills, threadEvents, pluginHooks, pluginWorkers, assistRunner,
@@ -589,7 +794,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   let stopTimers: (() => void) | null = null;
   let stopped = false;
   const onUpgrade = createUpgradeHandler({
-    sockets, basePath, boxToken: auth.boxToken, accessGate: auth.accessGate, devices: auth.devices,
+    sockets, basePath, boxToken: auth.boxToken, ownerPeerOk: auth.ownerPeerOk, profile: profileNow, threadFacts: gateState.facts.thread, accessGate: auth.accessGate, devices: auth.devices,
     sessionService, statusService, ptyManager, terminalMonitor, claudeManager: harnesses.claude,
   });
   return {
@@ -619,7 +824,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
       const here = path.dirname(fileURLToPath(import.meta.url));
       sessionService.setStatusContext({
         serverUrl: api,
-        hooksDir: path.join(dataDir, 'hooks'),
+        hooksDir: runDirFor(dataDir, 'hooks'),
         codexHelperPath: path.resolve(here, '../../scripts/codex-notify.mjs'),
         grokHelperPath: path.resolve(here, '../../scripts/grok-hook.mjs'),
       });
@@ -638,9 +843,14 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
       plugins.stop();
       pluginHooks.stop();
       void pluginWorkers.stop();
+      // A sign-in in flight ends with the daemon (its child is not left behind). The next daemon
+      // starts with no sign-in in progress; the page then offers to start again.
+      if (claudeLogin.usesCleanLogin) claudeLogin.cancel();
       usageLimits.stop();
       usageGauge.stop();
       boxHeartbeat.stop();
+      osConnections.stop();
+      stopAuthWatch();
       threadAutoNamer.dispose();
       endless.stop();
       endlessManager.killAll();

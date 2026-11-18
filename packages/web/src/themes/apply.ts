@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { Theme, TerminalPalette, TokenName } from './types';
-import { resolveTokens, cssVarName, termVarName, onAccent } from './types';
-import { themeFor, dispatchDark, SYSTEM_LIGHT, SYSTEM_DARK, type ThemeSetting } from './index';
+import { resolveTokens, cssVarName, termVarName, onAccent, THEME_EXTRA_VARS } from './types';
+import { themeFor, dispatchDark, systemLight, systemDark, type ThemeSetting } from './index';
 
 /**
  * Applying a theme: its tokens become CSS variables on <html> (theme.css reads them), plus
@@ -20,6 +20,7 @@ export function themeVars(theme: Theme, accent: string): Record<string, string> 
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(tk)) out[cssVarName(k as TokenName)] = v;
   for (const [k, v] of Object.entries(theme.terminal)) out[termVarName(k as keyof TerminalPalette)] = v;
+  for (const [k, v] of Object.entries(theme.vars ?? {})) if (v) out[k] = v;
   return out;
 }
 
@@ -28,7 +29,7 @@ function boot(theme: Theme, accent: string): BootTheme {
 }
 
 export function bootPayload(setting: ThemeSetting, accent: string): BootPayload {
-  if (setting === 'system') return { light: boot(SYSTEM_LIGHT, accent), dark: boot(SYSTEM_DARK, accent) };
+  if (setting === 'system') return { light: boot(systemLight(), accent), dark: boot(systemDark(), accent) };
   return { fixed: boot(themeFor(setting, true), accent) };
 }
 
@@ -36,6 +37,8 @@ export function bootPayload(setting: ThemeSetting, accent: string): BootPayload 
 export function applyTheme(theme: Theme, accent: string, setting?: ThemeSetting): void {
   if (typeof document === 'undefined') return;
   const root = document.documentElement;
+  // A font or radius the previous theme set and this one does not: back to theme.css's own value.
+  for (const k of THEME_EXTRA_VARS) if (!theme.vars?.[k]) root.style.removeProperty(k);
   for (const [k, v] of Object.entries(themeVars(theme, accent))) root.style.setProperty(k, v);
   root.style.colorScheme = theme.kind;
   root.dataset.theme = theme.id;

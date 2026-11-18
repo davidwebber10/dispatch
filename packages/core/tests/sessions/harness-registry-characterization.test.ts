@@ -156,7 +156,7 @@ describe('SessionService structured manager registry (characterization)', () => 
     svc.setKeyRegistry(reg, { keyDir: path.join(tmp, 'keys') });
     const late = new FakeManager();
     svc.registerStructuredManager('codex', late as any);
-    expect(early.listenerCount('exit')).toBe(1);
+    expect(early.listenerCount('exit')).toBe(2); // the key revoke, and Claude's restart of a lost conversation
     expect(late.listenerCount('exit')).toBe(1);
   });
 });

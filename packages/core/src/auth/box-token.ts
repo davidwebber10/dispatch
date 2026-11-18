@@ -52,10 +52,19 @@ export function requireBoxToken(expected: string | undefined): RequestHandler | 
  * so protecting only the routes leaves every terminal and structured socket — i.e.
  * full interactive access to the box — completely open.
  */
-export function upgradeAllowed(expected: string | undefined, req: IncomingMessage): boolean {
+export function upgradeAllowed(expected: string | undefined, req: IncomingMessage, ownerPeerOk?: OwnerPeerCheck): boolean {
   if (!expected) return true;
+  if (ownerPeerOk && !ownerPeerOk(req.socket?.remoteAddress)) return false;
   return tokenMatches(expected, headerValue(req));
 }
+
+/**
+ * May a peer at this address present the owner credential? With privilege separation
+ * (docs/hosted-privilege-separation.md, section 6) only a peer OUTSIDE the box may: a process in the
+ * box is a workload, and a workload is a key principal or nothing. Absent: every peer may (a box
+ * without the separation, as before).
+ */
+export type OwnerPeerCheck = (remoteAddress: string | undefined) => boolean;
 
 /**
  * Box gate with per-thread keys (spec 6.8): admit a live key, else a box header, else the owner
@@ -63,7 +72,7 @@ export function upgradeAllowed(expected: string | undefined, req: IncomingMessag
  * carries a key is judged only as the key. Upgrades keep using upgradeAllowed (box header only).
  */
 export function createBoxGate(opts: {
-  boxToken: string; registry: KeyRegistry; getToken: () => string | null;
+  boxToken: string; registry: KeyRegistry; getToken: () => string | null; ownerPeerOk?: OwnerPeerCheck;
 }): RequestHandler {
   return (req, res, next) => {
     const auth = Array.isArray(req.headers.authorization) ? req.headers.authorization[0] : req.headers.authorization;
@@ -72,6 +81,8 @@ export function createBoxGate(opts: {
       if (opts.registry.resolve(key)) return next();
       return void res.status(401).json({ error: 'unauthorized' });
     }
+    // The owner credential (the box header, the owner token) is never taken from inside the box.
+    if (opts.ownerPeerOk && !opts.ownerPeerOk(req.socket?.remoteAddress)) return void res.status(401).json({ error: 'unauthorized' });
     if (tokenMatches(opts.boxToken, headerValue(req))) return next();
     const token = opts.getToken();
     if (token && auth && /^Bearer /i.test(auth) && tokenMatches(token, auth.slice(7).trim())) return next();

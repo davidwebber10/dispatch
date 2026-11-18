@@ -6,6 +6,8 @@ import { STEP_LABEL } from '../update/UpdateProgress';
 import { Markdown } from '../Markdown';
 import { splitNoteHeadline } from '../../lib/releaseNotes';
 import { SettingsGroup, SettingsRow, Sheet, StatusMark } from './ui';
+import { hostCopy, hostDetail, PLAIN } from '../../lib/hostCopy';
+import { usesPlainWording } from '../../lib/hostContext';
 import { Button } from '../ui';
 import { fontVar } from '../../lib/fontSize';
 
@@ -20,14 +22,16 @@ import { fontVar } from '../../lib/fontSize';
  */
 export function UpdatesSection() {
   const available = useUpdate((s) => s.available);
+  const ahead = useUpdate((s) => s.ahead);
+  const checkError = useUpdate((s) => s.checkError);
   const currentVersion = useUpdate((s) => s.currentVersion);
   const notes = useUpdate((s) => s.notes);
   const currentNotes = useUpdate((s) => s.currentNotes);
-  const { apply, applying, failReason, inProgress, hosted } = useApplyUpdate();
+  const { apply, applying, failReason, needsSwitchBack, inProgress, hosted } = useApplyUpdate();
   const progressStep = useUpdate((st) => (st.progressUnreachable ? 'restart' : st.progress?.step ?? null));
   const [checking, setChecking] = useState(false);
   const [checked, setChecked] = useState(false);
-  const [checkError, setCheckError] = useState(false);
+  const [checkFailed, setCheckFailed] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
 
   // Opening Updates refreshes what it shows (2026-11-05): the stored release can be one behind when
@@ -36,9 +40,9 @@ export function UpdatesSection() {
   useEffect(() => { void useUpdate.getState().check().catch(() => {}); }, []);
 
   async function check() {
-    setChecking(true); setChecked(false); setCheckError(false);
+    setChecking(true); setChecked(false); setCheckFailed(false);
     try { await useUpdate.getState().check(); setChecked(true); }
-    catch { setCheckError(true); }
+    catch { setCheckFailed(true); }
     setChecking(false);
   }
 
@@ -56,21 +60,33 @@ export function UpdatesSection() {
   const headline = entries[0] ? splitNoteHeadline(entries[0].notes).headline : null;
 
   const updateRow = inProgress ? (
-    <SettingsRow label="Updating" hint={`${progressStep ? `${STEP_LABEL[progressStep]}. ` : ''}This page reloads by itself when the update is done.`}
+    <SettingsRow label="Updating" hint={usesPlainWording() ? PLAIN['update.progress.restarting'] : `${progressStep ? `${STEP_LABEL[progressStep]}. ` : ''}This page reloads by itself when the update is done.`}
       control={<StatusMark tone="accent">In progress</StatusMark>} />
   ) : available ? (
-    <SettingsRow label={<span style={{ color: 'var(--color-accent)', fontWeight: 600 }}>{available.version} is available</span>}
-      hint="Dispatch restarts, and this page reloads by itself."
+    <SettingsRow label={<span style={{ color: 'var(--color-accent)', fontWeight: 600 }}>{usesPlainWording() || !available.version ? PLAIN['update.available'] : `${available.version} is available`}</span>}
+      hint={hostCopy('update.apply.hint', 'Dispatch restarts, and this page reloads by itself.')}
       control={(
         <Button variant="primary" size="sm" onClick={() => void apply()} disabled={applying} style={applying ? { opacity: 0.7 } : undefined}>
           {applying ? 'Updating…' : 'Update now'}
         </Button>
       )} />
+  ) : ahead ? (
+    // Running a version above the newest release (stuck on an unreleased version): never "up to date".
+    // Moving back is an explicit choice; the old commit stays on a backup branch.
+    <SettingsRow label={<span style={{ color: 'var(--color-accent)', fontWeight: 600 }}>{`This version is not a published release`}</span>}
+      hint={`The latest release is ${ahead.version}. Switching moves Dispatch back to it, restarts it, and keeps your current version on a backup branch.`}
+      control={(
+        <Button variant="primary" size="sm" onClick={() => void apply(false, true)} disabled={applying} style={applying ? { opacity: 0.7 } : undefined}>
+          {applying ? 'Switching…' : `Switch to ${ahead.version}`}
+        </Button>
+      )} />
   ) : (
     <SettingsRow label="Check for updates"
-      hint={checkError
-        ? <span style={{ color: 'var(--color-status-red)' }}>Couldn't reach the server.</span>
-        : checked ? "You're up to date." : 'Looks for a newer release on GitHub.'}
+      hint={checkFailed
+        ? <span style={{ color: 'var(--color-status-red)' }}>{hostCopy('update.check.unreachable', "Couldn't reach the server.")}</span>
+        // The last check could not tell: never read "up to date" then.
+        : checkError ? <span style={{ color: 'var(--color-status-red)' }}>{`The last check could not tell if an update is available. ${checkError}`}</span>
+        : checked ? "You're up to date." : hostCopy('update.check.hint', 'Looks for a newer release on GitHub.')}
       control={<Button onClick={() => void check()} disabled={checking} variant="ghost" size="sm" style={checking ? { opacity: 0.6 } : undefined}>{checking ? 'Checking…' : 'Check now'}</Button>} />
   );
 
@@ -82,13 +98,18 @@ export function UpdatesSection() {
       {failReason && (
         <SettingsRow label="Couldn't update automatically" hint={(
           <>
-            {failReason}{' '}
+            {usesPlainWording() ? hostDetail(failReason) : failReason}{' '}
             {/* `dispatch update` is dead advice on a hosted workspace: there is no
                 checkout to pull and no shell to run it in. The honest fallback is the
                 person who can rebuild the fleet image. */}
-            {hosted
-              ? 'Your workspace updates when it is rebuilt onto a newer image — ask an administrator if this keeps failing.'
-              : <>Run <code style={{ font: `400 ${fontVar(11)} var(--font-mono)` }}>dispatch update</code> manually instead.</>}
+            {hosted || usesPlainWording()
+              ? PLAIN['update.failed.hint']
+              : <>Run <code style={{ font: `400 ${fontVar(11)} var(--font-mono)` }}>{ahead || needsSwitchBack ? 'dispatch update --switch-back' : 'dispatch update'}</code> manually instead.</>}
+            {needsSwitchBack && available && !hosted && (
+              <div style={{ marginTop: 8 }}>
+                <Button variant="ghost" size="sm" onClick={() => void apply(false, true)} disabled={applying}>Switch to {available.version}</Button>
+              </div>
+            )}
           </>
         )} />
       )}

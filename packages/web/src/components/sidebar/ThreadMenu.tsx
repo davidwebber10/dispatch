@@ -21,8 +21,9 @@ import { useIsMobile } from '../../hooks/useIsMobile';
 import { pluginIcon } from '../../plugins/sdk';
 import {
   PencilSimple, GitBranch, UserSwitch, Bell, BellSlash, Info, Copy, ArrowClockwise, ArrowCounterClockwise,
-  Timer, Archive, PushPinSlash, CaretDown, CaretRight, Key, Question,
+  Timer, Archive, PushPinSlash, Key, Question, DownloadSimple,
 } from '@phosphor-icons/react';
+import { can } from '../../lib/profile';
 import type { Icon } from '@phosphor-icons/react';
 import { fontVar } from '../../lib/fontSize';
 
@@ -82,16 +83,19 @@ function moveFocus(e: React.KeyboardEvent<HTMLElement>) {
 /** The desktop shell: a fly-out at the click, kept inside the viewport (it slides up, or in,
  *  when there is no room below or to the right), with its own scroll. Escape or a click outside
  *  closes it. */
+/** The thread types with a conversation to download (a shell has none). */
+const EXPORTABLE = ['claude-code', 'codex', 'grok', 'opencode'];
+
 function FlyOut({ x, y, onClose, children }: { x: number; y: number; onClose: () => void; children: React.ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   const left = Math.max(EDGE, Math.min(x, window.innerWidth - EDGE - FLYOUT_W));
   const [top, setTop] = useState(y);
-  // Measured after every render, not only on open: More grows the fly-out, and it must not grow off
-  // the bottom. setTop with an unchanged value is a no-op, so this settles.
+  // Measured after every render, not only on open: a row can appear later (a plugin loads), and the
+  // fly-out must not grow off the bottom. setTop with an unchanged value is a no-op, so this settles.
   useLayoutEffect(() => {
     const h = ref.current?.getBoundingClientRect().height ?? 0;
     const room = window.innerHeight - EDGE;
-    // Slide up only as far as needed, so the row under the pointer (More) moves as little as it can.
+    // Slide up only as far as needed, so the menu stays as close to the pointer as it can.
     setTop(Math.max(EDGE, Math.min(y, room - h)));
   });
   // Callers pass a fresh onClose each render; read it through a ref so a parent's re-render does
@@ -133,8 +137,10 @@ function FlyOut({ x, y, onClose, children }: { x: number; y: number; onClose: ()
  *  The rows are grouped (2026-11-07): a grid of the four most used actions, View, Plugins, a closed
  *  More for the maintenance actions, then Archive. The phone shows them in a sheet, the desktop in a
  *  fly-out at the click; the body is the same. */
-export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
+export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows, inline = false }: {
   at: ThreadMenuAt | null; onClose: () => void; onBranched: (thread: Terminal) => void;
+  /** The menu's tiles and rows drawn in place, with no fly-out or sheet: the desktop right column (2026-11-13). */
+  inline?: boolean;
   leadView?: (close: () => void, rowStyle: React.CSSProperties) => React.ReactNode;
   pluginRows?: ThreadMenuPluginRow[];
 }) {
@@ -151,11 +157,8 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
   // The Doppler token switch exists only when the owner chose "only threads that I turn on" (W1-C).
   const tokenOptIn = useSecrets((s) => !!s.status?.connected && s.status?.tokenScope === 'opted-in');
   const menuOpen = !!at;
-  useEffect(() => { if (menuOpen) void useSecrets.getState().loadScope(); }, [menuOpen]);
-  // The phone sheet's More disclosure starts closed each time the sheet opens.
-  const [moreOpen, setMoreOpen] = useState(false);
-  const [openedFor, setOpenedFor] = useState<ThreadMenuAt | null>(at);
-  if (openedFor !== at) { setOpenedFor(at); if (moreOpen) setMoreOpen(false); }
+  // No secrets call where Doppler is hidden (lib/profile.ts): the business workspace has none.
+  useEffect(() => { if (menuOpen && can('settings.secrets')) void useSecrets.getState().loadScope(); }, [menuOpen]);
 
   async function archive(tab: Terminal) {
     setArchiveTarget(null);
@@ -180,6 +183,12 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
   function reload(tab: Terminal) {
     useTabs.getState().markLoading(tab.id);
     void api.relaunchTerminal(tab.id).catch(() => { /* surfaced via connection state */ });
+  }
+
+  /** "Download thread" (owner, 2026-11-13): the whole conversation as one file, to paste into another model. */
+  async function downloadThread(tab: Terminal) {
+    useHint.getState().show('Downloading thread…');
+    try { await api.exportThread(tab.id); } catch { useHint.getState().show('Could not download the thread'); }
   }
 
   /** The id another thread can take straight into read_thread or message_thread (2026-11-06). */
@@ -240,7 +249,7 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
     // limit), Alerts (on/off at a glance, also from the Threads list, where no bell shows).
     const tiles: { key: string; Glyph: Icon; label: string; name: string; onClick: () => void; pressed?: boolean }[] = [
       { key: 'rename', Glyph: PencilSimple, label: 'Rename', name: t.type === 'file' ? 'Rename file' : 'Rename thread', onClick: pick(setRenameTarget) },
-      ...(BRANCHABLE.includes(t.type) ? [{ key: 'branch', Glyph: GitBranch, label: 'Branch', name: 'Branch thread', onClick: pick((x) => void branch(x)) }] : []),
+      ...(BRANCHABLE.includes(t.type) && can('threads.git') ? [{ key: 'branch', Glyph: GitBranch, label: 'Branch', name: 'Branch thread', onClick: pick((x) => void branch(x)) }] : []),
       ...(hasAccount(t) ? [{ key: 'account', Glyph: UserSwitch, label: 'Account', name: 'Switch account…', onClick: pick(setAccountTarget) }] : []),
       ...(hasAccount(t) && canReceiveAlerts()
         ? [{ key: 'alerts', Glyph: alertsOn(t) ? Bell : BellSlash, label: 'Alerts', name: alertsOn(t) ? 'Disable alerts' : 'Enable alerts', pressed: alertsOn(t), onClick: pick((x) => void toggleAlerts(x)) }]
@@ -252,11 +261,11 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
         .map((p) => row(`item-${p.plugin}-${p.id}`, pluginIcon(p.icon), p.label, pick((x) => p.onPick({ tab: x })), undefined, {}, p.badge ? <MenuBadgeCount badge={p.badge} ctx={{ tab: t }} /> : undefined)),
     ];
     // Desktop shows Thread details in its right-hand panel; a phone has no panel.
-    const details = isMobile && isThread(t);
+    // Not in place: that menu is inside Thread details already (the right column, the phone's details sheet).
+    const details = isMobile && isThread(t) && !inline;
     const hasView = !!leadView || details;
     const caption = { ...captionBase, ...z.caption };
-    return (
-      <>
+    const tilesNode = (
         <div role="group" aria-label="Quick actions" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: z.gap, padding: z.pad }}>
           {tiles.map((x) => (
             <button key={x.key} type="button" aria-label={x.name} aria-pressed={x.pressed} onClick={x.onClick}
@@ -266,14 +275,24 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
             </button>
           ))}
         </div>
-        {hasView && (
+    );
+    const listNode = (
+      <>
+        {/* On a phone the caller's rows and Thread details are the first rows of the list, not a section
+            (owner, 2026-11-13). The desktop keeps its View label over the caller's rows. */}
+        {hasView && (isMobile ? (
+          <>
+            {leadView?.(onClose, z.row)}
+            {details && row('details', Info, 'Thread details', pick(setDetailsTarget))}
+          </>
+        ) : (
           <div role="group" aria-label="View" style={{ display: 'flex', flexDirection: 'column' }}>
             <div aria-hidden style={caption}>View</div>
             {leadView?.(onClose, z.row)}
             {details && row('details', Info, 'Thread details', pick(setDetailsTarget))}
           </div>
-        )}
-        {plugins.length > 0 && (
+        ))}
+        {plugins.length > 0 && can('settings.plugins') && (
           <div role="group" aria-label="Plugins" style={{ display: 'flex', flexDirection: 'column' }}>
             <div aria-hidden style={caption}>Plugins</div>
             {plugins}
@@ -281,19 +300,16 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
         )}
         {isThread(t) && (
           <>
+            {/* No More fold (owner, 2026-11-13: "it should just show the options"). */}
             {rule}
-            <button type="button" aria-expanded={moreOpen} aria-controls="thread-menu-more" onClick={() => setMoreOpen((v) => !v)}
-              style={{ ...z.row, color: 'var(--color-text-secondary)' }}>
-              {moreOpen ? <CaretDown size={z.icon} /> : <CaretRight size={z.icon} />}More
-            </button>
-            {moreOpen && (
-              <div id="thread-menu-more" style={{ display: 'flex', flexDirection: 'column' }}>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                {EXPORTABLE.includes(t.type) && row('download', DownloadSimple, 'Download thread', pick((x) => void downloadThread(x)), 'The whole conversation as a Markdown file')}
                 {row('copy', Copy, 'Copy thread ID', pick((x) => void copyId(x)), 'Lets another thread read or message this one')}
                 {row('reload', ArrowClockwise, 'Reload thread', pick(reload), 'Reconnect to the thread')}
                 {row('reset', ArrowCounterClockwise, 'Reset status', pick((x) => void resetStatus(x)), 'Clear a stuck Working or Needs-you state')}
                 {row('why', Question, 'Why is this thread in this state?', pick(setWhyTarget), 'Explains the status and lists the last events')}
                 {row('auto-archive', Timer, 'Auto-archive…', pick(setAutoArchiveTarget), 'Archive the thread on its own after a set time')}
-                {tokenOptIn && canTakeToken(t) && (
+                {tokenOptIn && canTakeToken(t) && can('settings.secrets') && (
                   <button key="secrets-env" type="button" role="switch" aria-checked={secretsEnvOn(t)} aria-label="Doppler token in this thread's shell"
                     onClick={pick((x) => void toggleSecretsEnv(x))} style={{ ...z.row, alignItems: 'flex-start' }}>
                     <Key size={z.icon} style={{ flexShrink: 0, marginTop: 1 }} />
@@ -305,7 +321,6 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
                   </button>
                 )}
               </div>
-            )}
           </>
         )}
         {rule}
@@ -314,18 +329,30 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
           : row('archive', Archive, 'Archive thread', pick(setArchiveTarget), undefined, { color: 'var(--color-status-red)' })}
       </>
     );
+    return { tiles: tilesNode, list: listNode };
   };
 
   return (
     <>
-      {/* One body, two shells: on a phone the app's shared slide-up sheet, on desktop a fly-out at the click. */}
-      {isMobile ? (
+      {/* One body, three shells: in place (the desktop right column), on a phone the app's shared
+          slide-up sheet, on desktop a fly-out at the click. */}
+      {inline ? (at && (() => { const b = body(at); return (
+        <div role="menu" aria-label="Thread options" data-testid="thread-menu-inline" onKeyDown={moveFocus} style={{ display: 'flex', flexDirection: 'column' }}>{b.tiles}{b.list}</div>
+      ); })()) : isMobile ? (
         <Modal open={!!at} sheet title={at?.tab.label} onClose={onClose}>
-          {at && <div role="menu" aria-label="Thread options" onKeyDown={moveFocus} style={{ display: 'flex', flexDirection: 'column', paddingBottom: 4 }}>{body(at)}</div>}
+          {/* A fixed height (owner, 2026-11-13): the sheet never reaches the top of the screen; the tiles
+              stay at the top and the rows under them scroll. 78% of the screen less the sheet's header. */}
+          {at && (() => { const b = body(at); return (
+            <div role="menu" aria-label="Thread options" data-testid="thread-menu-sheet" onKeyDown={moveFocus}
+              style={{ display: 'flex', flexDirection: 'column', height: 'calc(78dvh - 96px)', minHeight: 0 }}>
+              <div style={{ flexShrink: 0 }}>{b.tiles}</div>
+              <div data-testid="thread-menu-list" style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', display: 'flex', flexDirection: 'column', paddingBottom: 4 }}>{b.list}</div>
+            </div>
+          ); })()}
         </Modal>
-      ) : at && (
-        <FlyOut key={`${at.tab.id}:${at.x}:${at.y}`} x={at.x} y={at.y} onClose={onClose}>{body(at)}</FlyOut>
-      )}
+      ) : at && (() => { const b = body(at); return (
+        <FlyOut key={`${at.tab.id}:${at.x}:${at.y}`} x={at.x} y={at.y} onClose={onClose}>{b.tiles}{b.list}</FlyOut>
+      ); })()}
 
       <ConfirmModal
         open={!!archiveTarget}

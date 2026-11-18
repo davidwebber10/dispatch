@@ -486,3 +486,18 @@ describe('streamed render', () => {
     expect(view.container.querySelector('img')!.getAttribute('src')).toBe('https://example.com/x.png');
   });
 });
+
+// Owner, 2026-11-13: a tap on a thread link opens that thread in the app (desktop and phone alike).
+it('a click on a thread link navigates to that thread and opens no tab', async () => {
+  const { useNavigation } = await import('../stores/navigation');
+  const navigate = vi.fn();
+  useNavigation.setState({ navigate } as never);
+  const open = vi.spyOn(window, 'open').mockReturnValue(null);
+  const projects = [{ id: 'p1', folder: '/Users/me/dev/app' }];
+  const { container } = render(<Markdown source={'See [Fix login](/p/proj-1/t/thr-9).'} docs={{ onOpen: vi.fn(), link: (h) => classifyLink(h, { project: null, projects }) }} />);
+  expect(container.querySelector('a')!.getAttribute('href')).toBe('#'); // no raw app address for a native open
+  fireEvent.click(screen.getByRole('link', { name: 'Fix login' }));
+  expect(navigate).toHaveBeenCalledWith({ view: 'workspace', projectId: 'proj-1', threadId: 'thr-9' });
+  expect(open).not.toHaveBeenCalled();
+  open.mockRestore();
+});

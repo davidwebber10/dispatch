@@ -8,7 +8,9 @@ import { parseCodexRollout } from '../conversation/codex-transcript.js';
 import { ConversationReader, type ConvPage, type ConvPageOptions, type SearchMatch, type TranscriptLocation } from '../conversation/reader.js';
 import { findCodexRolloutPath } from './codex-sessions.js';
 import { platform } from '../platform/index.js';
-import { resolveTranscriptPath } from './transcript-path.js';
+import { claudeProjectsRoot, resolveTranscriptPath } from './transcript-path.js';
+import { transcriptPathTrusted } from '../conversation/transcript-trust.js';
+import { codexArchivedRoot, codexSessionsRoot } from '../platform/codex-home.js';
 import { threadHarnessCapabilities } from './harness-capabilities.js';
 
 /**
@@ -69,7 +71,20 @@ export class ThreadTranscripts {
    * See ws/structured.ts's `restOwnsHistory` and getConversation's codex branch.
    */
   historyOwnedByRest(terminalId: string): boolean {
-    return threadHarnessCapabilities(terminalsDb.getById(this.db, terminalId)?.type).restHistory;
+    if (!threadHarnessCapabilities(terminalsDb.getById(this.db, terminalId)?.type).restHistory) return false;
+    // REST owns the history only when it HAS one: a Codex thread with no readable transcript (none found,
+    // or empty) keeps its ring replay and the resume backfill, which are then its only history.
+    const loc = this.locateTranscript(terminalId);
+    if (!loc || loc === 'unsupported') return false;
+    // Has it a conversation item yet? A Codex rollout starts with session_meta; its items are response_item
+    // lines. The head is enough to know (at most 256 KB is read).
+    let fd: number | null = null;
+    try {
+      fd = fs.openSync(loc.file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+      const buf = Buffer.alloc(256 * 1024);
+      const n = fs.readSync(fd, buf, 0, buf.length, 0);
+      return buf.subarray(0, n).toString('utf-8').includes('"response_item"');
+    } catch { return false; } finally { if (fd !== null) try { fs.closeSync(fd); } catch { /* closed */ } }
   }
 
   /**
@@ -102,7 +117,7 @@ export class ThreadTranscripts {
       const file = findCodexRolloutPath(sessionId);
       // Per-line parser for whichever transcript format this thread writes. Both take one
       // line and return the items it contains, so the reader's windowing is format-agnostic.
-      return file ? { file, parseLine: parseCodexRollout } : null;
+      return file && transcriptPathTrusted(file, [codexSessionsRoot(), codexArchivedRoot()]) ? { file, parseLine: parseCodexRollout } : null;
     }
 
     const session = sessionsDb.getById(this.db, terminal.session_id);
@@ -120,7 +135,9 @@ export class ThreadTranscripts {
     // spawned with. Reading the computed path directly is what made those chats render
     // empty — see sessions/transcript-path.ts.
     const file = resolveTranscriptPath(workDir, sessionId);
-    return file ? { file, parseLine: parseClaudeTranscript } : null;
+    // The agent can replace its transcript (or a folder above it) with a link: never read one with
+    // the daemon's rights (conversation/transcript-trust.ts).
+    return file && transcriptPathTrusted(file, [claudeProjectsRoot()]) ? { file, parseLine: parseClaudeTranscript } : null;
   }
 
   /**

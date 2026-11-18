@@ -5,7 +5,7 @@ import type { PluginRegistry, PluginRow } from './registry.js';
 import type { ThreadEvents, ThreadEvent } from './thread-events.js';
 import type { HookEvent } from './manifest.js';
 import { redactThreadEvent } from './thread-events.js';
-import { inheritedEnv } from '../platform/inherited-env.js';
+import { childEnv } from '../platform/inherited-env.js';
 
 /**
  * Hook scripts (docs/superpowers/specs/2026-11-07-plugins-design.md, section 3.3): for every
@@ -111,10 +111,10 @@ export class PluginHooks {
       const canReadPrompts = (row.permissions ?? []).includes('read:prompts');
       const payload = JSON.stringify(canReadPrompts ? e : redactThreadEvent(e));
       const keyFile = path.join(path.dirname(this.registry.dir), 'keys', `plugin-${row.id}`);
-      const env: NodeJS.ProcessEnv = {
-        ...inheritedEnv(), DISPATCH_PLUGIN: row.id, DISPATCH_PLUGIN_AUTH_FILE: keyFile, DISPATCH_API: typeof this.api === 'function' ? this.api() : this.api,
+      const env: NodeJS.ProcessEnv = childEnv({
+        DISPATCH_PLUGIN: row.id, DISPATCH_PLUGIN_AUTH_FILE: keyFile, DISPATCH_API: typeof this.api === 'function' ? this.api() : this.api,
         DISPATCH_TERMINAL: e.terminalId, DISPATCH_SESSION: e.sessionId, DISPATCH_EVENT: e.type,
-      };
+      });
       this.bump(row.id, 'runs');
       let done = false;
       const finish = (failed: boolean) => { if (done) return; done = true; clearTimeout(timer); if (failed) this.bump(row.id, 'failures'); resolve(); };

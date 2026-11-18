@@ -5,8 +5,9 @@ import { KeyRegistry } from './principals.js';
 import { nullKeyScope, type CallerFacts, type KeyScope } from './key-scope.js';
 import { createPrincipalMiddleware } from './request-principal.js';
 import {
-  POLICY_TAG, configureRefusalLog, configurePluginFacts, keyRoute, needs, ownerOnly, policyKindOf, policyRouter, publicRoute, type Rule,
+  POLICY_TAG, configureRefusalLog, configurePluginFacts, keyRoute, needs, ownerOnly, policyHandlerOf, policyKindOf, policyRouter, publicRoute, type Rule,
 } from './route-policy.js';
+import { isBusinessGuard } from '../profile/business-gate.js';
 import { whoamiHandler } from './request-principal.js';
 
 const facts = (over: Partial<CallerFacts> = {}): CallerFacts => ({
@@ -82,8 +83,10 @@ describe('policyRouter default deny', () => {
     const r = policyRouter();
     r.get('/x', publicRoute, (_req, res) => res.end());
     const layer = (r as unknown as { stack: { route?: { stack: { handle: unknown }[] } }[] }).stack[0];
-    expect(layer.route!.stack).toHaveLength(2);
-    expect(policyKindOf(layer.route!.stack[0].handle)).toBe('public');
+    // The profile guard, the policy handler, the route's own handler: no second policy handler.
+    expect(layer.route!.stack).toHaveLength(3);
+    expect(isBusinessGuard(layer.route!.stack[0].handle)).toBe(true);
+    expect(policyKindOf(policyHandlerOf(layer.route!))).toBe('public');
   });
 
   test('the tags are set', () => {

@@ -10,7 +10,7 @@ test('opens the ws with a bounded ?tail= param so replay stays fast on long thre
     onEvent: () => {},
     wsFactory: (u) => { openedUrl = u; return fakeWs; },
   });
-  expect(openedUrl).toBe('ws://localhost:3000/api/terminals/t1/structured-ws?tail=200&batch=1&journal=1'); // W3-D added journal=1
+  expect(openedUrl).toBe('ws://localhost:3000/api/terminals/t1/structured-ws?tail=200&window=60&batch=1&journal=1'); // W3-D added journal=1
   sock.close();
 });
 
@@ -106,16 +106,16 @@ test('the socket asks for the journal, and a reconnect sends the cursor as after
     wsFactory: (u) => { urls.push(u); const ws = new FakeWS(); sockets.push(ws); return ws; },
   });
   sockets[0].open();
-  expect(urls[0]).toBe('ws://localhost:3000/api/terminals/t1/structured-ws?tail=200&batch=1&journal=1');
+  expect(urls[0]).toBe('ws://localhost:3000/api/terminals/t1/structured-ws?tail=200&window=60&batch=1&journal=1');
   cursor = 41;
   sockets[0].close(); // the connection drops
   vi.advanceTimersByTime(600);
-  expect(urls[1]).toBe('ws://localhost:3000/api/terminals/t1/structured-ws?tail=200&batch=1&journal=1&after=41');
+  expect(urls[1]).toBe('ws://localhost:3000/api/terminals/t1/structured-ws?tail=200&window=60&batch=1&journal=1&after=41');
   cursor = undefined; // a block streams: no cursor
   sockets[1].open();
   sockets[1].close();
   vi.advanceTimersByTime(600);
-  expect(urls[2]).toBe('ws://localhost:3000/api/terminals/t1/structured-ws?tail=200&batch=1&journal=1');
+  expect(urls[2]).toBe('ws://localhost:3000/api/terminals/t1/structured-ws?tail=200&window=60&batch=1&journal=1');
   sock.close();
   vi.useRealTimers();
 });

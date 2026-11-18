@@ -87,11 +87,11 @@ describe('Switch account… in the thread menu', () => {
 });
 
 describe('DetailsPane account row', () => {
-  it('names the account the thread runs on, "(default)" when unpinned, and offers Switch Account', async () => {
+  it('names the account the thread runs on, "(default)" when unpinned, and its Account tile switches', async () => {
     useProjects.setState({ sessions: [{ id: 's1', name: 'Proj', workingDir: '/tmp/p', provider: 'claude-code', status: 'idle' }] } as any);
     render(<DetailsPane projectId="s1" terminalId="t1" />);
     expect(await screen.findByText('CLI login (this computer) (default)')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Switch Account' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Switch account…' }));
     expect(await screen.findByRole('radio', { name: /Work/ })).toBeInTheDocument();
   });
 
@@ -100,5 +100,36 @@ describe('DetailsPane account row', () => {
     useProjects.setState({ sessions: [{ id: 's1', name: 'Proj', workingDir: '/tmp/p', provider: 'claude-code', status: 'idle' }] } as any);
     render(<DetailsPane projectId="s1" terminalId="t1" />);
     expect(await screen.findByText('Work')).toBeInTheDocument();
+  });
+});
+
+// Owner, 2026-11-13: "the account switcher on a thread, i want to see usage (just the circle like we do in
+// the left column), so i can easily see which account i want to switch to". Each account row shows the
+// same ring as the rail, for that account; an account with no figure shows none.
+describe('AccountSwitchModal: usage rings', () => {
+  it('each account row carries its own ring, and an account with no figure has none', async () => {
+    const { useUsageLimits } = await import('../../stores/usageLimits');
+    const H = 3_600_000;
+    useUsageLimits.setState({ summary: { warnPercent: 80, paused: [], providers: [
+      { provider: 'claude-code', accountId: 'cli', asOf: Date.now() - 60_000, windows: { five_hour: { usedPercent: 12, resetsAt: Date.now() + 2 * H } } },
+      { provider: 'claude-code', accountId: 'work', asOf: Date.now() - 60_000, windows: { five_hour: { usedPercent: 91, resetsAt: Date.now() + 2 * H } } },
+      { provider: 'codex', accountId: 'cx2', asOf: Date.now() - 60_000, windows: { five_hour: { usedPercent: 50, resetsAt: Date.now() + 2 * H } } },
+    ] } as any });
+    render(<AccountSwitchModal tab={tab()} onClose={() => {}} />);
+    const work = await screen.findByRole('radio', { name: /Work/ });
+    const cli = screen.getByRole('radio', { name: /CLI login/ });
+    const ringOf = (el: HTMLElement) => el.querySelector('[data-testid="usage-ring"]');
+    expect(ringOf(cli)?.getAttribute('data-account')).toBe('cli');
+    expect(ringOf(work)?.getAttribute('data-account')).toBe('work');
+    expect(ringOf(work)?.getAttribute('data-tone')).toBe('red'); // 91% is over the warning line
+    expect(ringOf(work)?.getAttribute('data-provider')).toBe('claude-code'); // never the Codex account's ring
+  });
+
+  it('shows no ring when no usage is known', async () => {
+    const { useUsageLimits } = await import('../../stores/usageLimits');
+    useUsageLimits.setState({ summary: null } as any);
+    render(<AccountSwitchModal tab={tab()} onClose={() => {}} />);
+    await screen.findByRole('radio', { name: /Work/ });
+    expect(document.querySelector('[data-testid="usage-ring"]')).toBeNull();
   });
 });

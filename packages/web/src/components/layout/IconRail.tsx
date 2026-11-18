@@ -4,23 +4,15 @@ import { PROJECTS_ICON, THREADS_ICON } from '../common/viewIcons';
 import { useProjectsView } from '../../stores/projectsView';
 import type { Icon } from '@phosphor-icons/react';
 import { BrandSwitcher } from './BrandSwitcher';
-import { useShownStatus } from '../../stores/connection';
-import { useServers, currentLabel } from '../../stores/servers';
 import { useUI, type View } from '../../stores/ui';
 import { UsageChip } from './UsageChip';
 import { useTabs, isDispatchTab, findTerminal } from '../../stores/tabs';
 import { useAccounts, threadAccount } from '../../stores/accounts';
 import { UpdateDot } from '../update/UpdateDot';
 import { usePluginViews, usePluginRegistry } from '../../plugins/registry';
+import { can, pluginViewAllowed, type Feature } from '../../lib/profile';
 import { pluginIcon } from '../../plugins/sdk';
 import { fontVar } from '../../lib/fontSize';
-
-const CONN = {
-  open:       { color: 'var(--color-accent)', label: 'Connected' },
-  connecting: { color: 'var(--color-status-yellow)', label: 'Connecting…' },
-  reconnecting: { color: 'var(--color-status-yellow)', label: 'Reconnecting…' },
-  closed:     { color: 'var(--color-status-red)', label: 'Disconnected' },
-} as const;
 
 function RailItem({ icon: I, label, active, onClick, title, badge = 0, dot = false }: {
   icon: Icon; label: string; active: boolean; onClick: () => void; title: string; badge?: number;
@@ -57,10 +49,10 @@ function RailItem({ icon: I, label, active, onClick, title, badge = 0, dot = fal
   );
 }
 
-const NAV: { view: View; label: string; icon: Icon }[] = [
+const NAV: { view: View; label: string; icon: Icon; feature?: Feature }[] = [
   { view: 'workspace', label: 'Threads', icon: THREADS_ICON },
-  { view: 'chat', label: 'Chat', icon: ChatCircleDots },
-  { view: 'analytics', label: 'Analytics', icon: ChartBar },
+  { view: 'chat', label: 'Chat', icon: ChatCircleDots, feature: 'endless' },
+  { view: 'analytics', label: 'Analytics', icon: ChartBar, feature: 'analytics' },
 ];
 
 /**
@@ -71,10 +63,6 @@ const NAV: { view: View; label: string; icon: Icon }[] = [
 export function IconRail() {
   const view = useUI((s) => s.view);
   const setView = useUI((s) => s.setView);
-  const status = useShownStatus();
-  const servers = useServers((s) => s.servers);
-  const conn = CONN[status];
-  const serverLabel = currentLabel(servers, window.location.origin);
   // Plugin screens sit after the built-in ones (docs/superpowers/specs/2026-11-07-plugins-design.md).
   const pluginViews = usePluginViews();
   // The first item is named after the Projects ⇄ Threads switch (2026-11-07).
@@ -106,27 +94,18 @@ export function IconRail() {
       padding: '10px 0 8px', gap: 4, background: 'var(--color-pane)', borderRight: '1px solid var(--color-border)',
     }}>
       <div style={{ marginBottom: 10 }}><BrandSwitcher /></div>
-      {NAV.map((n) => n.view === 'workspace' ? { ...n, label: projectsView === 'threads' ? 'Threads' : 'Projects', icon: projectsView === 'threads' ? THREADS_ICON : PROJECTS_ICON } : n).map((n) => (
+      {NAV.filter((n) => !n.feature || can(n.feature)).map((n) => n.view === 'workspace' ? { ...n, label: projectsView === 'threads' ? 'Threads' : 'Projects', icon: projectsView === 'threads' ? THREADS_ICON : PROJECTS_ICON } : n).map((n) => (
         <RailItem key={n.view} icon={n.icon} label={n.label} title={n.label}
           active={view === n.view} onClick={() => setView(n.view)} />
       ))}
-      {pluginViews.map((v) => (
+      {pluginViews.filter((v) => pluginViewAllowed(v.key)).map((v) => (
         <RailItem key={v.key} icon={pluginIcon(v.icon)} label={v.label} title={v.label}
           active={view === v.key} onClick={() => setView(v.key as View)} badge={badges[v.key] ?? 0} />
       ))}
       <div style={{ flex: 1 }} />
-      {/* Account usage (#127): above the connection dot, hidden until a provider reports. */}
+      {/* Account usage (#127): above Settings, hidden until a provider reports. The connection dot and the
+          server name under it were removed (owner, 2026-11-13: "drop the Local text and pill"). */}
       <UsageChip variant="rail" current={usageCurrent} />
-      <div title={conn.label} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: '6px 0 2px' }}>
-        <span style={{
-          width: 6, height: 6, borderRadius: '50%', background: conn.color,
-          boxShadow: status === 'open' ? 'var(--shadow-glow)' : undefined,
-          animation: status !== 'closed' ? 'dispatchConnPulse 2s ease-in-out infinite' : undefined,
-        }} />
-        <span style={{ font: `500 ${fontVar(7.5)} var(--font-mono)`, letterSpacing: '0.04em', color: 'var(--color-text-tertiary)', textTransform: 'uppercase' }}>
-          {serverLabel}
-        </span>
-      </div>
       <RailItem icon={Gear} label="Settings" title="Settings (⌘,)" dot
         active={view === 'settings'} onClick={() => setView('settings')} />
     </nav>

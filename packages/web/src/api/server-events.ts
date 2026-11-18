@@ -42,6 +42,7 @@ const REQUIRED_FIELDS: Record<KnownServerEventType, Record<string, FieldKind>> =
   'auth:updated': { request: 'object' },
   'update:available': { version: 'string' },
   'update:in-progress': {},
+  'update:checked': {},
   'update:failed': {},
   'analytics-dirty': {},
   'ledger:changed': { sessionId: 'string' },

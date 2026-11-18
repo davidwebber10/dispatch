@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { encodeClaudeProjectDir } from '../platform/encode.js';
 import { isUnder, realResolve } from './real-path.js';
+import { agentMkdir, agentRemove, agentWriteFile } from '../privsep/agent-fs.js';
 
 /** Where the Claude overseers' own memory folders live, relative to the home folder (POSIX). */
 export const OVERSEER_MEMORY_ROOT_REL = '.claude/dispatch-overseer';
@@ -247,7 +248,7 @@ function addIndexLines(shared: string, dir: string, linked: ReadonlySet<string>,
   }
   if (!add.length) return;
   const sep = have && !have.endsWith('\n') ? '\n' : '';
-  fs.appendFileSync(ownIndex, `${sep}${add.join('\n')}\n`, { flag: st ? 'a' : 'wx' });
+  agentWriteFile(ownIndex, `${sep}${add.join('\n')}\n`, { flag: st ? 'a' : 'wx' });
 }
 
 /**
@@ -272,8 +273,8 @@ function readCursor(dir: string): Cursor {
 
 function writeCursor(dir: string, name: string): void {
   const file = path.join(dir, COPY_CURSOR);
-  try { fs.unlinkSync(file); } catch { /* none yet */ }
-  fs.writeFileSync(file, `${name}\n`, { flag: 'wx' });
+  try { agentRemove(file); } catch { /* none yet */ }
+  agentWriteFile(file, `${name}\n`, { flag: 'wx' });
 }
 
 /**
@@ -312,7 +313,7 @@ export function prepareOverseerMemory(opts: {
 }): { dir: string | null; copied: string[]; done: boolean } {
   const dir = overseerMemoryDir(opts.home, opts.projectDir);
   if (!ownMemoryFolderSafe(opts.home, dir)) return { dir: null, copied: [], done: false };
-  fs.mkdirSync(dir, { recursive: true });
+  agentMkdir(dir);
   const present = new Set(fs.readdirSync(dir));
   if (present.has(COPY_MARKER)) return { dir, copied: [], done: true };
   if (opts.sharedProjectDir === null) return { dir, copied: [], done: false };
@@ -359,7 +360,7 @@ export function prepareOverseerMemory(opts: {
       });
       if (bytes === OVER) break; // this note and the rest wait for the next start
       if (bytes === null) continue;
-      fs.writeFileSync(path.join(dir, name), bytes, { flag: 'wx' });
+      agentWriteFile(path.join(dir, name), bytes, { flag: 'wx' });
       copied.push(name);
       copiedBytes += bytes.length;
     } catch (e) {
@@ -381,7 +382,7 @@ export function prepareOverseerMemory(opts: {
     console.error(`[overseer-memory] the one-time copy handled ${handled} of ${todo.length} notes in ${shared}; the next start goes on`);
     return { dir, copied, done: false };
   }
-  fs.writeFileSync(path.join(dir, COPY_MARKER), `${JSON.stringify({ copied })}\n`, { flag: 'wx' });
-  try { fs.unlinkSync(path.join(dir, COPY_CURSOR)); } catch { /* none */ }
+  agentWriteFile(path.join(dir, COPY_MARKER), `${JSON.stringify({ copied })}\n`, { flag: 'wx' });
+  try { agentRemove(path.join(dir, COPY_CURSOR)); } catch { /* none */ }
   return { dir, copied, done: true };
 }

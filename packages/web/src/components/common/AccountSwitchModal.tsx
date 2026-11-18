@@ -6,8 +6,13 @@ import { useTabs } from '../../stores/tabs';
 import { useThreadStatus } from '../../stores/threadStatus';
 import { useAccounts, accountProviderOf, threadAccount } from '../../stores/accounts';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { hostCopy } from '../../lib/hostCopy';
 import { Modal } from './Modal';
 import { fontVar } from '../../lib/fontSize';
+import { useUsageLimits } from '../../stores/usageLimits';
+import { useNow } from '../../hooks/useNow';
+import { chipRings } from '../layout/usageGauge';
+import { ProviderRing } from '../layout/UsageChip';
 
 const HARNESS_NAME: Record<string, string> = { 'claude-code': 'Claude Code', codex: 'Codex' };
 
@@ -26,6 +31,12 @@ export function AccountSwitchModal({ tab, onClose }: { tab: Terminal; onClose: (
   const provider = accountProviderOf(tab.type);
   const current = threadAccount(view, tab);
   const accounts = provider && view ? view[provider] : [];
+  // Each account's usage ring, the same as the rail's (owner, 2026-11-13: pick the account by its usage).
+  const summary = useUsageLimits((s) => s.summary);
+  useEffect(() => { if (!useUsageLimits.getState().summary) void useUsageLimits.getState().load().catch(() => {}); }, []);
+  const now = useNow(60_000);
+  const rings = chipRings(summary, now).filter((r) => r.provider === tab.type);
+  const ringOf = (id: string) => rings.find((r) => r.accountId === id) ?? null;
   const [picked, setPicked] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -60,7 +71,7 @@ export function AccountSwitchModal({ tab, onClose }: { tab: Terminal; onClose: (
     <Modal open sheet={isMobile} title="Switch account" onClose={onClose} maxWidth={420}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {!view ? (
-          <span style={{ fontSize: fontVar(13), color: 'var(--color-text-tertiary)' }}>The daemon has no accounts yet. Update it to use more than one login.</span>
+          <span style={{ fontSize: fontVar(13), color: 'var(--color-text-tertiary)' }}>{hostCopy('accounts.none', 'The daemon has no accounts yet. Update it to use more than one login.')}</span>
         ) : !provider ? (
           <span style={{ fontSize: fontVar(13), color: 'var(--color-text-tertiary)' }}>Only a Claude Code or Codex thread runs on an account.</span>
         ) : (
@@ -84,6 +95,7 @@ export function AccountSwitchModal({ tab, onClose }: { tab: Terminal; onClose: (
                         {[a.email, a.plan, current?.id === a.id ? (current.pinned ? 'current' : 'current (the default)') : null].filter(Boolean).join(' · ') || ' '}
                       </span>
                     </span>
+                    {(() => { const ring = ringOf(a.id); return ring ? <span style={{ marginLeft: 'auto', flexShrink: 0, display: 'inline-flex' }}><ProviderRing ring={ring} size={isMobile ? 30 : 26} /></span> : null; })()}
                   </button>
                 );
               })}

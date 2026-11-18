@@ -2,11 +2,12 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { test, expect, beforeEach, vi, describe } from 'vitest';
 
 const applyUpdate = vi.fn();
+const applySwitchBack = vi.fn();
 const updatePlugin = vi.fn();
 const pluginUpdates = vi.fn();
 vi.mock('../../api/client', () => ({
   api: {
-    applyUpdate: (force?: boolean) => applyUpdate(force),
+    applyUpdate: (force?: boolean, switchBack?: boolean) => (switchBack ? applySwitchBack(force) : applyUpdate(force)),
     getUpdateState: vi.fn().mockResolvedValue({ available: false, version: null, url: null, publishedAt: null, currentVersion: '3.19.0' }),
     updatePlugin: (id: string) => updatePlugin(id),
     pluginUpdates: () => pluginUpdates(),
@@ -20,8 +21,8 @@ import { useUpdate, updatePending } from '../../stores/update';
 const waiting = { available: { version: 'v3.26.1', url: 'https://example.test/v3.26.1', publishedAt: null }, currentVersion: '3.19.0', inProgress: false, doneVersion: null, failure: null };
 
 beforeEach(() => {
-  useUpdate.setState({ available: null, currentVersion: '3.19.0', dismissedVersion: null, inProgress: false, doneVersion: null, failure: null, pluginUpdates: [] });
-  applyUpdate.mockReset(); updatePlugin.mockReset(); pluginUpdates.mockReset();
+  useUpdate.setState({ available: null, ahead: null, currentVersion: '3.19.0', dismissedVersion: null, inProgress: false, doneVersion: null, failure: null, pluginUpdates: [] });
+  applyUpdate.mockReset(); applySwitchBack.mockReset(); updatePlugin.mockReset(); pluginUpdates.mockReset();
 });
 
 describe('updatePending (2026-11-07): one answer for the dot and the banner', () => {
@@ -119,5 +120,65 @@ describe('plugin updates in the dot and the banner (plugins slice 6)', () => {
     useUpdate.setState({ pluginUpdates: [hello] });
     render(<UpdateDot />);
     expect(screen.getByRole('status', { name: 'Update available' })).toBeInTheDocument();
+  });
+});
+
+describe('a copy that runs a version above the newest release', () => {
+  const ahead = { version: 'v4.7.8', url: 'https://example.test/v4.7.8', publishedAt: null };
+
+  test('the dot and the banner count it as pending', () => {
+    expect(updatePending({ available: null, ahead, inProgress: false, doneVersion: null })).toBe(true);
+    expect(updatePending({ available: null, ahead: null, inProgress: false, doneVersion: null })).toBe(false);
+    expect(updatePending({ available: null, ahead, inProgress: true, doneVersion: null })).toBe(false);
+  });
+
+  test('says it is not a published release and offers an explicit switch, never an update', () => {
+    useUpdate.setState({ ahead, currentVersion: '4.8.0' });
+    render(<UpdateBanner />);
+    const region = screen.getByRole('region', { name: 'Not a published release' });
+    expect(region).toHaveTextContent('You run v4.8.0');
+    expect(region).toHaveTextContent('The latest release is v4.7.8');
+    expect(screen.queryByRole('button', { name: 'Update now' })).toBeNull();
+  });
+
+  test('Switch sends the explicit switchBack request, nothing else', async () => {
+    applySwitchBack.mockResolvedValue({ ok: true });
+    useUpdate.setState({ ahead, currentVersion: '4.8.0' });
+    render(<UpdateBanner />);
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to v4.7.8' }));
+    await waitFor(() => expect(applySwitchBack).toHaveBeenCalledOnce());
+    expect(applyUpdate).not.toHaveBeenCalled();
+  });
+
+  test('a refusal (dirty tree) shows its reason and the manual command', async () => {
+    applySwitchBack.mockResolvedValue({ ok: false, reason: 'Moving back needs a clean working tree.' });
+    useUpdate.setState({ ahead, currentVersion: '4.8.0' });
+    render(<UpdateBanner />);
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to v4.7.8' }));
+    expect(await screen.findByText(/clean working tree/)).toBeInTheDocument();
+    expect(screen.getByText('dispatch update --switch-back')).toBeInTheDocument();
+  });
+});
+
+describe('a refusal that only the explicit switch lifts (a diverged copy on a lower version)', () => {
+  test('the banner offers Switch after the refusal, and Switch sends switchBack', async () => {
+    applyUpdate.mockResolvedValue({ ok: false, reason: 'This copy (v4.8.2) has diverged from release v4.9.0.', needsSwitchBack: true });
+    applySwitchBack.mockResolvedValue({ ok: true });
+    useUpdate.setState(waiting);
+    render(<UpdateBanner />);
+    fireEvent.click(screen.getByRole('button', { name: 'Update now' }));
+    const sw = await screen.findByRole('button', { name: 'Switch to v3.26.1' });
+    expect(screen.getByText('dispatch update --switch-back')).toBeInTheDocument();
+    fireEvent.click(sw);
+    await waitFor(() => expect(applySwitchBack).toHaveBeenCalledOnce());
+  });
+
+  test('an ordinary refusal offers no Switch', async () => {
+    applyUpdate.mockResolvedValue({ ok: false, reason: 'the checkout has local changes' });
+    useUpdate.setState(waiting);
+    render(<UpdateBanner />);
+    fireEvent.click(screen.getByRole('button', { name: 'Update now' }));
+    await screen.findByText(/local changes/);
+    expect(screen.queryByRole('button', { name: /^Switch to/ })).toBeNull();
   });
 });

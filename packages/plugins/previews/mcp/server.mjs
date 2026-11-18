@@ -17,6 +17,23 @@ const CALL_TIMEOUT_MS = 15_000;
 const PRUNE_AT = 1800;
 const PRUNE_TO = 1500;
 const DISABLED = 'The Inbox plugin (id previews) is disabled in Dispatch: the owner can enable it in Settings → Plugins.';
+/**
+ * On a hosted box (DISPATCH_HOSTED=1, set by the daemon) the names a person reads say "Inbox": the tool's
+ * `title` and `annotations.title` and the server's `serverInfo.title` (MCP 2025-06-18). The ids stay
+ * (`preview`, `plugin-previews`, `dispatch-previews`): clients match on them.
+ */
+const HOSTED = process.env.DISPATCH_HOSTED === '1';
+const INBOX_TITLE = 'Put in Inbox';
+/**
+ * A thread of a business person on a hosted box (DISPATCH_BUSINESS=1, set by the daemon with DISPATCH_HOSTED):
+ * Send a secret is not part of that workspace, so `inbox_secret` is not offered (not listed, refused when
+ * called) and the `preview` description does not send the person to it. A developer box and a local install
+ * keep both.
+ */
+const BUSINESS = HOSTED && process.env.DISPATCH_BUSINESS === '1';
+const SEND_A_SECRET_HINT =
+  'Never ask the user to paste a password, token or API key into the chat: ask them to use Inbox → Send a secret ' +
+  'and give you its ID, then call `inbox_secret`.';
 
 function key() {
   if (process.env.DISPATCH_AUTH) return process.env.DISPATCH_AUTH.trim();
@@ -55,7 +72,8 @@ const TOOLS = [{
     '`secret` for a token or password (masked, removed after 24 hours; never repeat it in title or note); ' +
     '`steps` for a short procedure (`steps`: [{ text, command? }], max 30); `diff` for a unified diff; ' +
     '`table` for CSV `text` or one .csv/.json file. Without `kind`, images show as pictures, a URL as a link, ' +
-    'markdown as a document and other text as text to copy.',
+    'markdown as a document and other text as text to copy.' +
+    (BUSINESS ? '' : ' ' + SEND_A_SECRET_HINT),
   inputSchema: {
     type: 'object',
     properties: {
@@ -71,9 +89,46 @@ const TOOLS = [{
       note: { type: 'string', description: 'One line of context: what this is and why it matters.' },
     },
   },
+  ...(HOSTED ? { title: INBOX_TITLE, annotations: { title: INBOX_TITLE } } : {}),
+}, {
+  name: 'inbox_secret',
+  description:
+    'Use a secret the user sent you through Inbox → Send a secret: they give you its ID (6 characters, e.g. K7Q2M4). ' +
+    'Never ask the user to paste a password, token or API key into the chat; ask them to use Send a secret and to give you the ID. ' +
+    'Dispatch writes the value for you, so it never enters this conversation. Pick ONE destination: ' +
+    '`file` { path, name? } writes it into a file of this project (with `name`: a NAME=value line in a dotenv file such as .env.local; ' +
+    'without: the value is the whole file), mode 0600; `doppler` { name } sets it as a Doppler secret; ' +
+    '`reveal: true` returns the value only when the user allowed this thread to read it. One use: the value is then removed from the Inbox. ' +
+    'Then use it by reference (load the file into the command\'s environment, or doppler run). Never print the value.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      id: { type: 'string', description: 'The ID the user gave you (6 characters, e.g. K7Q2M4).' },
+      file: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'A file inside this project, relative or absolute (e.g. .env.local).' },
+          name: { type: 'string', description: 'The variable name for a NAME=value line (e.g. STRIPE_KEY). Leave it out to write the value as the whole file.' },
+        },
+        required: ['path'],
+        description: 'Write the value into a file of this project.',
+      },
+      doppler: {
+        type: 'object',
+        properties: { name: { type: 'string', description: 'The Doppler secret name (upper case, e.g. STRIPE_KEY).' } },
+        required: ['name'],
+        description: 'Set the value as a Doppler secret.',
+      },
+      reveal: { type: 'boolean', description: 'Return the value itself. Works only when the user allowed it; prefer file or doppler.' },
+    },
+    required: ['id'],
+  },
 }];
 
-const disabledIfGone = (e) => { if (e && e.status === 404 && /unknown plugin/i.test(String(e.message))) return new Error(DISABLED); return e; };
+/** The tools this process offers: without `inbox_secret` for a business person (see BUSINESS). */
+const LISTED_TOOLS = BUSINESS ? TOOLS.filter((t) => t.name !== 'inbox_secret') : TOOLS;
+
+const disabledIfGone =(e) => { if (e && e.status === 404 && /unknown plugin/i.test(String(e.message))) return new Error(DISABLED); return e; };
 
 async function preview(args) {
   const a = args && typeof args === 'object' ? args : {};
@@ -111,7 +166,16 @@ async function preview(args) {
   try { await call('PUT', `/api/plugins/${encodeURIComponent(PLUGIN)}/data/preview:${id}`, { value: doc }); }
   catch (e) { throw disabledIfGone(e); }
   void prune().catch(() => {});
-  return { ok: true, id, files: files.map((f) => f.name) };
+  return { ok: true, id, title, files: files.map((f) => f.name) };
+}
+
+/**
+ * The text the model reads after a drop: ONE JSON object (callers parse it: the OS view's Inbox card, the
+ * proof script), whose first field is a plain sentence, so the model tells the person and does not post
+ * the same thing again. Then `ok`, `id`, `title`, `files` as before.
+ */
+function sentText(result) {
+  return JSON.stringify({ message: `Sent to the person's Inbox: ${result.title}. They can open it now; do not send it again.`, ...result });
 }
 
 /**
@@ -134,11 +198,33 @@ async function prune() {
   }
 }
 
+/**
+ * Inbox → Send a secret (2026-11-12): the daemon does the write (a project file or Doppler) under this thread's
+ * key, so the value never comes to this process; only `reveal`, which the owner allows per secret, brings it.
+ */
+async function inboxSecret(args) {
+  const a = args && typeof args === 'object' ? args : {};
+  if (typeof a.id !== 'string' || !a.id.trim()) throw new Error('give the `id` the user sent you (6 characters, e.g. K7Q2M4)');
+  const body = { id: a.id.trim() };
+  if (a.file !== undefined && a.file !== null) {
+    const f = a.file && typeof a.file === 'object' ? a.file : {};
+    // Relative to this server's cwd (the thread's folder, a worktree perhaps), as the preview tool does.
+    body.file = { ...(typeof f.path === 'string' && f.path.trim() ? { path: path.resolve(process.cwd(), f.path.trim()) } : {}), ...(f.name !== undefined ? { name: f.name } : {}) };
+  }
+  if (a.doppler !== undefined && a.doppler !== null) body.doppler = a.doppler;
+  if (a.reveal !== undefined && a.reveal !== false) body.reveal = a.reveal;
+  const r = await call('POST', '/api/plugins/previews/secrets/use', body);
+  const content = [{ type: 'text', text: String((r && r.message) || 'Done.') }];
+  if (r && typeof r.value === 'string') content.push({ type: 'text', text: r.value });
+  return content;
+}
+
 async function callTool(name, args) {
   try {
+    if (name === 'inbox_secret' && !BUSINESS) return { content: await inboxSecret(args) };
     if (name !== 'preview') return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
     const result = await preview(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return { content: [{ type: 'text', text: sentText(result) }] };
   } catch (e) {
     return { content: [{ type: 'text', text: `Error: ${e && e.message ? e.message : String(e)}` }], isError: true };
   }
@@ -149,8 +235,8 @@ async function handle(req) {
   const notification = id === undefined || id === null;
   try {
     switch (method) {
-      case 'initialize': return { jsonrpc: '2.0', id, result: { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'dispatch-previews', version: '1.0.0' } } };
-      case 'tools/list': return { jsonrpc: '2.0', id, result: { tools: TOOLS } };
+      case 'initialize': return { jsonrpc: '2.0', id, result: { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'dispatch-previews', version: '1.0.0', ...(HOSTED ? { title: 'Inbox' } : {}) } } };
+      case 'tools/list': return { jsonrpc: '2.0', id, result: { tools: LISTED_TOOLS } };
       case 'tools/call': return { jsonrpc: '2.0', id, result: await callTool(params && params.name, params && params.arguments) };
       case 'ping': return { jsonrpc: '2.0', id, result: {} };
       default:

@@ -2,6 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import type { McpServerEntry } from './grok-home.js';
 import { OPENCODE_DEFAULT_MODEL } from './opencode.js';
+import { opencodeSmartPermission } from '../os/approvals.js';
+import { publishToAgent, publishTreeToAgent } from '../privsep/paths.js';
 
 /**
  * Writes the per-thread OpenCode config an `opencode acp` child runs under, pointed at via
@@ -28,8 +30,12 @@ export interface OpencodeConfigSpec {
   model?: string;
   /** True when the thread is supervised — tools surface as permission requests. */
   escalate?: boolean;
+  /** Smart approvals: the static rule set of os/approvals.ts (opencodeSmartPermission), rule-based. */
+  smart?: boolean;
   systemPrompt?: string;
   mcpServers?: Record<string, McpServerEntry>;
+  /** The company-system servers among `mcpServers` (smart approvals let their read tools run). */
+  osServers?: readonly string[];
   /**
    * True when the model has no tool-capable endpoint (settings/model-capabilities.ts). The
    * config then DENIES every tool (`permission: {"*": "deny"}` — built-ins and MCP alike)
@@ -43,6 +49,14 @@ export interface OpencodeConfigSpec {
   toolsDisabled?: boolean;
 }
 
+/** The folder of the per-thread OpenCode configs (published to the agent's group when it is made). */
+export function opencodeHomesDir(hooksDir: string): string {
+  const dir = path.join(hooksDir, 'opencode-homes');
+  fs.mkdirSync(dir, { recursive: true });
+  publishToAgent(dir);
+  return dir;
+}
+
 export function writeOpencodeConfig(spec: OpencodeConfigSpec): string {
   fs.mkdirSync(spec.dir, { recursive: true });
 
@@ -50,7 +64,7 @@ export function writeOpencodeConfig(spec: OpencodeConfigSpec): string {
   const cfg: Record<string, unknown> = {
     $schema: 'https://opencode.ai/config.json',
     model: spec.model || OPENCODE_DEFAULT_MODEL,
-    permission: spec.toolsDisabled ? { '*': 'deny' } : { edit: mode, bash: mode, webfetch: mode },
+    permission: spec.toolsDisabled ? { '*': 'deny' } : spec.smart && !spec.escalate ? opencodeSmartPermission(spec.osServers) : { edit: mode, bash: mode, webfetch: mode },
   };
 
   const rulesPath = path.join(spec.dir, 'rules.md');
@@ -68,6 +82,11 @@ export function writeOpencodeConfig(spec: OpencodeConfigSpec): string {
   if (!spec.toolsDisabled && spec.mcpServers && Object.keys(spec.mcpServers).length > 0) {
     const mcp: Record<string, unknown> = {};
     for (const [name, s] of Object.entries(spec.mcpServers)) {
+      // A loopback HTTP entry (a company system, os/os-servers.ts): OpenCode's `remote` shape.
+      if (typeof s.url === 'string') {
+        mcp[name] = { type: 'remote', url: s.url, enabled: true, ...(s.headers && typeof s.headers === 'object' ? { headers: s.headers } : {}) };
+        continue;
+      }
       mcp[name] = {
         type: 'local',
         command: [s.command, ...(s.args ?? [])].filter((p): p is string => typeof p === 'string' && p.length > 0),
@@ -81,5 +100,8 @@ export function writeOpencodeConfig(spec: OpencodeConfigSpec): string {
   const cfgPath = path.join(spec.dir, 'opencode.json');
   fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
   try { fs.chmodSync(cfgPath, 0o600); } catch { /* best effort on FS that lacks chmod */ }
+  // Privilege separation: the harness reads this as another user (and cannot change it: the
+  // permission block above is what its approvals rest on).
+  publishTreeToAgent(spec.dir);
   return cfgPath;
 }

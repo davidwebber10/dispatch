@@ -365,10 +365,55 @@ describe('CodexTranslator — usage limits', () => {
     expect(kinds(out)).toEqual(['event', 'failed']);
     expect(events(out)[0].result).toBe('boom');
   });
+  it('a model the account cannot use (codexErrorInfo modelNotFound, the shape seen live on a ChatGPT sign-in) reads in plain words', () => {
+    const t = new CodexTranslator();
+    const message = "The 'gpt-6.1-terra' model is not supported when using Codex with a ChatGPT account.";
+    const out = t.translate({ method: 'error', params: { threadId: 'th', turnId: 'tu', willRetry: false, error: { message, codexErrorInfo: 'modelNotFound', additionalDetails: null, misalignment: null } } } as any);
+    expect(kinds(out)).toEqual(['event', 'failed']);
+    expect(events(out)[0]).toMatchObject({ result: 'This account cannot use GPT-6.1 Terra. Pick another model.', detail: message });
+  });
   it('the flag does not leak into the next turn: a later failed turn is failed', () => {
     const t = new CodexTranslator();
     t.translate(limitErr as any); t.translate(failedTurn as any);
     t.translate(fx.turnStarted as any);
     expect(kinds(t.translate(failedTurn as any))).toEqual(['event', 'failed']);
+  });
+});
+
+// Some Codex items carry their details only at item/completed (webSearch: query and action). The
+// completed call is sent again as a whole tool_use with the same id, so a view and the journal show it.
+describe('items whose details arrive at completion', () => {
+  const started = (item: Record<string, unknown>) => ({ method: 'item/started', params: { threadId: 'th', turnId: 'tu', item } });
+  const completed = (item: Record<string, unknown>) => ({ method: 'item/completed', params: { threadId: 'th', turnId: 'tu', item } });
+  const toolUses = (out: TranslatedAction[]) => out.flatMap((a: any) => a.kind === 'event' && a.event.type === 'assistant' ? a.event.message.content.filter((b: any) => b.type === 'tool_use') : []);
+
+  it('webSearch: the empty query at the start, then the query and action at completion, same id', () => {
+    const t = new CodexTranslator();
+    expect(toolUses(t.translate(started({ type: 'webSearch', id: 'ws1', query: '' }) as any))).toEqual([{ type: 'tool_use', id: 'ws1', name: 'WebSearch', input: { query: '' } }]);
+    const out = t.translate(completed({ type: 'webSearch', id: 'ws1', query: 'codex release notes', action: { type: 'search', query: 'codex release notes' }, results: [{ title: 'x' }] }) as any);
+    expect(toolUses(out)).toEqual([{ type: 'tool_use', id: 'ws1', name: 'WebSearch', input: { query: 'codex release notes', action: { type: 'search', query: 'codex release notes' } } }]);
+    expect((out[out.length - 1] as any).event.message.content[0]).toMatchObject({ type: 'tool_result', tool_use_id: 'ws1' });
+  });
+
+  it('a command whose input did not change is not sent again; only its result', () => {
+    const t = new CodexTranslator();
+    t.translate(started({ type: 'commandExecution', id: 'c1', command: 'ls', cwd: '/w', status: 'inProgress' }) as any);
+    const out = t.translate(completed({ type: 'commandExecution', id: 'c1', command: 'ls', cwd: '/w', status: 'completed', aggregatedOutput: 'a.txt', exitCode: 0, durationMs: 4 }) as any);
+    expect(toolUses(out)).toEqual([]);
+    expect(out).toHaveLength(1);
+  });
+
+  it('a file change whose list grew after the start is sent again with the final list', () => {
+    const t = new CodexTranslator();
+    t.translate(started({ type: 'fileChange', id: 'f1', changes: [{ path: 'a.ts', kind: { type: 'update' }, diff: '+a' }], status: 'inProgress' }) as any);
+    const out = t.translate(completed({ type: 'fileChange', id: 'f1', changes: [{ path: 'a.ts', kind: { type: 'update' }, diff: '+a' }, { path: 'b.ts', kind: { type: 'add' }, diff: '+b' }], status: 'completed' }) as any);
+    expect(toolUses(out).map((b: any) => b.input.changes.map((c: any) => c.path))).toEqual([['a.ts', 'b.ts']]);
+  });
+
+  it('an image generation shows its prompt once it is known; its saved path stays out of the input', () => {
+    const t = new CodexTranslator();
+    t.translate(started({ type: 'imageGeneration', id: 'g1', status: 'inProgress' }) as any);
+    const out = t.translate(completed({ type: 'imageGeneration', id: 'g1', status: 'completed', revisedPrompt: 'a red chair', savedPath: '/w/img.png' }) as any);
+    expect(toolUses(out)).toEqual([{ type: 'tool_use', id: 'g1', name: 'ImageGeneration', input: { prompt: 'a red chair' } }]);
   });
 });

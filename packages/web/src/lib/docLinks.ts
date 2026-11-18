@@ -2,10 +2,14 @@
 // harness: a link to a doc file in a project opens in the doc viewer, a web or mail link opens a new
 // tab, and every other target does nothing (it never navigates the app). Pure; the click handler is in Markdown.
 import { projectForPath } from './docPaths';
+import { parseRoute } from './routes';
+import { BASE } from './basePath';
 
 export type LinkAction =
   | { kind: 'doc'; project: string; path: string }
   | { kind: 'web'; href: string }
+  /** A thread's own app address, /p/<project>/t/<thread> (2026-11-13): a tap opens that thread. */
+  | { kind: 'thread'; projectId: string; threadId: string }
   | { kind: 'none' };
 
 export interface LinkContext {
@@ -65,8 +69,30 @@ function appHostPath(h: string): string | null {
   return path && DOC_LINK.test(path) ? path : null;
 }
 
+/**
+ * A link to a thread (owner, 2026-11-13: Chat links the thread it found, and a tap opens it): the
+ * thread's app address `/p/<project>/t/<thread>`, as a path or as a URL of this app's own host. A
+ * project or agent address, or the same path on another site, is not one.
+ */
+function threadLink(h: string): LinkAction | null {
+  let pathname: string;
+  if (/^https?:/i.test(h)) {
+    let url: URL;
+    try { url = new URL(h); } catch { return null; }
+    if (!isAppHost(url.hostname)) return null;
+    pathname = url.pathname;
+  } else if (h.startsWith('/') && !h.startsWith('//')) {
+    pathname = h.split('#')[0].split('?')[0];
+  } else return null;
+  const route = parseRoute(pathname, BASE);
+  if (route.view !== 'workspace' || !route.projectId || !route.threadId) return null;
+  return { kind: 'thread', projectId: route.projectId, threadId: route.threadId };
+}
+
 export function classifyLink(href: string, ctx: LinkContext): LinkAction {
   const h = href.trim();
+  const thread = threadLink(h);
+  if (thread) return thread;
   let target = h;
   if (WEB.test(h)) {
     const own = /^https?:/i.test(h) ? appHostPath(h) : null;

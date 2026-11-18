@@ -10,6 +10,7 @@
  *   /settings                 Settings
  *   /settings/:section        one section; /settings/:section/:subPage one item's page in it
  *   /chat   /analytics        those views
+ *   /automations              every automation across the projects
  *   /x/:pluginView            a plugin's screen: the view key without its `plugin:` prefix
  *
  * A path that is none of these parses as the workspace root, so an old or mistyped link opens the app.
@@ -19,6 +20,7 @@ export type Route =
   | { view: 'settings'; section?: string; subPage?: string }
   | { view: 'chat' }
   | { view: 'analytics' }
+  | { view: 'automations' }
   | { view: `plugin:${string}` };
 
 const ROOT: Route = { view: 'workspace' };
@@ -58,6 +60,7 @@ export function parseRoute(pathname: string, basePath: string): Route {
   }
   if (head === 'chat' && n === 1) return { view: 'chat' };
   if (head === 'analytics' && n === 1) return { view: 'analytics' };
+  if (head === 'automations' && n === 1) return { view: 'automations' };
   if (head === 'x' && n === 2) return { view: `${PLUGIN}${a}` };
   return ROOT;
 }
@@ -77,6 +80,7 @@ export function routePath(route: Route): string {
   }
   if (route.view === 'chat') return '/chat';
   if (route.view === 'analytics') return '/analytics';
+  if (route.view === 'automations') return '/automations';
   return `/x/${seg(route.view.slice(PLUGIN.length))}`;
 }
 

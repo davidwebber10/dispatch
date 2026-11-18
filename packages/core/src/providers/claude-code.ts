@@ -58,6 +58,25 @@ export function pickBornSession(
   return { id: born[0].name.replace(/\.jsonl$/, '') };
 }
 
+/** How long Dispatch lets an MCP server take to connect when a Claude thread starts. */
+export const MCP_STARTUP_TIMEOUT_MS = 30_000;
+/** Ten years: effectively forever, and far above the CLI's default of 30. */
+export const TRANSCRIPT_RETENTION_DAYS = 3650;
+
+/**
+ * What Dispatch sets for every Claude thread it starts, on top of the user's own settings:
+ *  - env.MCP_TIMEOUT: a server that never connects waits at most this long (DISPATCH_MCP_TIMEOUT_MS
+ *    on the daemon changes it). Dispatch's value wins over the user's settings.json: the user's file is
+ *    one value for every use of Claude, while a Dispatch thread has nobody watching it.
+ *  - cleanupPeriodDays: long-lived threads keep their transcripts (the CLI's default deletes at 30 days).
+ *    Any claude run can do the cleanup, so the daemon also writes this to the user's settings.json at boot
+ *    (claude-retention.ts); this copy covers the threads Dispatch starts.
+ */
+export function dispatchClaudeSettings(env: NodeJS.ProcessEnv = process.env): { env: { MCP_TIMEOUT: string }; cleanupPeriodDays: number } {
+  const n = Number(env.DISPATCH_MCP_TIMEOUT_MS);
+  return { env: { MCP_TIMEOUT: String(Number.isFinite(n) && n >= 1000 ? Math.floor(n) : MCP_STARTUP_TIMEOUT_MS) }, cleanupPeriodDays: TRANSCRIPT_RETENTION_DAYS };
+}
+
 export const claudeCodeProvider: SessionProvider = {
   name: 'claude-code',
   structured: { protocol: 'claude-json' },
@@ -100,7 +119,7 @@ export const claudeCodeProvider: SessionProvider = {
     };
   },
 
-  buildStructuredCommand({ workDir, secretsMcp, appendSystemPrompt, resumeSessionId, model, effort, disallowedTools, autoMemoryDirectory }: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string; model?: string; effort?: string; disallowedTools?: string[]; autoMemoryDirectory?: string }) {
+  buildStructuredCommand({ workDir, secretsMcp, appendSystemPrompt, resumeSessionId, model, effort, disallowedTools, autoMemoryDirectory, smartApprovals }: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string; model?: string; effort?: string; disallowedTools?: string[]; autoMemoryDirectory?: string; /** Smart approvals (os/approvals.ts): auto mode, plus the inline `ask` rules settings when there are rules. */ smartApprovals?: { settings: string | null } }) {
     // The spike-verified stream-json control protocol. Parity permissions come from
     // the StructuredSessionManager's auto-allow loop, NOT --dangerously-skip-permissions.
     const args: string[] = [
@@ -112,7 +131,9 @@ export const claudeCodeProvider: SessionProvider = {
       // content_block_start/delta/stop, …) IN ADDITION to the whole
       // assistant/user/result events, so the View can render tokens incrementally.
       '--include-partial-messages',
-      '--permission-mode', 'default',
+      // Smart approvals: Claude's own classifier decides (auto mode); the manager surfaces every
+      // can_use_tool that still arrives. Otherwise `default`, answered by the manager's membrane.
+      '--permission-mode', smartApprovals ? 'auto' : 'default',
       '--permission-prompt-tool', 'stdio',
       ...mcpArgs(secretsMcp),
       // The secrets/roster note, then the Overseer persona (coordinator / typed agent):
@@ -134,7 +155,15 @@ export const claudeCodeProvider: SessionProvider = {
     // The overseer's own memory folder (overseer memory scope spec 2026-10-07, Unit 1): the
     // session loads only that folder's MEMORY.md, not the project folder that the user's own
     // threads share. Inline JSON settings are additive, like the hooks file of a PTY thread.
-    if (autoMemoryDirectory) args.push('--settings', autoMemorySettingsArg(autoMemoryDirectory));
+    // The smart `ask` rules (os/approvals.ts claudeSmartAskRules): additive inline settings.
+    // ONE inline settings object (the CLI may keep only the last --settings flag): Dispatch's own floor
+    // (MCP startup timeout, transcript retention) merged with the memory folder and the smart rules.
+    // Inline settings outrank the user's settings.json, so the MCP timeout holds even where that file
+    // sets it very high (a dead server held a thread for MCP_TIMEOUT=300000, five minutes).
+    const inline: Record<string, unknown> = { ...dispatchClaudeSettings() };
+    if (autoMemoryDirectory) Object.assign(inline, JSON.parse(autoMemorySettingsArg(autoMemoryDirectory)));
+    if (smartApprovals?.settings) Object.assign(inline, JSON.parse(smartApprovals.settings));
+    args.push('--settings', JSON.stringify(inline));
     return { command: 'claude', args };
   },
 

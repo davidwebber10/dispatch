@@ -72,6 +72,8 @@ export interface PrincipalOptions {
   /** Signed-in devices (daemon only). */
   devices?: DeviceStore;
   boxToken?: string;
+  /** Privilege separation: the owner credential counts only from a peer outside the box. */
+  ownerPeerOk?: (remoteAddress: string | undefined) => boolean;
   stats?: NoCredentialStats;
   log?: (line: string) => void;
   now?: () => number;
@@ -107,10 +109,11 @@ export function createPrincipalMiddleware(opts: PrincipalOptions): RequestHandle
       }
       return set(principal);
     }
-    if (opts.boxToken && tokenMatches(opts.boxToken, headerOf(req, BOX_TOKEN_HEADER))) {
+    const ownerPeer = !opts.ownerPeerOk || opts.ownerPeerOk(req.socket?.remoteAddress);
+    if (ownerPeer && opts.boxToken && tokenMatches(opts.boxToken, headerOf(req, BOX_TOKEN_HEADER))) {
       return set({ kind: 'owner', via: 'box' });
     }
-    const token = opts.getToken?.() ?? null;
+    const token = ownerPeer ? (opts.getToken?.() ?? null) : null;
     if (token) {
       const cred = resolveCredential(auth, headerOf(req, 'cookie'), token, opts.devices);
       if (cred) {

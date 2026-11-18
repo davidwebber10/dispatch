@@ -1,0 +1,11 @@
+{
+  "name": "dispatch-box-agent-clis",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The agent CLIs the hosted image ships from npm, pinned by the lockfile beside this file (every package with its integrity hash). To move a version: change it here, run `npm install --package-lock-only --ignore-scripts` in this folder, and commit both files.",
+  "dependencies": {
+    "@openai/codex": "0.167.0",
+    "mcp-remote": "0.14.3",
+    "opencode-ai": "1.19.5"
+  }
+}

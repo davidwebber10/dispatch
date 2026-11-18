@@ -13,9 +13,14 @@ import { resolveWorker } from '../overseer/worker-matrix.js';
 import { harnessCapabilities } from '../providers/capabilities.js';
 import { detectProvider } from '../setup/detect.js';
 import { clientMessage } from '../http/client-message.js';
+import os from 'node:os';
+import { PATH_REFUSALS, type PathPolicy } from '../files/path-policy.js';
+import { pathPolicyFor } from '../files/path-policy-default.js';
+import { expandHome } from '../sessions/project-dir.js';
 
-export function createSessionsRouter(sessionService: SessionService, broadcaster: EventBroadcaster | undefined, db: Database.Database): Router {
+export function createSessionsRouter(sessionService: SessionService, broadcaster: EventBroadcaster | undefined, db: Database.Database, opts: { policy?: PathPolicy } = {}): Router {
   const router = policyRouter();
+  const policy = opts.policy ?? pathPolicyFor(db);
 
   // POST /api/sessions/reorder — reorder sessions (before parameterized routes)
   router.post('/reorder', (req, res) => {
@@ -28,6 +33,15 @@ export function createSessionsRouter(sessionService: SessionService, broadcaster
   // POST /api/sessions — create a new session
   router.post('/', (req, res) => {
     try {
+      // A project's folder is a folder of the person (files/path-policy.ts): never a system tree; on a hosted
+      // box never Dispatch's own folder or an agent program's settings folder. Every file route of the project
+      // then works inside it.
+      const given = typeof req.body?.workingDir === 'string' ? req.body.workingDir.trim() : '';
+      if (given) {
+        const dir = expandHome(given);
+        const why = policy.problem(dir, { project: os.homedir(), use: 'write' });
+        if (why) return res.status(403).json({ error: PATH_REFUSALS[why], code: 'path_refused', reason: why });
+      }
       const session = sessionService.create(req.body);
       broadcaster?.broadcast({ type: 'session:created', session });
       const warning = req.body.workingDir?.startsWith('/mnt/')

@@ -53,7 +53,11 @@ describe('Drops: the name is one constant', () => {
     act(() => reg.projectMenu[0].onPick({ session: { id: 's1' } }));
     expect(await screen.findByText(`${NAME} · Alpha`)).toBeInTheDocument();
     expect(await screen.findByText(/Nothing here yet/)).toBeInTheDocument();
-    expect(screen.getByText(/in Inbox for you/)).toBeInTheDocument();
+    // The empty view (2026-11-13): an icon, a title and one line, centred.
+    const empty = screen.getByTestId('inbox-empty');
+    expect(empty).toHaveTextContent('Threads in this project put commands, links, files and text here for you.');
+    expect(empty.querySelector('svg')).not.toBeNull();
+    expect(empty.style.alignItems).toBe('center');
   });
 });
 

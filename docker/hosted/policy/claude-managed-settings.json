@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "disableBypassPermissionsMode": "disable"
+  },
+  "allowManagedHooksOnly": true,
+  "allowManagedPermissionRulesOnly": true,
+  "disableClaudeAiConnectors": true,
+  "enableArtifact": false,
+  "disableArtifact": true
+}

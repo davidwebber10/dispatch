@@ -113,8 +113,10 @@ describe('path safety and read limits', () => {
 
   it('read refuses a device file and a directory', async () => {
     const app = makeApp(workDir);
+    // A device is in a system tree: refused before any open (files/path-policy.ts).
     const dev = await request(app).get('/api/sessions/s1/files/read').query({ path: '/dev/zero' });
-    expect(dev.status).toBe(400);
+    expect(dev.status).toBe(403);
+    expect(dev.body.reason).toBe('system');
     const dir = await request(app).get('/api/sessions/s1/files/read').query({ path: '.' });
     expect(dir.status).toBe(400);
   });

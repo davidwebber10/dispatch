@@ -4,8 +4,8 @@ import type Database from 'better-sqlite3';
 import { readDictationSettings, updateDictationSettings, readCoordinatorSettings, updateCoordinatorSettings } from '../settings/shared-settings.js';
 
 /**
- * GET/PUT /api/settings/dictation   — { provider?, model?, secretName?, saved }
- * GET/PUT /api/settings/coordinator — { name?, saved }
+ * GET/PUT /api/settings/dictation:   { provider?, model?, secretName?, cleanFillers?, saved }
+ * GET/PUT /api/settings/coordinator: { name?, saved }
  *
  * Owner only (policyRouter's default), like the harness settings. PUT merges field-wise (null clears).
  * `saved` is false until the first PUT, which is how a browser knows to upload its old per-device values once.

@@ -33,10 +33,8 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 describe.each([['desktop', false], ['phone', true]] as const)('the "Why is this thread in this state?" menu item (%s)', (_name, phone) => {
   beforeEach(() => viewport(phone));
 
-  it('is a row under More, with an icon and one line that explains it', () => {
+  it('is a row in the menu (no More fold, 2026-11-13), with an icon and one line that explains it', () => {
     render(<Host t={tab()} />);
-    expect(screen.queryByRole('button', { name: 'Why is this thread in this state?' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'More' }));
     const row = screen.getByRole('button', { name: 'Why is this thread in this state?' });
     expect(row.querySelector('svg')).not.toBeNull();
     expect(row.textContent).toContain('Explains the status and lists the last events');
@@ -45,7 +43,6 @@ describe.each([['desktop', false], ['phone', true]] as const)('the "Why is this 
   it('opens the panel for that thread in a dialog', async () => {
     const load = vi.spyOn(api, 'getThreadDiagnostics').mockResolvedValue(answer);
     render(<Host t={tab()} />);
-    fireEvent.click(screen.getByRole('button', { name: 'More' }));
     fireEvent.click(screen.getByRole('button', { name: 'Why is this thread in this state?' }));
     const dialog = await screen.findByRole('dialog', { name: 'Why is this thread in this state?' });
     expect(await within(dialog).findByRole('heading', { name: 'Working, but the process ended' })).toBeTruthy();

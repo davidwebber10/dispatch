@@ -102,6 +102,14 @@ missing:
    what users read in the update prompt before they install. It is required, not optional.
 3. **Your actual changes**, obviously.
 
+**Releases go only through `dispatch release`. Never by hand.** Do not run `git tag`, `git push` of
+a tag, or `gh release create` yourself, and never bump one `package.json` alone. A hand cut skips
+the guards above: release 4.7.8 shipped with the root on 4.7.8 and core on 4.7.7, so every install
+offered it again after taking it. A test (`packages/core/tests/release-versions.test.ts`) fails when
+the four versions differ. An install moves only to a PUBLISHED GitHub release whose tag is on `main`
+(`packages/core/src/update/target.ts`), so a stray tag is ignored, but older installs still take the
+highest tag on origin: keep origin's `vX.Y.Z` tags to published releases on `main`.
+
 The full runbook — the three-things model, the note template, and the worktree caveat — is in
 [`docs/RELEASING.md`](docs/RELEASING.md).
 

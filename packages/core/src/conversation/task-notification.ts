@@ -99,15 +99,60 @@ function collapseWs(s: string): string {
 }
 
 /**
+ * Context a harness puts in a `user`-role item by itself, never typed by the person:
+ *   Claude Code  `<system-reminder>`, `<local-command-caveat>`
+ *   Codex        `<environment_context>`, `<user_instructions>`, `<turn_aborted>`, and the AGENTS.md
+ *                injection (`# AGENTS.md instructions for <dir>` … `</INSTRUCTIONS>`)
+ * A body is context only when it is ENTIRELY such blocks, one after another. Each block runs to the
+ * LAST closing tag of its name, so a block that quotes its own closing tag stays whole. A person who
+ * quotes a tag in a sentence keeps their message.
+ *
+ * A message someone SENT (the person, a peer thread, an automation: the echo carries SENT_MARK) is
+ * never classified by this rule: a sender cannot make their words look like harness context.
+ */
+const CONTEXT_TAGS = ['system-reminder', 'local-command-caveat', 'environment_context', 'user_instructions', 'turn_aborted'] as const;
+const CONTEXT_OPEN = new RegExp(`^<(${CONTEXT_TAGS.join('|')})>`);
+const AGENTS_MD_HEAD = /^# AGENTS\.md instructions for[^\n]*\n/i;
+const AGENTS_MD_END = '</INSTRUCTIONS>';
+
+/** Set (true) by a manager on the echo of a message that was sent to the thread (sendMessage). */
+export const SENT_MARK = 'dispatch_sent';
+
+/** Whether `text` is harness-injected context and nothing else (see CONTEXT_TAGS). */
+export function isHarnessContext(text: string): boolean {
+  let rest = text.trim();
+  let blocks = 0;
+  while (rest) {
+    let close: string;
+    if (AGENTS_MD_HEAD.test(rest)) close = AGENTS_MD_END;
+    else {
+      const open = CONTEXT_OPEN.exec(rest);
+      if (!open) return false;
+      close = `</${open[1]}>`;
+    }
+    const at = rest.lastIndexOf(close);
+    if (at <= 0) return false;
+    rest = rest.slice(at + close.length).trim();
+    blocks += 1;
+  }
+  return blocks > 0;
+}
+
+/** The muted line shown where a harness context item was (a view never drops text without a trace). */
+export const CONTEXT_NOTICE = 'Harness context';
+
+/**
  * Classify one `user`-role text body for the renderer: an ordinary human turn, an injected
  * event to show as a muted 'notice' (a task-notification summary or a slash-command echo
- * label), or a 'drop' (injected bookkeeping that carries no readable text). One predicate for
+ * label), harness 'context' (see isHarnessContext: never the person's message, never shown as
+ * one), or a 'drop' (injected bookkeeping that carries no readable text). One predicate for
  * every parse path, so the live ws fold, the transcript backfill and the REST page agree.
  */
-export type UserTextClass = { kind: 'user' } | { kind: 'notice'; text: string } | { kind: 'drop' };
+export type UserTextClass = { kind: 'user' } | { kind: 'notice'; text: string } | { kind: 'context' } | { kind: 'drop' };
 export function classifyUserText(text: string): UserTextClass {
   const summary = taskNotificationSummary(text);
   if (summary) return { kind: 'notice', text: summary };
+  if (isHarnessContext(text)) return { kind: 'context' };
   const echo = commandEchoSummary(text);
   if (echo !== null) return echo ? { kind: 'notice', text: echo } : { kind: 'drop' };
   return { kind: 'user' };
@@ -115,16 +160,17 @@ export function classifyUserText(text: string): UserTextClass {
 
 /**
  * Whether a whole `user` entry is injected bookkeeping the resume-anchor scan must skip — a
- * task notification OR a slash-command echo. Neither is a real prompt that a later assistant
+ * task notification, a slash-command echo or harness context. None is a real prompt that a later assistant
  * turn "answers", so anchoring a resume on one would restart from the wrong place.
  */
 export function isInjectedUserEntry(o: any): boolean {
   if (isTaskNotificationEntry(o)) return true;
   const c = o?.message?.content;
-  if (typeof c === 'string') return isCommandEcho(c);
+  const injected = (t: string) => isCommandEcho(t) || isHarnessContext(t);
+  if (typeof c === 'string') return injected(c);
   if (Array.isArray(c)) {
     const texts = c.filter((b: any) => b?.type === 'text' && typeof b.text === 'string');
-    return texts.length > 0 && texts.every((b: any) => isCommandEcho(b.text));
+    return texts.length > 0 && texts.every((b: any) => injected(b.text));
   }
   return false;
 }

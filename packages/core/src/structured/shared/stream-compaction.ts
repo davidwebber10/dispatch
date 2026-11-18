@@ -74,8 +74,9 @@ export class ClaudeStreamCompactor {
       }
       return 0;
     }
-    // A turn end: a message that is still open here was cut off, and keeps its deltas.
-    if (f.type === 'result') this.open.clear();
+    // A turn end: a message that is still open here was cut off, and keeps its deltas. A sub-thread's
+    // `result` (it carries parent_tool_use_id) ends only that sub-thread's message, never the thread's.
+    if (f.type === 'result') { if (key) this.open.delete(key); else this.open.clear(); }
     return 0;
   }
 
@@ -103,7 +104,8 @@ const DELTA_FIELD: Record<string, string> = { text_delta: 'text', thinking_delta
 
 /** Replaces the deltas of a closed content block with one delta that holds the whole text. */
 export class BlockDeltaCoalescer {
-  private blocks = new Map<number, OpenBlock>();
+  /** Open blocks by stream and index: the main agent ('') and each sub-thread (its parent tool id) count their own indexes. */
+  private blocks = new Map<string, OpenBlock & { parent: string; index: number }>();
   private tags = new WeakMap<object, string>();
   private seq = 0;
   private readonly tagOf = (event: unknown): string | null =>
@@ -113,20 +115,23 @@ export class BlockDeltaCoalescer {
   observe(ring: EventRing, event: unknown): number {
     const f = event as Frame | null;
     if (!f || typeof f !== 'object') return 0;
-    // A turn end closes every block: Codex never sends a stop for a reasoning block.
-    if (f.type === 'result') return this.closeAll(ring);
+    const parent = typeof f.parent_tool_use_id === 'string' ? f.parent_tool_use_id : '';
+    // A turn end closes every block of its stream: Codex never sends a stop for a reasoning block. A
+    // sub-thread's `result` closes only the sub-thread's blocks.
+    if (f.type === 'result') return this.closeAll(ring, parent);
     if (f.type !== 'stream_event' || !f.event) return 0;
     const se = f.event;
-    if (se.type === 'message_start') return this.closeAll(ring); // block indexes start again
+    if (se.type === 'message_start') return this.closeAll(ring, parent); // block indexes start again
     const index: unknown = se.index;
     if (typeof index !== 'number') return 0;
+    const key = `${parent}|${index}`;
     if (se.type === 'content_block_start') {
-      const removed = this.close(ring, index);
-      this.blocks.set(index, { tag: `b${++this.seq}`, since: ring.pushes, text: '', deltas: 0, mixed: false });
+      const removed = this.close(ring, key);
+      this.blocks.set(key, { tag: `b${++this.seq}`, since: ring.pushes, text: '', deltas: 0, mixed: false, parent, index });
       return removed;
     }
     if (se.type === 'content_block_delta') {
-      const block = this.blocks.get(index);
+      const block = this.blocks.get(key);
       if (!block) return 0;
       const type: unknown = se.delta?.type;
       const field = typeof type === 'string' ? DELTA_FIELD[type] : undefined;
@@ -139,22 +144,26 @@ export class BlockDeltaCoalescer {
       this.tags.set(f, block.tag);
       return 0;
     }
-    if (se.type === 'content_block_stop') return this.close(ring, index);
+    if (se.type === 'content_block_stop') return this.close(ring, key);
     return 0;
   }
 
-  private closeAll(ring: EventRing): number {
+  private closeAll(ring: EventRing, parent: string): number {
     let removed = 0;
-    for (const index of [...this.blocks.keys()]) removed += this.close(ring, index);
+    for (const [key, block] of [...this.blocks.entries()]) if (block.parent === parent) removed += this.close(ring, key);
     return removed;
   }
 
-  private close(ring: EventRing, index: number): number {
-    const block = this.blocks.get(index);
+  private close(ring: EventRing, key: string): number {
+    const block = this.blocks.get(key);
     if (!block) return 0;
-    this.blocks.delete(index);
+    this.blocks.delete(key);
     if (block.mixed || block.deltas < 2 || !block.deltaType || !block.field) return 0;
-    const merged = { type: 'stream_event', event: { type: 'content_block_delta', index, delta: { type: block.deltaType, [block.field]: block.text } } };
+    const merged = {
+      type: 'stream_event',
+      event: { type: 'content_block_delta', index: block.index, delta: { type: block.deltaType, [block.field]: block.text } },
+      ...(block.parent ? { parent_tool_use_id: block.parent } : {}),
+    };
     // One event takes the place of `deltas` events.
     return ring.compact(this.tagOf, block.tag, merged, block.since) - 1;
   }

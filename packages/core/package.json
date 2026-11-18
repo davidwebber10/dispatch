@@ -1,6 +1,6 @@
 {
   "name": "dispatch-server",
-  "version": "4.6.2",
+  "version": "4.10.0",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -17,6 +17,10 @@
     "./access": {
       "types": "./dist/auth/access-api.d.ts",
       "default": "./dist/auth/access-api.js"
+    },
+    "./update-target": {
+      "types": "./dist/update/target.d.ts",
+      "default": "./dist/update/target.js"
     },
     "./credential": {
       "types": "./dist/auth/credential.d.ts",
@@ -37,7 +41,7 @@
   "dependencies": {
     "better-sqlite3": "^11.0.0",
     "express": "^4.21.0",
-    "multer": "^1.4.5-lts.1",
+    "multer": "^2.5.0",
     "node-pty": "1.1.0",
     "uuid": "^10.0.0",
     "web-push": "^3.6.7",
@@ -46,7 +50,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",
     "@types/express": "^4.17.0",
-    "@types/multer": "^1.4.0",
+    "@types/multer": "^2.3.0",
     "@types/node": "^22.0.0",
     "@types/supertest": "^6.0.0",
     "@types/uuid": "^10.0.0",

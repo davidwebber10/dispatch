@@ -1,4 +1,5 @@
 import { api } from '../api/client';
+import { isBusinessPreview, usesOsLook } from './hostContext';
 
 /**
  * Accent-tinted app icons. The bundled PWA icons are green; this re-renders
@@ -20,8 +21,11 @@ function shade(hex: string, amt: number): string {
   return `rgb(${ch(0)},${ch(2)},${ch(4)})`;
 }
 
-/** Draw the icon at `size` px; null when canvas isn't available (jsdom). */
-export function drawAppIcon(size: number, accent: string): HTMLCanvasElement | null {
+/**
+ * Draw the icon at `size` px; null when canvas isn't available (jsdom). The glyph is the `>_` of the
+ * developer tool, or, on a hosted workspace (Dispatch inside Polywood OS), a neutral compass.
+ */
+export function drawAppIcon(size: number, accent: string, glyph: 'terminal' | 'compass' = usesOsLook() ? 'compass' : 'terminal'): HTMLCanvasElement | null {
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = size;
   const ctx = canvas.getContext('2d');
@@ -39,6 +43,21 @@ export function drawAppIcon(size: number, accent: string): HTMLCanvasElement | n
   ctx.lineWidth = 15.5 * s;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
+  if (glyph === 'compass') {
+    ctx.lineWidth = 11 * s;
+    ctx.beginPath(); // the ring
+    ctx.arc(90 * s, 90 * s, 50 * s, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = ctx.strokeStyle; // the same dark ink as the ring
+    ctx.beginPath(); // the needle: a diamond pointing up-right
+    ctx.moveTo(118 * s, 62 * s);
+    ctx.lineTo(98 * s, 98 * s);
+    ctx.lineTo(62 * s, 118 * s);
+    ctx.lineTo(82 * s, 82 * s);
+    ctx.closePath();
+    ctx.fill();
+    return canvas;
+  }
   ctx.beginPath(); // chevron >
   ctx.moveTo(47 * s, 60 * s);
   ctx.lineTo(90 * s, 89.5 * s);
@@ -69,6 +88,18 @@ export async function syncAppIcons(accent: string): Promise<void> {
     }
     const link = document.querySelector('link[rel="icon"]') as HTMLLinkElement | null;
     if (link) link.href = `data:image/png;base64,${icons['favicon-32.png']}`;
+    // The business preview is this browser only: the icons the daemon serves (home-screen installs) stay.
+    if (isBusinessPreview()) return;
     await api.putAppearanceIcons(icons);
   } catch { /* older daemon / offline — purely cosmetic, ignore */ }
+}
+
+/** A hosted workspace (or the business preview): swap the bundled `>_` favicon for the compass at launch. */
+export function applyHostedFavicon(accent: string): void {
+  if (!usesOsLook()) return;
+  try {
+    const canvas = drawAppIcon(32, accent, 'compass');
+    const link = document.querySelector('link[rel="icon"]') as HTMLLinkElement | null;
+    if (canvas && link) link.href = canvas.toDataURL('image/png');
+  } catch { /* no canvas: keep the bundled icon */ }
 }

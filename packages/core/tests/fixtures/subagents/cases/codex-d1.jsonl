@@ -1,0 +1,8 @@
+{"_note":"subagents-v1 review proof case d1 (synthetic frames)."}
+{"method": "item/completed", "params": {"threadId": "$MAIN", "turnId": "turn-fake-1", "item": {"type": "subAgentActivity", "id": "id1", "model": "gpt-fake", "reasoningEffort": "low", "kind": "interacted", "agentThreadId": "sub-Y", "agentPath": "/root/thread_c_private_task"}}}
+{"method": "item/completed", "params": {"threadId": "$MAIN", "turnId": "turn-fake-1", "item": {"type": "agentMessage", "id": "m1", "text": "Ok.", "phase": "final_answer", "memoryCitation": null}}}
+{"method": "turn/completed", "params": {"threadId": "$MAIN", "turn": {"id": "turn-fake-1", "items": [], "itemsView": "notLoaded", "status": "completed", "durationMs": 3}}}
+{"wait": 30}
+{"method": "turn/started", "params": {"threadId": "sub-Y", "turn": {"id": "ty1", "items": [], "itemsView": "notLoaded", "status": "inProgress"}}}
+{"method": "item/completed", "params": {"threadId": "sub-Y", "turnId": "ty1", "item": {"type": "agentMessage", "id": "sy1", "text": "RESULT OF THE SUBAGENT OF THREAD C: private finding", "phase": "final_answer", "memoryCitation": null}}}
+{"method": "turn/completed", "params": {"threadId": "sub-Y", "turn": {"id": "ty1", "items": [], "itemsView": "notLoaded", "status": "completed", "durationMs": 3}}}

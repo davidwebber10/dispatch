@@ -137,12 +137,12 @@ describe('NewThreadModal', () => {
     render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
     fireEvent.click(screen.getByRole('button', { name: 'Codex' }));
     expect(screen.getByRole('button', { name: 'CLI mode' })).toHaveAttribute('aria-pressed', 'true');
-    pickModel('5.6 Sol');
+    pickModel('GPT-6.1 Sol');
     start();
     await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
     const input = lastInput();
     expect(input.type).toBe('codex');
-    expect(input.config).toEqual({ model: 'gpt-5.6-sol' });
+    expect(input.config).toEqual({ model: 'gpt-6.1-sol' });
   });
 
   describe('auto-archive row', () => {

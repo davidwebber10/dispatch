@@ -70,7 +70,9 @@ it('loadModelEfforts reads each model\'s efforts and default effort from the app
   const map = await m.loadModelEfforts();
   expect(map?.['gpt-6-luna']).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
   expect(map?.['gpt-6-astra']).toContain('ultra');
-  expect(m.modelDefaultEfforts()).toEqual({ 'gpt-6-astra': 'medium', 'gpt-6-luna': 'low' });
+  expect(m.modelDefaultEfforts()).toEqual({ 'gpt-6-astra': 'medium', 'gpt-6-luna': 'low', 'gpt-6.1-sol': 'low' });
+  // The service tiers the account has per model come from the same list.
+  expect(m.modelServiceTiers()?.['gpt-6.1-sol']).toEqual(['priority']);
   await m.loadModelEfforts();
   expect(logged('model/list')).toHaveLength(1);
 });
@@ -123,6 +125,12 @@ it('a model the app-server refuses on turn/start goes back to the model before i
   await f;
   expect(seen).toEqual([{ model: 'bad-model', restoredModel: 'gpt-6-luna' }]);
   expect(m.getModel('t1')).toBe('gpt-6-luna');
+  // An RPC refusal is not guessed into "This account cannot use": the notice names what was refused, the failed
+  // turn says "Codex refused this request" with Codex's words (review F3).
+  const events = m.getEvents('t1') as any[];
+  expect(events.find((e) => e.subtype === 'settings_refused').message).toBe('Codex refused the model bad-model: unknown model: bad-model. It will not be sent again.');
+  expect(events.some((e) => e.type === 'result' && e.is_error && e.result === 'Codex refused this request: unknown model: bad-model')).toBe(true);
+  expect(events.some((e) => typeof e.result === 'string' && e.result.startsWith('This account cannot use'))).toBe(false);
   await turn('second');
   const sent = logged('turn/start');
   expect(sent[sent.length - 1].params).not.toHaveProperty('model');
@@ -194,4 +202,12 @@ it('a refused model puts the chip back too: the restored model is sent to connec
   expect(frames).toEqual([{ type: 'system', subtype: 'model', model: 'gpt-6-luna' }]);
   const ring = m.getEvents('t1').filter((e: any) => e.type === 'system' && e.subtype === 'model');
   expect((ring[ring.length - 1] as any).model).toBe('gpt-6-luna');   // a reconnecting client replays the restored model last
+});
+
+it('a new thread whose start Codex refuses fails with "Codex refused this request: <detail>", never on another model', async () => {
+  m.spawn('t1', { command: process.execPath, args: [fake], workDir: process.cwd(), model: 'gpt-6.1-terra', env: { CODEX_FAKE_LOG: logPath, CODEX_FAKE_START_REJECT_MODEL: 'gpt-6.1-terra' } });
+  await until(() => m.getEvents('t1').some((e: any) => e.subtype === 'spawn_error'), 'spawn_error');
+  const err = (m.getEvents('t1') as any[]).find((e) => e.subtype === 'spawn_error');
+  expect(err.message).toBe("Codex refused this request: The 'gpt-6.1-terra' model is not supported when using Codex with a ChatGPT account.");
+  expect(m.getEvents('t1').some((e: any) => e.type === 'system' && e.subtype === 'init')).toBe(false);
 });

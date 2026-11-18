@@ -33,7 +33,7 @@ if (rIdx > -1 && process.argv[rIdx + 1] === 'gone-session') {
   process.exit(1);
 }
 // `argv` echoes the launch args so resume tests can assert `-r <id>` was applied.
-send({ type: 'system', subtype: 'init', apiKeySource: 'none', model: 'claude', session_id: 'sess-fake', testEnv: process.env.DISPATCH_TEST_ENV ?? null, argv: process.argv.slice(2) });
+send({ type: 'system', subtype: 'init', apiKeySource: 'none', model: 'claude', session_id: 'sess-fake', testEnv: process.env.DISPATCH_TEST_ENV ?? null, argv: process.argv.slice(2), mcp_servers: process.env.FAKE_MCP_SERVERS ? JSON.parse(process.env.FAKE_MCP_SERVERS) : undefined, tools: process.env.FAKE_TOOLS ? JSON.parse(process.env.FAKE_TOOLS) : undefined });
 const rl = readline.createInterface({ input: process.stdin });
 // The AskUserQuestion request this CLI is blocked on, if any (see TRIGGER_QUESTION).
 let pendingQuestion = null;
@@ -50,6 +50,12 @@ rl.on('line', (line) => {
       // AskUserQuestion arrives as a can_use_tool whose input carries questions[]
       pendingQuestion = { request_id: 'req-2', tool_use_id: 'tu-2' };
       send({ type: 'control_request', request_id: 'req-2', request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions: [{ question: 'Pick one', header: 'Choice', options: ['A', 'B'], multiSelect: false }] }, tool_use_id: 'tu-2' } });
+      return;
+    }
+    if (typeof text === 'string' && text.startsWith('TRIGGER_INIT:')) {
+      // A later init frame (Claude Code sends one each turn): `TRIGGER_INIT:<JSON of {mcp_servers?, tools?}>`.
+      send({ type: 'system', subtype: 'init', model: 'claude', session_id: 'sess-fake', ...JSON.parse(text.slice('TRIGGER_INIT:'.length)) });
+      send({ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: 'sess-fake' });
       return;
     }
     if (typeof text === 'string' && text.startsWith('TRIGGER_BASH:')) {

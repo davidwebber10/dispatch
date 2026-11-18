@@ -1,0 +1,7 @@
+{"_note":"subagents-v1 review M6b: the main turn ends on a question."}
+{"method":"item/completed","params":{"threadId":"$MAIN","turnId":"turn-fake-1","item":{"type":"subAgentActivity","id":"it1","model":"gpt-fake","reasoningEffort":"low","kind":"started","agentThreadId":"sub-T","agentPath":"/root/quick_check"}}}
+{"method":"turn/started","params":{"threadId":"sub-T","turn":{"id":"tt1","items":[],"itemsView":"notLoaded","status":"inProgress"}}}
+{"method":"item/completed","params":{"threadId":"sub-T","turnId":"tt1","item":{"type":"agentMessage","id":"st1","text":"quick check result","phase":"final_answer","memoryCitation":null}}}
+{"method":"turn/completed","params":{"threadId":"sub-T","turn":{"id":"tt1","items":[],"itemsView":"notLoaded","status":"completed","durationMs":3}}}
+{"method":"item/completed","params":{"threadId":"$MAIN","turnId":"turn-fake-1","item":{"type":"agentMessage","id":"m1","text":"Should I go on with the next file?","phase":"final_answer","memoryCitation":null}}}
+{"method":"turn/completed","params":{"threadId":"$MAIN","turn":{"id":"turn-fake-1","items":[],"itemsView":"notLoaded","status":"completed","durationMs":3}}}

@@ -1,3 +1,4 @@
+import { codexDefaultEffort } from '../structured/codex-fast.js';
 import type Database from 'better-sqlite3';
 import * as terminalsDb from '../db/terminals.js';
 import { PTYManager } from '../pty/manager.js';
@@ -5,6 +6,7 @@ import { parseSlash, resolveEffortArg, resolveModelArg, catalogModelChoices, val
 import { codexEffortsFor, codexDefaultEffortFor, CODEX_ALL_EFFORTS } from '../providers/codex-efforts.js';
 import { autoArchivePatch, DEFAULT_AUTO_ARCHIVE_MS } from './auto-archive.js';
 import { ThreadConfigStore, type ConfigPatch } from './thread-config.js';
+import { checkClaudeModelSwitch, companyModels } from '../os/company-model.js';
 
 type IStructuredManager = import('../structured/manager.js').IStructuredManager;
 
@@ -290,7 +292,13 @@ export class ThreadSettings {
   /** The saved Codex effort, if the thread's model still takes it. */
   codexEffortFor(config: Record<string, any>, model?: string): string | undefined {
     const e = config.effort;
-    if (typeof e !== 'string') return undefined;
+    // No pick: a hosted Sol thread runs at low, as Ask does (structured/codex-fast.ts); every other thread at the model's default.
+    if (typeof e !== 'string') {
+      const m0 = typeof (model ?? config.model) === 'string' ? (model ?? config.model) as string : undefined;
+      const d = codexDefaultEffort(m0);
+      // Only an effort the model takes: a wrong value in the environment must not fail every first turn.
+      return d && m0 && this.codexEffortsFor(m0).includes(d) ? d : undefined;
+    }
     const m = model ?? config.model;
     // No model known yet (the thread runs the app-server's default): the effort was checked against the model the thread
     // ran when it was picked, so keep it; if the default model does not take it, Codex refuses it on the first turn and the
@@ -362,6 +370,16 @@ export class ThreadSettings {
     // start a turn or move to the CLI meanwhile, so the checks run again once the answer is in, and everything after uses the
     // settings as they are THEN.
     const first = this.settingsTarget(terminalId, 'model');
+    // Company models (os/company-model.ts): a company thread keeps its model, and a company model the
+    // platform does not grant is refused.
+    if (first.terminal.type === 'claude-code') {
+      const src = companyModels();
+      const access = src.access();
+      const needsLogin = access && first.config.modelSource !== 'company';
+      const signedIn = needsLogin ? await src.personalClaudeSignedIn(first.config) : false;
+      const refused = checkClaudeModelSwitch(access, first.config, model, signedIn);
+      if (refused) throw transportError(refused.status, refused.message);
+    }
     if (first.terminal.type === 'codex') await first.manager?.loadModelEfforts?.().catch(() => null);
     const { terminal, config, structured, manager } = this.settingsTarget(terminalId, 'model');
 

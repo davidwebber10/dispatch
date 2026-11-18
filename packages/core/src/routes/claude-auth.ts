@@ -15,7 +15,16 @@ import { clientMessage } from '../http/client-message.js';
 export function createClaudeAuthRouter(service: ClaudeLoginService): Router {
   const router = policyRouter();
 
-  router.get('/', (_req, res) => {
+  router.get('/', async (_req, res) => {
+    // The clean login (hosted): Claude Code's own `claude auth status`, never a token. `method` tells
+    // the page which flow runs; `account` is the signed-in email and plan.
+    if (service.usesCleanLogin) {
+      const st = await service.cliStatus();
+      return void res.json({
+        authenticated: st?.loggedIn === true, session: service.status(), method: 'claude-auth-login',
+        account: st?.loggedIn ? { email: st.email ?? null, plan: st.planTier || st.subscriptionType || null, orgName: st.orgName ?? null } : null,
+      });
+    }
     res.json({ authenticated: service.isAuthenticated(), session: service.status() });
   });
 
@@ -53,8 +62,10 @@ export function createClaudeAuthRouter(service: ClaudeLoginService): Router {
     res.status(204).end();
   });
 
-  router.delete('/', (_req, res) => {
-    service.signOut();
+  // Sign out. On a hosted box the answer comes once `claude auth logout` ran (the same way as the Codex
+  // sign-out, DELETE /api/accounts/codex/cli).
+  router.delete('/', async (_req, res) => {
+    await service.signOut().catch(() => undefined);
     res.json({ authenticated: false });
   });
 

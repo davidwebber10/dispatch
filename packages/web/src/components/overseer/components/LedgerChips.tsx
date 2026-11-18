@@ -123,7 +123,7 @@ export function LedgerRefPopover() {
         position: 'fixed', left, top: popover.y + 12, width: POPOVER_WIDTH, zIndex: 50,
         display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 12px', borderRadius: 'var(--radius-md)',
         background: 'var(--elev)', border: '1px solid var(--border)', boxShadow: '0 10px 28px -8px var(--color-shadow)',
-        fontSize: fontVar(12.5), lineHeight: 1.45, color: 'var(--tp)',
+        fontSize: fontVar(12.5), lineHeight: 1.45, color: 'var(--tp)', overflowWrap: 'anywhere',
       }}
     >
       <div style={{ fontWeight: 600 }}>{`N${entry.seq} · ${entry.title || entry.text}`}</div>

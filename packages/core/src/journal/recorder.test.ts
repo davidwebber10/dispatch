@@ -97,6 +97,11 @@ describe('JournalRecorder: a harness that streams and sends no whole message (Co
     ring.push({ type: 'system', subtype: 'settings_refused', message: 'no' });
     ring.push({ type: 'system', subtype: 'spawn_error', message: 'ENOENT' });
     expect(rows().map((r) => r.kind)).toEqual(['notice', 'notice', 'notice']);
+    // A daemon warning is kept; an info notice is not.
+    ring.push({ type: 'system', subtype: 'dispatch_notice', level: 'info', message: 'fyi' });
+    ring.push({ type: 'system', subtype: 'dispatch_notice', level: 'warning', message: 'tools the workspace did not give' });
+    expect(rows().map((r) => r.kind)).toEqual(['notice', 'notice', 'notice', 'notice']);
+    expect((rows()[3].payload as any).message).toBe('tools the workspace did not give');
   });
 
   it('an empty or blank streamed block makes no row', () => {

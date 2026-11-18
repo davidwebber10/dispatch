@@ -36,6 +36,8 @@ export function resolveSpawnModel(input: {
   harness: string;
   config: { model?: unknown; role?: unknown; agentType?: unknown } | null | undefined;
   opencodeDefault?: string;
+  /** The model a Codex thread with no pick runs on (a hosted box: structured/codex-fast.ts hostedCodexDefaultModel). */
+  codexDefault?: string;
 }): string | undefined {
   if (input.harness === 'claude-code') return modelFor(input.config as never);
   const explicitRaw = typeof input.config?.model === 'string' && input.config.model.trim() ? input.config.model.trim() : undefined;
@@ -43,6 +45,10 @@ export function resolveSpawnModel(input: {
   if (explicit) return explicit;
   if (input.harness === 'opencode') {
     const def = input.opencodeDefault;
+    return def && !isClaudeTierAlias(def) ? def : undefined;
+  }
+  if (input.harness === 'codex') {
+    const def = input.codexDefault;
     return def && !isClaudeTierAlias(def) ? def : undefined;
   }
   return undefined;

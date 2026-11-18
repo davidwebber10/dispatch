@@ -21,11 +21,18 @@ const LARGE_BODY_ROUTES: Array<{ method: string; path: RegExp }> = [
   { method: 'POST', path: /^\/api\/plugins\/[^/]+\/import\/?$/ },
 ];
 
+/**
+ * Routes that read their own raw body: the company model relay (os/model-relay.ts) forwards the bytes
+ * unchanged and has its own 8 MB cap.
+ */
+const RAW_BODY_ROUTES: RegExp[] = [/^\/api\/os-model\//];
+
 /** JSON body parser with a small cap, and the large cap only on the routes above. */
 export function createJsonBody(): RequestHandler {
   const small = express.json({ limit: maxJsonBytes() });
   const large = express.json({ limit: maxLargeJsonBytes() });
   return (req, res, next) => {
+    if (req.method === 'POST' && RAW_BODY_ROUTES.some((r) => r.test(req.path))) return next();
     const big = LARGE_BODY_ROUTES.some((r) => r.method === req.method && r.path.test(req.path));
     (big ? large : small)(req, res, next);
   };

@@ -1,0 +1,4 @@
+{"_note":"subagents-v1 review proof case c1 (synthetic frames)."}
+{"method": "item/completed", "params": {"threadId": "$MAIN", "turnId": "turn-fake-1", "item": {"type": "subAgentActivity", "id": "ic1", "model": "gpt-fake", "reasoningEffort": "low", "kind": "started", "agentThreadId": "sub-Y", "agentPath": "/root/thread_c_private_task"}}}
+{"method": "item/completed", "params": {"threadId": "$MAIN", "turnId": "turn-fake-1", "item": {"type": "agentMessage", "id": "m1", "text": "Started.", "phase": "final_answer", "memoryCitation": null}}}
+{"method": "turn/completed", "params": {"threadId": "$MAIN", "turn": {"id": "turn-fake-1", "items": [], "itemsView": "notLoaded", "status": "completed", "durationMs": 3}}}

@@ -75,3 +75,22 @@ describe('HeartbeatService', () => {
     expect(await svc.send()).toBe(false);
   });
 });
+
+describe('heartbeat contract (2026-11-11)', () => {
+  test('sends x-dispatch-owner and advertises the capabilities and the profile', async () => {
+    const { HeartbeatService: HS } = await import('./heartbeat.js');
+    const { boxCapabilities } = await import('./capabilities.js');
+    const f = vi.fn().mockResolvedValue({ ok: true });
+    const Db = (await import('better-sqlite3')).default;
+    const { initSchema } = await import('../db/schema.js');
+    const d = new Db(':memory:'); initSchema(d);
+    const svc = new HS(d, () => ({ authenticated: true, toolsReachable: true }), { baseUrl: 'http://os', boxToken: 't', ownerEmail: 'p@example.com', fetchImpl: f as any });
+    expect(await svc.send()).toBe(true);
+    const [, init] = f.mock.calls[0];
+    expect(init.headers['x-dispatch-owner']).toBe('p@example.com');
+    const body = JSON.parse(init.body);
+    // The build's list plus the facts of the moment (company-claude-v1 follows the managed Claude policy).
+    expect(body.capabilities).toEqual(boxCapabilities());
+    expect(['business', 'developer']).toContain(body.profile);
+  });
+});

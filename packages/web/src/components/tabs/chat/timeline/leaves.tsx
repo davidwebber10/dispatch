@@ -11,8 +11,10 @@ import { Spinner } from '../../../common/Spinner';
 import { ToolCall, editDiffStat } from '../../ToolCall';
 import { useToolGroupExpanded, useThoughtExpanded, uiKeyOf } from '../../../../hooks/useToolUIState';
 import { useRecentlyChanged } from '../../../../hooks/useThrottledValue';
+import { hostCopy } from '../../../../lib/hostCopy';
 import { stableId } from './stableId';
 import { fontVar } from '../../../../lib/fontSize';
+import { askLook } from '../askLook';
 
 // The leaf rows are memoized (W1-F): renderTimeline builds new elements on every walk, and a walk
 // happens for each streamed delta. A row whose props are equal (the same text, the same item) is
@@ -151,7 +153,7 @@ export function ReconnectingState() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, height: '55vh', color: 'var(--color-text-secondary)', fontSize: fontVar(13.5) }}>
       <Spinner size={22} />
-      <span>Reconnecting…</span>
+      <span>{hostCopy('thread.reconnecting', 'Reconnecting…')}</span>
     </div>
   );
 }
@@ -178,6 +180,7 @@ export function EmptyState({ model }: { model?: string }) {
 export const UserBubble = memo(function UserBubble({ text, source, grouped = false, relayName, renderText, sendState, onRetry }: { text: string; source?: 'user' | 'coordinator'; grouped?: boolean; relayName?: string; renderText?: (text: string) => ReactNode; sendState?: 'sending' | 'failed'; onRetry?: () => void }) {
   const dispatchName = useDispatchName();
   const viaCoordinator = source === 'coordinator';
+  const ask = askLook();
   return (
     <div style={{ alignSelf: 'flex-end', maxWidth: '82%', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, padding: grouped ? '0 0 4px' : '8px 0 4px' }}>
       {/* Turn meta (redesign): a small mono label above the bubble instead of an anonymous
@@ -197,7 +200,18 @@ export const UserBubble = memo(function UserBubble({ text, source, grouped = fal
         data-testid="user-bubble"
         data-send-state={sendState}
         aria-busy={sendState === 'sending' || undefined}
-        style={{
+        style={ask ? {
+          ...(sendState ? { opacity: sendState === 'sending' ? 0.72 : 0.6 } : {}),
+          // The OS look (askLook.tsx): the Pretty bubble in OS type and radius (text-sm, rounded-lg, px-4 py-2.5).
+          background: viaCoordinator ? 'var(--color-elevated)' : 'var(--color-accent)',
+          border: viaCoordinator ? '1px solid var(--color-border)' : 'none',
+          color: viaCoordinator ? 'var(--color-text-primary)' : 'var(--color-on-accent)',
+          borderRadius: 'var(--radius-lg)',
+          padding: '10px 16px',
+          font: `400 ${fontVar(14)}/${fontVar(20)} var(--font-sans)`,
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+        } : {
           ...(sendState ? { opacity: sendState === 'sending' ? 0.72 : 0.6 } : {}),
           background: viaCoordinator ? 'var(--color-elevated)' : 'var(--color-accent)',
           border: viaCoordinator ? '1px solid var(--color-border)' : 'none',
@@ -247,7 +261,8 @@ export const AssistantText = memo(function AssistantText({ text, ledger }: { tex
   const streaming = useRecentlyChanged(text, STREAM_QUIET_MS);
   if (!text) return null;
   return (
-    <div style={{ fontSize: fontVar(14.5), lineHeight: 1.75, minWidth: 0 }}>
+    // The OS look (askLook.tsx): OS reading type, text-sm leading-relaxed.
+    <div style={askLook() ? { fontSize: fontVar(14), lineHeight: 1.625, minWidth: 0 } : { fontSize: fontVar(14.5), lineHeight: 1.75, minWidth: 0 }}>
       <InsightText source={text} scheme="global" variant="rail" docs={docs} ledger={ledger} streaming={streaming} />
     </div>
   );

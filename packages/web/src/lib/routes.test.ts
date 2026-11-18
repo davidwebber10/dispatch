@@ -11,6 +11,7 @@ const EVERY: [Route, string][] = [
   [{ view: 'settings', section: 'plugins', subPage: 'previews' }, '/settings/plugins/previews'],
   [{ view: 'chat' }, '/chat'],
   [{ view: 'analytics' }, '/analytics'],
+  [{ view: 'automations' }, '/automations'],
   [{ view: 'plugin:previews:history' }, '/x/previews:history'],
 ];
 

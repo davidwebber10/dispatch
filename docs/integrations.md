@@ -78,3 +78,47 @@ command line, and `mcp-remote` fills in `${NAME}` from its environment.
 An integration without refs runs exactly as it did before. A Doppler change takes effect
 the next time the server starts. The launcher is part of the built daemon (`dist/`); under
 `pnpm dev` (tsx) integrations keep their plain, unresolved spec.
+
+## Company tools on a hosted box (one server per system)
+
+A box that POLYWOOD OS provisions (`OS_BASE_URL` + `OS_BOX_TOKEN`) asks OS
+`GET /api/dispatch/connections` for the person's tools. When the answer has `osTools: {url}`,
+the daemon reads OS's tool list (`tools/list`, each tool's `system`) and every agent thread gets
+ONE MCP server PER SYSTEM that has a tool for the person (`os/os-servers.ts`):
+
+| Gateway tool | Server | Tool in the thread | Claude Code name |
+| --- | --- | --- | --- |
+| `acumatica_get_customer` | `acumatica` | `get_customer` | `mcp__acumatica__get_customer` |
+| `google_drive_search_files` | `google-drive` | `search_files` | `mcp__google-drive__search_files` |
+| `data_query`, `display_chart` | `data`, `display` | `query`, `chart` | `mcp__data__query` |
+| `os_list_connections` | `connections` | `list` | `mcp__connections__list` |
+
+```
+thread CLI --HTTP (or the stdio bridge), thread key--> POST /api/os/mcp/<system> (loopback only)
+           --box token, owner, thread id, x-dispatch-systems: <system>, gateway tool name--> osTools.url
+```
+
+- **The box maps the names.** The route drops the system prefix in `tools/list`, puts it back in
+  `tools/call`, and sends `x-dispatch-systems` per server, so OS needs no change. Results,
+  `structuredContent` and markers pass through unchanged.
+- **The box token never reaches a thread.** A thread sends its own key; only the daemon adds
+  `x-dispatch-box-token`, `x-dispatch-owner` and `x-dispatch-thread-id`. The route refuses any
+  caller that is not a thread key on a loopback address.
+- **No extra process where the harness allows it.** Claude Code, the Codex CLI, Codex Pretty and
+  OpenCode get a loopback HTTP entry with the key as a reference (`Bearer ${DISPATCH_AUTH}`,
+  `bearer_token_env_var`, `{env:DISPATCH_AUTH}`; Codex Pretty: the literal over its pipe). Grok and
+  the Codex CLI view (key file) run `dist/os/os-mcp-bridge.js` once per system (about 50 MB each).
+- **Which systems.** A system with a tool in OS's list, minus one that still needs consent. A
+  running thread keeps the servers it started with; a new thread gets the new set. A server the
+  person already has keeps its name; the OS one becomes `os-<name>`.
+- **Instructions.** OS's `initialize` instructions ride the `data` server only (else
+  `connections`), with gateway names written `data.guide`. Claude Code and Codex put MCP
+  instructions into the model's context (measured); OpenCode and Grok also get the text in their
+  system prompt.
+- **OS down is not "no tools".** `initialize` is answered locally, `tools/list` answers from the
+  last list the box saw, and a call returns a plain `os_unreachable` error. The thread gets one
+  notice line; the daemon retries the connections fetch in the background.
+- OS's `systemPrompt` is appended to every thread's system prompt, with one line that names the
+  company-system servers. `needsConsent`, `profile` and reachability are at
+  `GET /api/os/connections` (owner); `POST /api/os/connections/refresh` asks OS again;
+  `GET /api/os/tools` is OS's tool list (with each tool's `server` and `tool`).

@@ -641,4 +641,23 @@ function initializeSchema(db: Database.Database): void {
   migrate(db, 'drops-plugin-file-snapshot', () => db.exec(`
     ALTER TABLE plugin_files ADD COLUMN snapshot TEXT;
   `));
+  // Inbox → Send a secret (2026-11-12): the owner hands a thread a secret by a 6-character ID. The VALUE is not
+  // here: it is a 0600 file `<dataDir>/inbox-secrets/<id>` (inbox/secret-store.ts), deleted at its one use or
+  // when it is read after its 24 hours. The row stays as the record (who used it, when, where it went).
+  migrate(db, 'inbox-secrets', () => db.exec(`
+    CREATE TABLE IF NOT EXISTS inbox_secrets (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      terminal_id TEXT,
+      name TEXT NOT NULL,
+      allow_reveal INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      used_by TEXT,
+      used_by_label TEXT,
+      used_to TEXT
+    );
+    CREATE INDEX IF NOT EXISTS inbox_secrets_session ON inbox_secrets(session_id, created_at);
+  `));
 }

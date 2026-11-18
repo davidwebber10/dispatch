@@ -11,12 +11,20 @@ import os from 'os';
 import path from 'path';
 import { createHash, randomUUID } from 'crypto';
 import type { UsageAccess } from '../limits/gauge.js';
+import { privsep } from '../privsep/config.js';
+import { agentDirFor } from '../privsep/paths.js';
+import { agentMkdir } from '../privsep/agent-fs.js';
 
 export const CLI_ACCOUNT_ID = 'cli';
 export const ACCOUNT_PROVIDERS = ['claude', 'codex'] as const;
 export type AccountProvider = (typeof ACCOUNT_PROVIDERS)[number];
 
-export interface ClaudeAccount { id: string; label: string; email?: string; accountUuid?: string; plan?: string; token: string; addedAt: string }
+/**
+ * A saved Claude account. On a LOCAL install it holds a `claude setup-token` token (injected as
+ * CLAUDE_CODE_OAUTH_TOKEN). On a HOSTED box (the clean login, auth/claude-cli-login.ts) `token` is ''
+ * and `configDir` is the account's own CLAUDE_CONFIG_DIR, where Claude Code keeps its own credential.
+ */
+export interface ClaudeAccount { id: string; label: string; email?: string; accountUuid?: string; plan?: string; token: string; configDir?: string; addedAt: string }
 export interface CodexAccount { id: string; label: string; email?: string; dir: string; addedAt: string }
 /**
  * The wire shape: never the token. `usageAccess` (W1-H, Claude only): what the sign-in can do for the
@@ -85,7 +93,7 @@ export class AccountsStore {
     try {
       const j = JSON.parse(fs.readFileSync(this.file, 'utf8'));
       return {
-        claude: Array.isArray(j?.claude) ? j.claude.filter((a: any) => a && typeof a.id === 'string' && typeof a.token === 'string') : [],
+        claude: Array.isArray(j?.claude) ? j.claude.filter((a: any) => a && typeof a.id === 'string' && typeof a.token === 'string' && (a.token !== '' || typeof a.configDir === 'string')) : [],
         codex: Array.isArray(j?.codex) ? j.codex.filter((a: any) => a && typeof a.id === 'string' && typeof a.dir === 'string') : [],
         defaults: j?.defaults && typeof j.defaults === 'object' ? j.defaults : {},
         ...(j?.cliLabels && typeof j.cliLabels === 'object' ? { cliLabels: j.cliLabels } : {}),
@@ -183,8 +191,8 @@ export class AccountsStore {
   /** A new Codex account: its own folder, to be signed in by a "Sign in — Codex" thread under that CODEX_HOME. */
   addCodex(label: string): CodexAccount {
     const id = randomUUID().slice(0, 8);
-    const dir = path.join(this.dataDir, 'codex-accounts', id);
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const dir = path.join(agentDirFor(this.dataDir, 'codex-accounts'), id);
+    if (privsep()) agentMkdir(dir); else fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     const a: CodexAccount = { id, label: label.trim() || 'Codex account', dir, addedAt: new Date().toISOString() };
     this.data.codex.push(a);
     this.save();
@@ -233,13 +241,34 @@ export class AccountsStore {
     if (i < 0) return false;
     const [gone] = list.splice(i, 1);
     if (provider === 'codex') { try { fs.rmSync((gone as CodexAccount).dir, { recursive: true, force: true }); } catch { /* best effort */ } }
+    // A hosted Claude account's own config dir: its shared parts are symlinks, so only the links go.
+    if (provider === 'claude' && (gone as ClaudeAccount).configDir) { try { fs.rmSync((gone as ClaudeAccount).configDir!, { recursive: true, force: true }); } catch { /* best effort */ } }
     if (this.data.defaults[provider] === id) delete this.data.defaults[provider];
     this.save();
     return true;
   }
 
   claudeToken(id: string): string | null {
-    return this.data.claude.find((a) => a.id === id)?.token ?? null;
+    return this.data.claude.find((a) => a.id === id)?.token || null;
+  }
+
+  /** The CLAUDE_CONFIG_DIR of a hosted (clean-login) account, or null. */
+  claudeConfigDir(id: string): string | null {
+    return this.data.claude.find((a) => a.id === id)?.configDir ?? null;
+  }
+
+  /**
+   * A hosted (clean-login) Claude account: its own config dir, no token. An existing account with this
+   * id is updated (Sign in again); a new one is added. The profile comes from `claude auth status`.
+   */
+  upsertClaudeConfigDir(input: { id: string; label: string; configDir: string; email?: string; plan?: string }): ClaudeAccount {
+    const existing = this.data.claude.find((a) => a.id === input.id);
+    const patch = { configDir: input.configDir, ...(input.email ? { email: input.email } : {}), ...(input.plan ? { plan: input.plan } : {}) };
+    if (existing) { Object.assign(existing, patch); this.save(); return existing; }
+    const a: ClaudeAccount = { id: input.id, label: input.label.trim() || input.email || 'Claude account', token: '', addedAt: new Date().toISOString(), ...patch };
+    this.data.claude.push(a);
+    this.save();
+    return a;
   }
 
   /** A short stamp of a saved account's token (a hash, never the token): it changes when the token does. Null for `cli` and unknown ids. */
@@ -270,6 +299,9 @@ export class AccountsStore {
     const id = this.has(provider, wanted) ? wanted : this.defaultId(provider);
     if (provider === 'claude') {
       if (id === CLI_ACCOUNT_ID) return { CLAUDE_CODE_OAUTH_TOKEN: '' };
+      // A hosted account: Claude Code's own login in its own config dir, never a token.
+      const configDir = this.claudeConfigDir(id);
+      if (configDir) return { CLAUDE_CONFIG_DIR: configDir, CLAUDE_CODE_OAUTH_TOKEN: '' };
       const token = this.claudeToken(id);
       return token ? { CLAUDE_CODE_OAUTH_TOKEN: token } : {};
     }

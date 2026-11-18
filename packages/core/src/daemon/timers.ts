@@ -2,8 +2,9 @@ import { startPtyTimingLoop } from '../sessions/status.js';
 import { startAutoArchiveLoop } from '../sessions/auto-archive.js';
 import { startInterimRecapLoop } from '../sessions/interim-recap.js';
 import { startUpdateCheckLoop } from '../update/checker.js';
+import { isHostedBox } from '../os/hosted-mode.js';
 import { startTelemetryLoop } from '../telemetry/sender.js';
-import type { DaemonServices } from './build.js';
+import { resolveRepoRoot, type DaemonServices } from './build.js';
 
 /** One repeating job of the daemon. `start` begins it and returns the function that ends it. */
 export interface DaemonTimer {
@@ -55,7 +56,8 @@ export function daemonTimers(s: DaemonServices, opts: { network: boolean }): Dae
     // PTY timing loop for Codex-style providers.
     { name: 'pty-timing', start: () => { const t = startPtyTimingLoop(s.db, s.ptyManager, s.broadcaster, undefined, s.statusService); return () => clearInterval(t); } },
     // Poll GitHub Releases for a newer version than what's running (immediately, then ~45 min).
-    { name: 'update-check', network: true, start: () => { const t = startUpdateCheckLoop(s.db, s.broadcaster); return () => clearInterval(t); } },
+    // A hosted box updates by image (update/hosted.ts): the GitHub release poller does not run there.
+    { name: 'update-check', network: true, start: () => { if (isHostedBox()) return () => {}; const t = startUpdateCheckLoop(s.db, s.broadcaster, resolveRepoRoot()); return () => clearInterval(t); } },
     // Anonymous usage report: 60 s after boot, then an hourly check (Settings → About & updates switch).
     { name: 'telemetry', network: true, start: () => { const loop = startTelemetryLoop(s.db); return () => loop.stop(); } },
     {
@@ -67,6 +69,18 @@ export function daemonTimers(s: DaemonServices, opts: { network: boolean }): Dae
           try { s.agentService.processDueRuns(); } catch (err) { console.error(err); }
           try { s.stallWatchdog.tick(); } catch (err) { console.error('[stall] tick failed:', err); }
         }, 30_000);
+        return () => clearInterval(t);
+      },
+    },
+    {
+      // Idle thread processes (os/process-reaper.ts): only on a host that set the variables; otherwise no interval.
+      name: 'process-reaper',
+      start: () => {
+        const reaper = s.processReaper;
+        if (!reaper) return () => {};
+        const every = Math.min(30_000, Math.max(1_000, Math.floor((reaper.settings.idleMs || 120_000) / 4)));
+        const t = setInterval(() => { try { reaper.tick(); } catch (err) { console.error('[reaper] tick failed:', err); } }, every);
+        t.unref?.();
         return () => clearInterval(t);
       },
     },

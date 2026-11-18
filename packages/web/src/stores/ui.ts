@@ -7,7 +7,7 @@ import { useTabs, findTerminal } from './tabs';
 // 'workspace' is the normal project/thread layout (the "Threads" view). The desktop thread board
 // ('board') was removed on 2026-11-09 (W1-G); a saved 'board' value loads as 'workspace' (loadView).
 // `plugin:<id>:<view>` is a plugin's screen (docs/superpowers/specs/2026-11-07-plugins-design.md).
-export type View = 'workspace' | 'analytics' | 'settings' | 'chat' | `plugin:${string}`;
+export type View = 'workspace' | 'analytics' | 'settings' | 'chat' | 'automations' | `plugin:${string}`;
 // `plugin:<id>:<tab>` is a plugin's right-column tab (the `inspectorTabs` contribution).
 export type InspectorTab = 'details' | 'files' | `plugin:${string}`;
 
@@ -17,7 +17,7 @@ const VKEY = 'dispatch:view';
 const loadBool = (k: string): boolean => { try { return localStorage.getItem(k) === '1'; } catch { return false; } };
 const saveBool = (k: string, v: boolean): void => { try { localStorage.setItem(k, v ? '1' : '0'); } catch { /* ignore */ } };
 // Any other saved value (the removed 'board' view included) loads as 'workspace'.
-const VIEWS: readonly View[] = ['workspace', 'analytics', 'settings', 'chat'];
+const VIEWS: readonly View[] = ['workspace', 'analytics', 'settings', 'chat', 'automations'];
 // Exported so mount.test.tsx can exercise the read-back path directly (pre-seed
 // localStorage, call this) rather than only the write path — the read-back is
 // what regressed originally (the old check recognized only 'board').

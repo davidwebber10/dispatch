@@ -1,8 +1,13 @@
 import { create } from 'zustand';
-import { syncAppIcons } from '../lib/appIcon';
+import { syncAppIcons, applyHostedFavicon } from '../lib/appIcon';
 import { api } from '../api/client';
 import { setThemeSetting, useActiveTheme } from '../themes/apply';
-import { DEFAULT_THEME_ID, getTheme, type ThemeSetting } from '../themes';
+import { defaultThemeSetting, pickableThemes, type ThemeSetting } from '../themes';
+import { can } from '../lib/profile';
+import { isBusinessPreview } from '../lib/hostContext';
+
+// The business preview keeps its own theme choice, so turning it off gives back the developer's theme.
+const THEME_KEY = isBusinessPreview() ? 'dispatch:theme:preview' : 'dispatch:theme';
 
 // literal color: the accent swatches the user picks from (content, not chrome).
 export const ACCENTS = [
@@ -84,6 +89,8 @@ interface SettingsState {
   sttProvider: string;
   sttModel: string;
   sttSecretName: string;
+  /** Remove um, uh, er, ah and hmm from a transcript. On unless turned off; stored with the dictation settings. */
+  sttCleanFillers: boolean;
   /**
    * Spelling help in the mobile CLI/PTY composer. On by default — most of what is
    * typed there is prose aimed at the agent. Toggled from the soft-key row above the
@@ -129,6 +136,7 @@ interface SettingsState {
   setSttProvider: (id: string) => void;
   setSttModel: (id: string) => void;
   setSttSecretName: (name: string) => void;
+  setSttCleanFillers: (on: boolean) => void;
   setPtyAutocorrect: (b: boolean) => void;
   setEditor: (e: DocEditor) => void;
   setShowPrettyHint: (b: boolean) => void;
@@ -172,10 +180,15 @@ function applyTextScale(scale: number) {
 const initialTextScale = clampTextScale(load<unknown>('dispatch:textScale', 1));
 applyTextScale(initialTextScale);
 
-const validTheme = (t: unknown): ThemeSetting => (t === 'system' || (typeof t === 'string' && getTheme(t)) ? t as ThemeSetting : DEFAULT_THEME_ID);
-const initialTheme = validTheme(load<string>('dispatch:theme', DEFAULT_THEME_ID));
-const initialAccent = load('dispatch:accent', '');
+// A theme the person may pick (lib/profile.ts 'themes.all': a business person picks only OS light,
+// OS dark or System), else the default (Dispatch Dark; 'system' = the OS pair on a hosted workspace).
+const validTheme = (t: unknown): ThemeSetting => (t === 'system' || (typeof t === 'string' && pickableThemes(can('themes.all')).some((x) => x.id === t)) ? t as ThemeSetting : defaultThemeSetting());
+const initialTheme = validTheme(load<string>(THEME_KEY, defaultThemeSetting()));
+// The accent picker belongs to 'themes.all': without it, the theme's own accent (the OS one).
+const initialAccent = can('themes.all') ? load('dispatch:accent', '') : '';
 setThemeSetting(initialTheme, initialAccent);
+// Hosted (or the business preview): the compass favicon, not the developer tool's `>_`.
+applyHostedFavicon(useActiveTheme.getState().accent);
 /** The accent on screen: the user's, else the theme's. */
 const effectiveAccent = () => useActiveTheme.getState().accent;
 // A non-default accent may predate the daemon growing the icons endpoint (or
@@ -202,6 +215,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
   sttProvider: load('dispatch:sttProvider', STT_DEFAULTS.provider),
   sttModel: load('dispatch:sttModel', STT_DEFAULTS.model),
   sttSecretName: load('dispatch:sttSecretName', ''),
+  sttCleanFillers: load<boolean>('dispatch:sttCleanFillers', true),
   ptyAutocorrect: load<boolean>('dispatch:ptyAutocorrect', true),
   editor: ((e) => (EDITORS.includes(e) ? e : ''))(load<DocEditor>('dispatch:editor', '')),
   showPrettyHint: load<boolean>('dispatch:showPrettyHint', legacyPrettyHintShown()),
@@ -222,7 +236,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
   setTheme: (t) => {
     const theme = validTheme(t);
     const before = effectiveAccent();
-    save('dispatch:theme', theme); set({ theme }); setThemeSetting(theme, get().accent);
+    save(THEME_KEY, theme); set({ theme }); setThemeSetting(theme, get().accent);
     if (effectiveAccent() !== before) scheduleIconSync(effectiveAccent());
   },
   setTextScale: (n) => { const textScale = clampTextScale(n); save('dispatch:textScale', textScale); set({ textScale }); applyTextScale(textScale); },
@@ -230,6 +244,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
   setSttProvider: (id) => { save('dispatch:sttProvider', id); set({ sttProvider: id }); putShared(() => api.putDictationSettings({ provider: id })); },
   setSttModel: (id) => { save('dispatch:sttModel', id); set({ sttModel: id }); putShared(() => api.putDictationSettings({ model: id })); },
   setSttSecretName: (name) => { save('dispatch:sttSecretName', name); set({ sttSecretName: name }); putShared(() => api.putDictationSettings({ secretName: name })); },
+  setSttCleanFillers: (on) => { save('dispatch:sttCleanFillers', on); set({ sttCleanFillers: on }); putShared(() => api.putDictationSettings({ cleanFillers: on })); },
   setPtyAutocorrect: (b) => { save('dispatch:ptyAutocorrect', b); set({ ptyAutocorrect: b }); },
   setEditor: (e) => { const editor = EDITORS.includes(e) ? e : ''; save('dispatch:editor', editor); set({ editor }); },
   setShowPrettyHint: (b) => { save('dispatch:showPrettyHint', b); set({ showPrettyHint: b }); },
@@ -286,8 +301,10 @@ export async function loadSharedSettings(): Promise<void> {
         sttProvider: d.provider ?? STT_DEFAULTS.provider,
         sttModel: d.model ?? STT_DEFAULTS.model,
         sttSecretName: d.secretName ?? '',
+        // A daemon with no value for the switch means on.
+        sttCleanFillers: d.cleanFillers !== false,
       };
-      save('dispatch:sttProvider', next.sttProvider); save('dispatch:sttModel', next.sttModel); save('dispatch:sttSecretName', next.sttSecretName);
+      save('dispatch:sttProvider', next.sttProvider); save('dispatch:sttModel', next.sttModel); save('dispatch:sttSecretName', next.sttSecretName); save('dispatch:sttCleanFillers', next.sttCleanFillers);
       setState(next);
     })().catch(() => { /* keep the cached values */ }),
     (async () => {

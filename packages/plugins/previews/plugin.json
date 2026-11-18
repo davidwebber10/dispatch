@@ -1,7 +1,7 @@
 {
   "id": "previews",
   "name": "Inbox",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "A thread hands you commands to run, links, files to look at and text to copy: a badge, a sheet on the phone, a history on the desktop.",
   "author": "dispatch",
   "dispatch": ">=3.27",

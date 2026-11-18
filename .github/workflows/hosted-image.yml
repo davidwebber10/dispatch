@@ -1,0 +1,343 @@
+# The hosted box image (docker/hosted/Dockerfile, target `runtime`), built in CI so that no release image
+# comes from a laptop. See docs/hosted.md, "Releasing the hosted image".
+#
+#   1. Build for linux/arm64 on a native ARM runner. Nothing is cached between runs: every release
+#      is built from the pinned bases and locks alone.
+#   2. Run the privilege-separation proof (docker/hosted/privsep-proof/run-proof.sh) against THAT
+#      image. Any failed check or any attack that is not stopped fails the job; the log is an artifact.
+#   3. Add a lazy-loading index (SOCI, index manifest v2; soci pinned by SHA-256) to the same image as
+#      an OCI layout, and check it: one linux/arm64 image manifest, one SOCI index named by the image
+#      manifest, every layer gzip, layers and config unchanged and equal to the proved image's.
+#   4. Only then push that image index to ghcr.io/<owner>/dispatch-box:<version> (one push, the tag is
+#      never moved), check that the pushed image is the image that was proved (same layers and config),
+#      and sign a provenance attestation for the image index digest (actions/attest-build-provenance).
+#
+# It is its own workflow: a failure here never blocks the desktop release (`dispatch release` tags and
+# publishes without waiting for it); rebuild the image with a manual run on the tag (below).
+#
+# A push happens only on a version tag: the tag push itself, or a manual run on a tag ref with
+# `push` ticked. A manual run on a branch builds and proves, and pushes nothing.
+# There is no pull_request trigger: this workflow never runs code from a fork.
+name: hosted-image
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      push:
+        description: 'Push and attest the image (only honored on a tag ref, e.g. --ref v4.7.0)'
+        type: boolean
+        default: false
+
+# Nothing at the top level; the job asks for what it needs.
+permissions: {}
+
+concurrency:
+  group: hosted-image-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/dispatch-box
+
+jobs:
+  image:
+    # Never in a fork (a fork has its own repository name).
+    if: github.repository == 'davidwebber10/dispatch'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    permissions:
+      contents: read      # checkout
+      packages: write     # push to GHCR (the push steps only run on a tag)
+      id-token: write     # sign the attestation (Sigstore, keyless)
+      attestations: write # store the attestation on this repository
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Decide the version and whether to push
+        id: meta
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          PUSH_INPUT: ${{ inputs.push }}
+        run: |
+          set -euo pipefail
+          PUSH=false
+          if [ "$REF_TYPE" = tag ]; then
+            VERSION="${REF_NAME#v}"
+            if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+              echo "::error::tag $REF_NAME is not v<major>.<minor>.<patch>[-label]"; exit 1
+            fi
+            # The tag must sit on the commit whose root package.json carries the same release (the file
+            # `dispatch release` reads; a release may leave packages/*/package.json behind).
+            PKG="$(node -p 'require("./package.json").version')"
+            if [ "${VERSION%%-*}" != "${PKG%%-*}" ]; then
+              echo "::error::tag $REF_NAME does not match package.json ($PKG)"; exit 1
+            fi
+            if [ "$EVENT" = push ] || [ "$PUSH_INPUT" = true ]; then PUSH=true; fi
+          else
+            VERSION="0.0.0-ci.${GITHUB_SHA::12}"
+            [ "$PUSH_INPUT" = true ] && echo "::warning::push is only honored on a tag ref; this run builds and proves only"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "push=$PUSH" >> "$GITHUB_OUTPUT"
+          # The commit time, so both builds below write the same image config (created/history times).
+          echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+          echo "version $VERSION, push $PUSH"
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build the candidate (loaded locally, not pushed)
+        id: candidate
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/hosted/Dockerfile
+          target: runtime
+          platforms: linux/arm64
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+          tags: dispatch-box:candidate
+          # The same labels as "Push the proved image": the check after the push compares the
+          # full image config, labels included, so the two builds must write the same ones.
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+
+      # The proof needs the runtime's default seccomp filter: it is what refuses a user namespace to
+      # a workload, as on the platform (run-proof.sh passes --security-opt seccomp=builtin). Ubuntu
+      # 24.04 also restricts user namespaces through AppArmor; that is switched off here so the proof
+      # measures the seccomp filter, not a host setting the platform does not have (its section D2
+      # expects a box WITHOUT the filter to be able to make a user namespace).
+      - name: Prepare the host for the proof
+        run: |
+          set -euo pipefail
+          docker info --format '{{json .SecurityOptions}}' | tee /dev/stderr | grep -q 'name=seccomp' \
+            || { echo "::error::the Docker daemon has no seccomp support"; exit 1; }
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+
+      - name: Privilege-separation proof
+        env:
+          PROOF_OUT: ${{ runner.temp }}/proof/attacks
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/proof"
+          docker/hosted/privsep-proof/run-proof.sh --image dispatch-box:candidate 2>&1 | tee "$RUNNER_TEMP/proof/proof.log"
+          status=${PIPESTATUS[0]}
+          {
+            echo '### Privilege-separation proof'
+            echo '```'
+            sed -n '/################ summary/,$p' "$RUNNER_TEMP/proof/proof.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      - name: Upload the proof log
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: privsep-proof-${{ steps.meta.outputs.version }}
+          path: ${{ runner.temp }}/proof/
+          if-no-files-found: warn
+
+      # The lazy-loading index (SOCI, index manifest v2), so a container platform that supports it (for
+      # example Fargate) starts the container before the whole image is pulled. Runs on every run, so a
+      # branch run proves the conversion too; only a tag run pushes.
+      #
+      #   1. The same build again, from the builder's cache of the proved build, as an OCI layout with
+      #      gzip layers (the format soci reads in standalone mode; no containerd store is needed).
+      #   2. `soci convert --standalone` adds the SOCI index next to the image manifest. It changes
+      #      the image manifest (one annotation) and the image index; never a layer or the config.
+      #   3. The check below fails the job unless the result is exactly what the platform needs.
+      # The in-registry BuildKit provenance and SBOM are not in this image index: the signed
+      # attestation below is what a consumer verifies.
+      - name: Build the OCI layout of the proved image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/hosted/Dockerfile
+          target: runtime
+          platforms: linux/arm64
+          push: false
+          provenance: false
+          sbom: false
+          outputs: type=oci,dest=${{ runner.temp }}/oci/image.tar,compression=gzip,force-compression=false
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+
+      - name: Install soci (pinned, checked by SHA-256)
+        env:
+          SOCI_VERSION: 0.16.1
+          SOCI_SHA256: 8cea5bd515c5beda5d9e9ba3ddaadcf3e2a5fcd11ea3492630cbd91da68db8a3
+        run: |
+          set -euo pipefail
+          f="soci-snapshotter-${SOCI_VERSION}-linux-arm64-static.tar.gz"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$f" "https://github.com/awslabs/soci-snapshotter/releases/download/v${SOCI_VERSION}/$f"
+          echo "$SOCI_SHA256  $RUNNER_TEMP/$f" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/soci"
+          tar -xzf "$RUNNER_TEMP/$f" -C "$RUNNER_TEMP/soci" soci
+          "$RUNNER_TEMP/soci/soci" --version
+
+      - name: Add the lazy-loading index
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/soci/soci" convert --standalone --format oci-archive --platform linux/arm64 \
+            "$RUNNER_TEMP/oci/image.tar" "$RUNNER_TEMP/oci/soci.tar"
+          mkdir -p "$RUNNER_TEMP/oci/plain" "$RUNNER_TEMP/oci/soci"
+          tar -xf "$RUNNER_TEMP/oci/image.tar" -C "$RUNNER_TEMP/oci/plain"
+          tar -xf "$RUNNER_TEMP/oci/soci.tar" -C "$RUNNER_TEMP/oci/soci"
+
+      - name: Check the lazy-loading index
+        id: soci
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/oci"
+          blob() { cat "$1/blobs/sha256/${2#sha256:}"; }
+          [ "$(jq '.manifests | length' soci/index.json)" = 1 ] || { echo "::error::the layout must hold one image index"; exit 1; }
+          DIGEST="$(jq -r '.manifests[0].digest' soci/index.json)"
+          blob soci "$DIGEST" > index.json
+          jq . index.json
+          test "$(jq -r .mediaType index.json)" = application/vnd.oci.image.index.v1+json
+          test "$(jq '[.manifests[] | select((.artifactType // "") == "" and .platform.os == "linux" and .platform.architecture == "arm64")] | length' index.json)" = 1 \
+            || { echo "::error::the index must hold exactly one linux/arm64 image manifest"; exit 1; }
+          test "$(jq '[.manifests[] | select(.artifactType == "application/vnd.amazon.soci.index.v2+json")] | length' index.json)" = 1 \
+            || { echo "::error::the index must hold exactly one SOCI index (manifest v2)"; exit 1; }
+          IMG="$(jq -r '[.manifests[] | select((.artifactType // "") == "" and .platform.architecture == "arm64")][0].digest' index.json)"
+          SOCI="$(jq -r '.manifests[] | select(.artifactType == "application/vnd.amazon.soci.index.v2+json") | .digest' index.json)"
+          blob soci "$IMG" > image.json
+          test "$(jq -r '.annotations["com.amazon.soci.index-digest"]' image.json)" = "$SOCI" \
+            || { echo "::error::the image manifest does not name the SOCI index"; exit 1; }
+          test "$(jq '[.layers[].mediaType | select(test("zstd"))] | length' image.json)" = 0 \
+            || { echo "::error::a layer is zstd; the platform lazy loads gzip only"; exit 1; }
+          test "$(jq '[.layers[].mediaType | select(test("gzip") | not)] | length' image.json)" = 0 \
+            || { echo "::error::every layer must be gzip"; exit 1; }
+          # The conversion changes no layer and not the config: the same as the OCI build before it.
+          PLAIN="$(jq -r '.manifests[0].digest' plain/index.json)"
+          blob plain "$PLAIN" > plain-image.json
+          if [ "$(jq -r .mediaType plain-image.json)" = application/vnd.oci.image.index.v1+json ]; then
+            PLAIN="$(jq -r '[.manifests[] | select(.platform.architecture == "arm64")][0].digest' plain-image.json)"
+            blob plain "$PLAIN" > plain-image.json
+          fi
+          test "$(jq -c '[.config.digest, [.layers[].digest]]' image.json)" = "$(jq -c '[.config.digest, [.layers[].digest]]' plain-image.json)" \
+            || { echo "::error::the conversion changed a layer or the config"; exit 1; }
+          # The config of the OCI build is the config of the proved image (same layers, same runtime config).
+          proved="$(docker image inspect dispatch-box:candidate --format '{{json .RootFS.Layers}}')"
+          built="$(blob soci "$(jq -r .config.digest image.json)" | jq -c .rootfs.diff_ids)"
+          [ "$proved" = "$built" ] || { echo "::error::the OCI build has other layers than the proved image"; exit 1; }
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "soci=$SOCI" >> "$GITHUB_OUTPUT"
+          echo "image index $DIGEST, image manifest $IMG, SOCI index $SOCI"
+
+      # skopeo 1.13 (the Ubuntu 24.04 package) cannot copy this index with --preserve-digests: it asks
+      # to convert the OCI index and then refuses, so v4.8.1 never published. 1.15 and later copy it
+      # byte for byte. The image is pinned by digest, as soci is pinned by SHA-256.
+      - name: Install skopeo (pinned by digest)
+        env:
+          SKOPEO_IMAGE: quay.io/skopeo/stable:v1.18.0@sha256:c4c8a9d6fc95e331fa92fc31de3f6c9b5fe4761c82f0acb99669eef067fb7c33
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin" "$HOME/.docker"
+          [ -f "$HOME/.docker/config.json" ] || echo '{}' > "$HOME/.docker/config.json"
+          cat > "$RUNNER_TEMP/bin/skopeo" <<EOF
+          #!/usr/bin/env bash
+          exec docker run --rm --network host -e REGISTRY_AUTH_FILE=/auth/config.json \\
+            -v "\$HOME/.docker:/auth:ro" -v "$RUNNER_TEMP/oci:/oci:ro" $SKOPEO_IMAGE "\$@"
+          EOF
+          chmod +x "$RUNNER_TEMP/bin/skopeo"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bin/skopeo" --version
+
+      # Every run proves the push keeps the digest, on a throwaway local registry: only a tag run pushes
+      # to GHCR, so without this a push failure is first seen on a release.
+      - name: Prove the push keeps the digest
+        env:
+          DIGEST: ${{ steps.soci.outputs.digest }}
+        run: |
+          set -euo pipefail
+          docker run -d --name proof-registry -p 127.0.0.1:5000:5000 \
+            registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373 >/dev/null
+          trap 'docker rm -f proof-registry >/dev/null' EXIT
+          for _ in $(seq 30); do curl -fs http://127.0.0.1:5000/v2/ >/dev/null && break; sleep 1; done
+          skopeo copy --all --preserve-digests --dest-tls-verify=false \
+            oci-archive:/oci/soci.tar docker://127.0.0.1:5000/proof:candidate
+          pushed="sha256:$(skopeo inspect --raw --tls-verify=false docker://127.0.0.1:5000/proof:candidate | sha256sum | cut -d' ' -f1)"
+          [ "$pushed" = "$DIGEST" ] || { echo "::error::the copy changed the digest: $pushed, not $DIGEST"; exit 1; }
+          echo "the copy keeps $DIGEST"
+
+      - name: Log in to GHCR
+        if: steps.meta.outputs.push == 'true'
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The only push of the version tag: the checked layout, byte for byte (the digest does not change).
+      - name: Push the proved image
+        id: push
+        if: steps.meta.outputs.push == 'true'
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          DIGEST: ${{ steps.soci.outputs.digest }}
+        run: |
+          set -euo pipefail
+          skopeo copy --all --preserve-digests oci-archive:/oci/soci.tar "docker://$IMAGE:$VERSION"
+          pushed="sha256:$(skopeo inspect --raw "docker://$IMAGE:$VERSION" | sha256sum | cut -d' ' -f1)"
+          [ "$pushed" = "$DIGEST" ] || { echo "::error::the registry holds $pushed for the tag, not $DIGEST"; exit 1; }
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      # Store-agnostic: pull the pushed digest and compare its layers (uncompressed digests) and its
+      # runtime configuration with the image the proof ran on.
+      - name: Check the pushed image is the proved image
+        if: steps.meta.outputs.push == 'true'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          docker pull --platform linux/arm64 "$IMAGE@$DIGEST" >/dev/null
+          fmt='{{json .RootFS.Layers}} {{json .Config}}'
+          proved="$(docker image inspect dispatch-box:candidate --format "$fmt" | sha256sum)"
+          pushed="$(docker image inspect "$IMAGE@$DIGEST" --format "$fmt" | sha256sum)"
+          echo "proved $proved"
+          echo "pushed $pushed"
+          [ "$proved" = "$pushed" ] || { echo "::error::the pushed image is not the image the proof ran on"; exit 1; }
+
+      - name: Attest build provenance
+        if: steps.meta.outputs.push == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Print the digest
+        if: steps.meta.outputs.push == 'true'
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+          SOCI: ${{ steps.soci.outputs.soci }}
+        run: |
+          echo "image   $IMAGE:$VERSION"
+          echo "digest  $DIGEST"
+          echo "lazy-loading index  $SOCI"
+          {
+            echo '### Released image'
+            echo "- image: \`$IMAGE:$VERSION\`"
+            echo "- digest: \`$DIGEST\`"
+            echo "- lazy-loading index: \`$SOCI\`"
+            echo "- verify: \`gh attestation verify oci://$IMAGE@$DIGEST --repo $GITHUB_REPOSITORY --signer-workflow $GITHUB_REPOSITORY/.github/workflows/hosted-image.yml --source-ref $GITHUB_REF\`"
+          } >> "$GITHUB_STEP_SUMMARY"

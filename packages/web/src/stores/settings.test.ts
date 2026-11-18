@@ -12,6 +12,17 @@ describe('dictation settings (same on every device)', () => {
     expect(s.sttProvider).toBe('groq');
     expect(s.sttModel).toBe('whisper-large-v3-turbo');
     expect(s.sttSecretName).toBe('');
+    expect(s.sttCleanFillers).toBe(true);
+  });
+
+  it('the filler switch updates the store, caches in localStorage, and saves to the daemon', () => {
+    const put = vi.spyOn(api, 'putDictationSettings').mockResolvedValue({ saved: true });
+    useSettings.getState().setSttCleanFillers(false);
+    expect(useSettings.getState().sttCleanFillers).toBe(false);
+    expect(JSON.parse(localStorage.getItem('dispatch:sttCleanFillers')!)).toBe(false);
+    useSettings.getState().setSttCleanFillers(true);
+    expect(useSettings.getState().sttCleanFillers).toBe(true);
+    expect(put.mock.calls).toEqual([[{ cleanFillers: false }], [{ cleanFillers: true }]]);
   });
 
   it('setters update the store, cache in localStorage, and save to the daemon', () => {
@@ -49,6 +60,23 @@ describe('loadSharedSettings', () => {
     expect(JSON.parse(localStorage.getItem('dispatch:coordinatorName')!)).toBe('Mission Control');
     expect(putD).not.toHaveBeenCalled();
     expect(putC).not.toHaveBeenCalled();
+  });
+
+  it('takes the filler switch from the daemon: off when stored false', async () => {
+    useSettings.setState({ sttCleanFillers: true });
+    vi.spyOn(api, 'getDictationSettings').mockResolvedValue({ provider: 'assemblyai', model: 'universal-3-pro', cleanFillers: false, saved: true });
+    vi.spyOn(api, 'getCoordinatorSettings').mockResolvedValue({ saved: false });
+    await loadSharedSettings();
+    expect(useSettings.getState().sttCleanFillers).toBe(false);
+    expect(JSON.parse(localStorage.getItem('dispatch:sttCleanFillers')!)).toBe(false);
+  });
+
+  it('a daemon with settings but no filler value means on', async () => {
+    useSettings.setState({ sttCleanFillers: false });
+    vi.spyOn(api, 'getDictationSettings').mockResolvedValue({ provider: 'assemblyai', model: 'universal-3-pro', saved: true });
+    vi.spyOn(api, 'getCoordinatorSettings').mockResolvedValue({ saved: false });
+    await loadSharedSettings();
+    expect(useSettings.getState().sttCleanFillers).toBe(true);
   });
 
   it("uploads this device's old values once when the daemon has none", async () => {

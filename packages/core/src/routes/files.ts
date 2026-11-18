@@ -15,6 +15,9 @@ import { openInside } from '../files/confinedOpen.js';
 import { clientMessage } from '../http/client-message.js';
 import { GIT_NO_FSMONITOR } from '../docs/git.js';
 import { defaultSecretRoots, holdsSecret, isSecretPath, SECRET_PATH_ERROR, type SecretRoots } from '../files/secret-paths.js';
+import { PATH_REFUSALS, realAsFarAsItExists, type FileUse, type PathPolicy } from '../files/path-policy.js';
+import { pathPolicyFor } from '../files/path-policy-default.js';
+import { agentCopyFrom, agentMkdir, agentRemove, agentRename, agentWriteFile } from '../privsep/agent-fs.js';
 
 /** Upper bound on a single reveal: no native file manager can usefully select more, and this is
  *  the only route that shells out — an unbounded argv is not worth the risk. */
@@ -156,10 +159,28 @@ export const uploadStorage: multer.StorageEngine = {
   },
 };
 
-export function createFilesRouter(db: Database.Database, opts: { secretRoots?: SecretRoots } = {}): Router {
+export function createFilesRouter(db: Database.Database, opts: { secretRoots?: SecretRoots; policy?: PathPolicy } = {}): Router {
   const router = policyRouter({ mergeParams: true });
   // The credential deny-list of the read route (files/secret-paths.ts). A test gives its own roots.
   const secretRoots = opts.secretRoots ?? defaultSecretRoots(platform.dataDir());
+  // Which folders a path may be in at all (files/path-policy.ts): never the system's own trees; on a
+  // hosted box only the person's folders; for a business person only the project, without the folders
+  // that configure an agent program. EVERY route below asks it for every path it touches.
+  const policy = opts.policy ?? pathPolicyFor(db);
+  /** Sends the refusal and answers true when `resolved` may not be touched. */
+  const refused = (res: import('express').Response, session: { workingDir: string }, resolved: string, use: FileUse, self = false): boolean => {
+    const why = policy.problem(resolved, { project: session.workingDir, use, self });
+    if (!why) return false;
+    res.status(403).json({ error: PATH_REFUSALS[why], code: 'path_refused', reason: why });
+    return true;
+  };
+  /** The same for a file that is open, or that a write would replace: a file with more than one name (hosted). */
+  const refusedOpen = (res: import('express').Response, st: fs.Stats, realPath: string): boolean => {
+    const why = policy.openedProblem(st, realPath);
+    if (!why) return false;
+    res.status(403).json({ error: PATH_REFUSALS[why], code: 'path_refused', reason: why });
+    return true;
+  };
   // Recreate the temp dir on EVERY request, not once at startup (multer's `dest`
   // shorthand): macOS purges /tmp entries idle for ~3 days, so on a long-running
   // daemon the dir vanishes mid-uptime and every upload then fails with ENOENT
@@ -231,9 +252,11 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
     const resolved = resolveSafe(session.workingDir, requestedPath);
     if (!resolved) return res.status(403).json({ error: 'Path traversal not allowed' });
     if (!insideRealRoot(session.workingDir, resolved)) return res.status(403).json({ error: 'Path traversal not allowed' });
+    if (refused(res, session, resolved, 'read')) return;
 
     try {
-      const entries = fs.readdirSync(resolved, { withFileTypes: true });
+      const entries = fs.readdirSync(resolved, { withFileTypes: true })
+        .filter((entry) => !policy.hiddenInListing(path.relative(session.workingDir, path.join(resolved, entry.name))));
       const result = entries.map(entry => {
         const abs = path.join(resolved, entry.name);
         const isDirectory = entry.isDirectory();
@@ -263,15 +286,18 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
   // cannot blow the cap. Outside git it falls back to a bounded fs walk.
   router.get('/flat', async (req, res) => {
     const session = (req as any).session;
+    if (refused(res, session, path.resolve(session.workingDir), 'read')) return;
+    const shown = (list: string[]): string[] => list.filter((p) => !policy.hiddenInListing(p));
     try {
-      const files = await gitLsFiles(session.workingDir, ['--cached', '--others', '--exclude-standard']);
+      const listed = await gitLsFiles(session.workingDir, ['--cached', '--others', '--exclude-standard']);
+      const files = listed ? shown(listed) : null;
       if (files) {
         const ignored = await gitLsFiles(session.workingDir, ['--others', '--ignored', '--exclude-standard']) ?? [];
         const seen = new Set(files);
         const gitCache = new Map<string, boolean>();
         let truncated = files.length > FLAT_CAP;
         for (const p of ignored) {
-          if (seen.has(p) || hasSkippedSegment(p)) continue;
+          if (seen.has(p) || hasSkippedSegment(p) || policy.hiddenInListing(p)) continue;
           if (underNestedGit(session.workingDir, p, gitCache)) continue;
           // Stop at the cap: past it every path is sliced off anyway, and underNestedGit's
           // synchronous stats would only keep blocking the event loop.
@@ -296,7 +322,7 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
         }
       };
       walk(path.resolve(session.workingDir));
-      res.json({ files: out, truncated });
+      res.json({ files: shown(out), truncated });
     } catch (err: any) {
       res.status(400).json({ error: clientMessage(err) });
     }
@@ -317,6 +343,9 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
     if (named && !insideRealRoot(session.workingDir, resolved)) {
       return res.status(403).json({ error: 'Path traversal not allowed' });
     }
+    // The person's folders only (files/path-policy.ts): never /proc and the like; on a hosted box the
+    // "View file" way out of the project ends at the home folder (developer) or does not exist (business).
+    if (refused(res, session, resolved, 'read')) return;
 
     // Credentials are never served, to any caller (the owner too). The check is on the REAL path, so a symbolic link
     // cannot go around it; the path as written is checked as well, so a name in a secret folder gets the same answer
@@ -356,6 +385,7 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
         // has a text that the check above does not know. No byte of such a file is read.
         if (await holdsSecret(real ?? resolved, secretRoots, fh)) return res.status(403).json({ error: SECRET_PATH_ERROR });
         if (!st.isFile()) return res.status(400).json({ error: 'Not a regular file' });
+        if (refusedOpen(res, st, real ?? resolved)) return;
         // ?sniff=1 (file chips): read the first 8 KB only and say whether the file is binary (it has a NUL byte).
         // The chip downloads such a file instead of opening it as text. No content comes back.
         if (req.query.sniff === '1') {
@@ -416,6 +446,7 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
     if (!mime) return res.status(415).json({ error: 'Unsupported image type' });
     if (!insideRealRoot(session.workingDir, resolved)) return res.status(403).json({ error: 'Path traversal not allowed' });
     if (await namesSecret(resolved)) return res.status(403).json({ error: SECRET_PATH_ERROR });
+    if (refused(res, session, resolved, 'read')) return;
 
     try {
       // The bytes come from the descriptor openInside checked, never from a second look at the path.
@@ -424,6 +455,7 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
       if (o.kind === 'missing') return res.status(404).json({ error: 'File not found' });
       if (!o.st.isFile()) { await o.fh.close().catch(() => {}); return res.status(404).json({ error: 'Not a file' }); }
       if (await holdsSecret(resolved, secretRoots, o.fh).catch(() => true)) { await o.fh.close().catch(() => {}); return res.status(403).json({ error: SECRET_PATH_ERROR }); }
+      if (refusedOpen(res, o.st, resolved)) { await o.fh.close().catch(() => {}); return; }
       res.setHeader('Content-Type', mime);
       res.setHeader('Content-Length', String(o.st.size));
       // Hardening: stop MIME sniffing, and sandbox the response so a (theoretically)
@@ -452,6 +484,7 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
     if (!resolved) return res.status(403).json({ error: 'Path traversal not allowed' });
     if (!insideRealRoot(session.workingDir, resolved)) return res.status(403).json({ error: 'Path traversal not allowed' });
     if (await namesSecret(resolved)) return res.status(403).json({ error: SECRET_PATH_ERROR });
+    if (refused(res, session, resolved, 'read')) return;
 
     try {
       // The bytes come from the descriptor openInside checked, never from a second look at the path.
@@ -460,6 +493,7 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
       if (o.kind === 'missing') return res.status(404).json({ error: 'File not found' });
       if (!o.st.isFile()) { await o.fh.close().catch(() => {}); return res.status(404).json({ error: 'Not a file' }); }
       if (await holdsSecret(resolved, secretRoots, o.fh).catch(() => true)) { await o.fh.close().catch(() => {}); return res.status(403).json({ error: SECRET_PATH_ERROR }); }
+      if (refusedOpen(res, o.st, resolved)) { await o.fh.close().catch(() => {}); return; }
 
       const name = path.basename(resolved);
       // Sanitize for the header: drop anything outside printable ASCII (this also kills CR/LF
@@ -469,6 +503,8 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
       res.setHeader('Content-Type', 'application/octet-stream');
       res.setHeader('Content-Length', String(o.st.size));
       res.setHeader('X-Content-Type-Options', 'nosniff');
+      // A download is never a page: if a browser shows it anyway, it runs nothing and belongs to no origin.
+      res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
       res.setHeader(
         'Content-Disposition',
         `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(name)}`,
@@ -512,6 +548,7 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
     for (const p of paths) {
       const abs = typeof p === 'string' ? resolveSafe(session.workingDir, p) : null;
       if (!abs) return res.status(403).json({ error: 'Path traversal not allowed' });
+      if (refused(res, session, abs, 'read')) return;
       resolved.push(abs);
     }
 
@@ -532,9 +569,16 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
     const resolved = resolveSafe(session.workingDir, requestedPath);
     if (!resolved) return res.status(403).json({ error: 'Path traversal not allowed' });
     if (!insideRealRoot(session.workingDir, resolved)) return res.status(403).json({ error: 'Path traversal not allowed' });
+    if (refused(res, session, resolved, 'write')) return;
+    // Credentials are never written through a file route either: a path in a secret folder, or a file
+    // that IS a secret under another name (a hard link), is refused like a read of it.
+    if (isSecretPath(resolved, secretRoots) || isSecretPath(realAsFarAsItExists(resolved), secretRoots)) return res.status(403).json({ error: SECRET_PATH_ERROR });
 
     try {
-      fs.writeFileSync(resolved, req.body.content);
+      let existing: fs.Stats | null = null;
+      try { existing = fs.statSync(resolved); } catch { /* a new file */ }
+      if (existing && refusedOpen(res, existing, realAsFarAsItExists(resolved))) return;
+      agentWriteFile(resolved, req.body.content);
       res.json({ ok: true, path: requestedPath });
     } catch (err: any) {
       res.status(400).json({ error: clientMessage(err) });
@@ -563,7 +607,11 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
       try {
         const dest = path.join(resolved, req.file.originalname);
         if (!dest.startsWith(session.workingDir) || !insideRealRoot(session.workingDir, dest)) { unlinkQuiet(tmpFile); return res.status(403).json({ error: 'Path traversal not allowed' }); }
-        fs.copyFileSync(req.file.path, dest);
+        if (refused(res, session, dest, 'write')) { unlinkQuiet(tmpFile); return; }
+        let existing: fs.Stats | null = null;
+        try { existing = fs.statSync(dest); } catch { /* a new file */ }
+        if (existing && refusedOpen(res, existing, realAsFarAsItExists(dest))) { unlinkQuiet(tmpFile); return; }
+        agentCopyFrom(req.file.path, dest);
         fs.unlinkSync(req.file.path);
         res.json({ ok: true, path: path.relative(session.workingDir, dest) });
       } catch (err: any) {
@@ -590,7 +638,8 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
       try {
         const inboxDir = path.join(session.workingDir, '.dispatch', 'inbox');
         if (!insideRealRoot(session.workingDir, inboxDir)) { unlinkQuiet(req.file.path); return res.status(403).json({ error: 'Path traversal not allowed' }); }
-        fs.mkdirSync(inboxDir, { recursive: true });
+        if (refused(res, session, inboxDir, 'write')) { unlinkQuiet(req.file.path); return; }
+        agentMkdir(inboxDir);
 
         const safeFilename = sanitizeFilename(req.file.originalname);
         const suffix = Math.random().toString(36).slice(2, 10) || 'upload';
@@ -598,7 +647,7 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
         const absolutePath = path.join(inboxDir, filename);
         const relativePath = path.relative(session.workingDir, absolutePath);
 
-        fs.copyFileSync(req.file.path, absolutePath);
+        agentCopyFrom(req.file.path, absolutePath);
         fs.unlinkSync(req.file.path);
         res.json({ ok: true, path: relativePath, absolutePath });
       } catch (copyErr: any) {
@@ -620,9 +669,10 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
     if (!resolved) return res.status(403).json({ error: 'Path traversal not allowed' });
 
     if (!insideRealRoot(session.workingDir, resolved)) return res.status(403).json({ error: 'Path traversal not allowed' });
+    if (refused(res, session, resolved, 'write')) return;
 
     try {
-      fs.mkdirSync(resolved, { recursive: true });
+      agentMkdir(resolved);
       res.json({ ok: true, path: requestedPath });
     } catch (err: any) {
       res.status(400).json({ error: clientMessage(err) });
@@ -645,9 +695,11 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
     if (!parentInsideRealRoot(session.workingDir, from) || !parentInsideRealRoot(session.workingDir, to)) {
       return res.status(403).json({ error: 'Path traversal not allowed' });
     }
+    // The item itself may be a link (rename acts on the link, not on its target).
+    if (refused(res, session, from, 'write', true) || refused(res, session, to, 'write', true)) return;
 
     try {
-      fs.renameSync(from, to);
+      agentRename(from, to);
       res.json({ ok: true, path: path.relative(session.workingDir, to) });
     } catch (err: any) {
       res.status(400).json({ error: clientMessage(err) });
@@ -664,9 +716,10 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
     if (!resolved) return res.status(403).json({ error: 'Path traversal not allowed' });
     if (isRoot(session.workingDir, resolved)) return res.status(400).json({ error: 'Cannot delete the project folder' });
     if (!parentInsideRealRoot(session.workingDir, resolved)) return res.status(403).json({ error: 'Path traversal not allowed' });
+    if (refused(res, session, resolved, 'write', true)) return;
 
     try {
-      fs.rmSync(resolved, { recursive: true });
+      agentRemove(resolved, { recursive: true });
       res.json({ ok: true });
     } catch (err: any) {
       res.status(400).json({ error: clientMessage(err) });

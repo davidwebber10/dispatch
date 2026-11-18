@@ -13,10 +13,10 @@ const SURFACES = ['canvas', 'base', 'pane', 'elevated', 'modal'] as const;
 const NEEDS: Array<[TokenName, number]> = [['text-primary', 4.5], ['text-secondary', 4.5], ['text-tertiary', 3]];
 
 describe('theme registry', () => {
-  it('has the twelve themes, unique ids, light ones before dark ones', () => {
+  it('has the fourteen themes, unique ids, light ones before dark ones', () => {
     expect(THEMES.map((t) => t.name)).toEqual([
-      'Dispatch Light', 'GitHub Light', 'Solarized Light', 'Catppuccin Latte',
-      'Dispatch Dark', 'GitHub Dark', 'One Dark', 'Dracula', 'Nord', 'Solarized Dark', 'Catppuccin Mocha', 'Tokyo Night',
+      'Dispatch Light', 'GitHub Light', 'Solarized Light', 'Catppuccin Latte', 'POLYWOOD OS Light',
+      'Dispatch Dark', 'GitHub Dark', 'One Dark', 'Dracula', 'Nord', 'Solarized Dark', 'Catppuccin Mocha', 'Tokyo Night', 'POLYWOOD OS Dark',
     ]);
     expect(new Set(THEMES.map((t) => t.id)).size).toBe(THEMES.length);
     const kinds = THEMES.map((t) => t.kind);

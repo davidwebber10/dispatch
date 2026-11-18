@@ -5,6 +5,8 @@ import * as terminalsDb from '../db/terminals.js';
 import { codexRolloutTailStatus } from './codex-sessions.js';
 import { transcriptTailStatus } from './cc-sessions.js';
 import type { ThreadConfigStore } from './thread-config.js';
+import * as pendingQuestionsDb from '../db/pending-questions.js';
+import { resumeChatsAfterRestart } from '../os/hosted-mode.js';
 
 type IStructuredManager = import('../structured/manager.js').IStructuredManager;
 
@@ -16,10 +18,23 @@ const KICKSTART_CONTINUE_PROMPT =
   '⚙️ Dispatch restarted and interrupted you mid-task — re-read your last steps above and continue your ' +
   'mission from where you left off. If you had already finished, briefly say so instead of redoing work.';
 
-/** The boot kickstart resumes only structured overseer threads: the coordinator and its typed agents. */
+/** The re-prompt for an ordinary chat thread on a hosted box (os/hosted-mode.ts resumeChatsAfterRestart). */
+export const CHAT_CONTINUE_PROMPT =
+  'Dispatch restarted while you were working. Continue from where you left off. If you had already finished, say so in one line instead of redoing work.';
+
+/**
+ * The boot kickstart resumes structured overseer threads (the coordinator and its typed agents) and,
+ * on a hosted box (or DISPATCH_RESUME_CHATS=1), every ordinary structured chat thread too: the person
+ * never sees the machine, so a restart must not end their thread's work. Headless runs never.
+ */
 function isKickstartCandidate(config: Record<string, any>): boolean {
-  return config.transport === 'structured' && (config.role === 'coordinator' || config.role === 'agent');
+  if (config.transport !== 'structured') return false;
+  if (config.role === 'coordinator' || config.role === 'agent') return true;
+  return !config.role && !config.runner && resumeChatsAfterRestart();
 }
+
+/** The harnesses with a resumable record of a turn (Claude transcript, Codex rollout). */
+const RESUMABLE = new Set(['claude-code', 'codex']);
 
 /** What BootRecovery needs. Every field is required. */
 export interface BootRecoveryDeps {
@@ -127,7 +142,7 @@ export class BootRecovery {
 
       // (d) Kick (revive + re-prompt) and stamp so a later restart won't double-kick.
       try {
-        this.sendStructuredMessage(row.id, KICKSTART_CONTINUE_PROMPT);
+        this.sendStructuredMessage(row.id, config.role ? KICKSTART_CONTINUE_PROMPT : CHAT_CONTINUE_PROMPT);
         // Only the stamp: the send above started the thread, and the start saved keys (the
         // resolved model, the tools list) that the copy read before the loop does not have.
         this.configStore.patch(row.id, { kickedAt: new Date().toISOString() });
@@ -156,8 +171,27 @@ export class BootRecovery {
         try { return isKickstartCandidate(JSON.parse(row.config || '{}')); } catch { return false; }
       })
       .map((row) => row.id);
+    // Hosted: a thread waiting on a GATED TOOL (not a question: W2-C keeps those) loses its pending
+    // with the process. It is resumed like a working one, so the CLI asks for the tool again.
+    // Grok/OpenCode cannot resume: they are stamped too, for the "interrupted, press Continue" card.
+    const acp: string[] = [];
+    if (resumeChatsAfterRestart()) {
+      const rows = this.db.prepare(
+        "SELECT * FROM terminals WHERE archived_at IS NULL AND status IN ('working','needs_input')",
+      ).all() as terminalsDb.TerminalRow[];
+      for (const row of rows) {
+        let cfg: Record<string, any> = {};
+        try { cfg = JSON.parse(row.config || '{}'); } catch { continue; }
+        if (!isKickstartCandidate(cfg)) continue;
+        if (!RESUMABLE.has(row.type)) { acp.push(row.id); continue; }
+        if (row.status === 'needs_input' && !pendingQuestionsDb.get(this.db, row.id) && !interrupted.includes(row.id)) interrupted.push(row.id);
+      }
+    }
     stopAll();
     const interruptedAt = new Date().toISOString();
+    for (const id of acp) {
+      try { this.configStore.patch(id, { interruptedAt }); } catch { /* best effort */ }
+    }
     for (const id of interrupted) {
       StatusService.restoreInterruptedTurn(this.db, id); // W3-C: StatusService is the one writer of terminals.status
       // A patch of the one key: the kill's own exit handling may have written config (e.g. a turn outcome).

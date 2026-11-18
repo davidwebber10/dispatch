@@ -35,6 +35,8 @@ function initOf(route: Route): NavInit {
   }
   // The desktop's other addresses open their bottom tab at its root (a settings section is pushed on top).
   if (route.view === 'settings') return { level: 0, bottomTab: 'settings', settingsSection: route.section };
+  // The desktop's Automations list is the phone's Agents tab.
+  if (route.view === 'automations') return { level: 0, bottomTab: 'agents' };
   return { level: 0, bottomTab: route.view };
 }
 const readInit = (): NavInit => initOf(parseRoute(location.pathname, BASE));
@@ -242,7 +244,7 @@ export function useMobileNavigation() {
       // does. This was a 50 ms timer; a walk that took longer left the section on top of the thread.
       if (deep) pendingSpot.current = spot; else restoreSpot(spot);
     } else {
-      showTab(route.view);
+      showTab(route.view === 'automations' ? 'agents' : route.view);
     }
   };
   const onPop = (state: unknown) => {

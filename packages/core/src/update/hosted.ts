@@ -1,3 +1,4 @@
+import { osBoxToken } from '../platform/box-secrets.js';
 /**
  * Updating a HOSTED box.
  *
@@ -40,7 +41,8 @@ export interface HostedTarget {
  */
 export function hostedTarget(env: NodeJS.ProcessEnv = process.env): HostedTarget | null {
   const baseUrl = env.OS_BASE_URL?.replace(/\/+$/, '');
-  const boxToken = env.OS_BOX_TOKEN;
+  // Through the one reader of the box secrets: the daemon removes them from process.env at start (platform/box-secrets.ts).
+  const boxToken = osBoxToken(env);
   if (!baseUrl || !boxToken) return null;
   return { baseUrl, boxToken };
 }
@@ -152,4 +154,24 @@ export async function applyHostedUpdate(
   } catch (err: any) {
     return { ok: false, reason: `could not reach OS: ${err?.message ?? String(err)}` };
   }
+}
+
+
+let cache: { at: number; version: string; state: HostedUpdateState } | null = null;
+
+/**
+ * The hosted answer for GET /api/state/update, asked of OS at most once per `ttlMs` (the page reads
+ * that route often). A failed ask is cached for a shorter time. Never throws.
+ */
+export async function cachedHostedUpdate(target: HostedTarget, currentVersion: string, opts: HostedFetchOptions & { ttlMs?: number } = {}): Promise<HostedUpdateState> {
+  const ttl = opts.ttlMs ?? 5 * 60_000;
+  if (cache && cache.version === currentVersion && Date.now() - cache.at < (cache.state.error ? Math.min(ttl, 30_000) : ttl)) return cache.state;
+  const state = await checkHostedUpdate(target, currentVersion, opts);
+  cache = { at: Date.now(), version: currentVersion, state };
+  return state;
+}
+
+/** Test seam / after an explicit check: forget the cached answer. */
+export function resetHostedUpdateCache(state?: { version: string; state: HostedUpdateState }): void {
+  cache = state ? { at: Date.now(), ...state } : null;
 }

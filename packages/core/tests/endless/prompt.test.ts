@@ -20,6 +20,11 @@ describe('fixed texts', () => {
     expect(flat).toContain("the ledger_ tools read, add, withdraw and retitle a project's open items");
     expect(flat).not.toContain('steers any thread');
   });
+  // Owner, 2026-11-13: Chat links each thread it names; a tap opens that thread in the app.
+  it('tells Chat to link a thread it names by its app address', () => {
+    const flat = ENDLESS_SYSTEM_PROMPT.replace(/\s+/g, ' ');
+    expect(flat).toContain('[label](/p/<project id>/t/<thread id>)');
+  });
   it('holds no date or state', () => {
     expect(ENDLESS_SYSTEM_PROMPT).not.toMatch(/\d{4}-\d{2}-\d{2}/);
     expect(systemPromptWith('  ')).toBe(ENDLESS_SYSTEM_PROMPT);

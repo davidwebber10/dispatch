@@ -83,6 +83,7 @@ export function resolveTranscriptPath(
   return undefined;
 }
 
+/** A plain file, not a link to one: the agent can plant a link in its own transcript store. */
 function exists(p: string): boolean {
-  try { return fs.statSync(p).isFile(); } catch { return false; }
+  try { return fs.lstatSync(p).isFile(); } catch { return false; }
 }

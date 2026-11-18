@@ -655,6 +655,22 @@ describe('replay from the message journal', () => {
     expect(JSON.stringify(sent)).not.toContain('content_block_delta');
   });
 
+  it('`window=n` sets the first window alone: the newest n items, with hasMore', () => {
+    const t = thread();
+    t.turn(1); t.turn(2); t.turn(3);
+    const sent = connect(t, JOURNAL_REQ('&window=3'));
+    expect(sent[0]).toMatchObject({ type: 'journal', reset: true, firstSeq: 1, lastSeq: 12, hasMore: true });
+    expect(sent[0].items.map((i: any) => i.seq)).toEqual([10, 11, 12]);
+  });
+
+  it('`window` does not bound the ring replay of a thread the journal cannot serve: `tail` does', () => {
+    const t = thread();
+    t.turn(1);
+    t.manager.journal = { replay: () => null }; // the journal has nothing for the thread: the ring answers
+    const sent = connect(t, { url: '/api/terminals/t1/structured-ws?tail=200&journal=1&window=2' } as any);
+    expect(sent).toEqual(t.ring.snapshot());
+  });
+
   it('an older client (no journal parameter) gets the ring as before, and its finished events carry seq', () => {
     const t = thread();
     t.turn(1);
@@ -815,5 +831,35 @@ describe('replay from the message journal', () => {
     console.log(`[w3-d] reconnect of a 50-turn thread: ring tail ${ringReplay} bytes, journal window ${journalReplay} bytes, resume with the cursor ${resume} bytes`);
     expect(resume).toBeLessThan(ringReplay / 10);
     expect(resume).toBeLessThan(journalReplay / 10);
+  });
+});
+
+// ---- The Codex resume backfill, live, for a client whose history REST owns ----
+// The backfill after thread/resume is marked `journal_replayed` by the recorder. A REST-owned client (no
+// journal frame) reads that history over REST, so the backfill must not reach it live as well (every turn
+// would show twice). A thread with no transcript is not REST-owned, and its backfill still arrives.
+describe('the resume backfill, live', () => {
+  const liveManager = () => {
+    const em = new EventEmitter();
+    const m = { getEvents: () => [], getEventsTail: () => [], getPending: () => null, on: em.on.bind(em), off: em.off.bind(em) } as any;
+    return { m, emit: (e: unknown) => em.emit('event', 't1', e) };
+  };
+  const BACKFILL = { type: 'user', message: { role: 'user', content: 'earlier question' }, journal_replayed: true };
+  const LIVE = { type: 'assistant', message: { content: [{ type: 'text', text: 'new answer' }] } };
+
+  it('a REST-owned client gets no replayed backfill, but every live event', () => {
+    const { ws, sent } = fakeWs();
+    const { m, emit } = liveManager();
+    handleStructuredConnection(ws, REQ, m, undefined, () => true);
+    emit(BACKFILL); emit(LIVE);
+    expect(sent).toEqual([{ type: 'system', subtype: 'inactive' }, LIVE]);
+  });
+
+  it('a Codex thread whose transcript is empty (not REST-owned) still gets the backfill: it is its only history', () => {
+    const { ws, sent } = fakeWs();
+    const { m, emit } = liveManager();
+    handleStructuredConnection(ws, REQ, m, undefined, () => false);
+    emit(BACKFILL); emit(LIVE);
+    expect(sent.filter((e) => e.type !== 'system')).toEqual([BACKFILL, LIVE]);
   });
 });

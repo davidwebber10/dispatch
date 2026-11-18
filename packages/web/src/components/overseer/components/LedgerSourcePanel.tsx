@@ -171,7 +171,7 @@ function PanelBody({ projectId, seq, mobile }: { projectId: string; seq: number;
         )}
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowWrap: 'anywhere', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
         {load.status === 'loading' && <div style={{ ...note, color: 'var(--tt)' }}>Loading the section…</div>}
         {load.status === 'error' && (
           <div role="alert" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: fontVar(12), color: 'var(--red)' }}>

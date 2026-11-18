@@ -47,6 +47,7 @@ const DATA_FILES = [
 const DATA_DIRS = [
   'keys',           // thread, plugin and shell keys
   'codex-accounts', // one CODEX_HOME for each saved Codex login, with its auth.json
+  'inbox-secrets',  // the values the owner sent through Inbox → Send a secret (inbox/secret-store.ts)
 ];
 /** SQLite files, at any depth in the data dir. */
 const DB_FILE = /\.db(-wal|-shm|-journal)?$/;
@@ -54,6 +55,7 @@ const DB_FILE = /\.db(-wal|-shm|-journal)?$/;
 /** Folders in the home folder: everything in them is denied. */
 const HOME_DIRS = [
   '.ssh', '.aws', '.gnupg', '.config/gcloud', '.cloudflared', '.kube', 'library/keychains',
+  '.azure', '.password-store', '.zsh_sessions',
 ];
 /** Single files in the home folder. */
 const HOME_FILES = [
@@ -62,6 +64,10 @@ const HOME_FILES = [
   '.codex/auth.json', '.grok/auth.json', '.local/share/opencode/auth.json',
   '.config/gh/hosts.yml',
   '.git-credentials', '.config/git/credentials', // the two places of git's `store` credential helper
+  '.pgpass', '.my.cnf', // database passwords
+  // What was typed into a shell or a REPL: commands with tokens in them, pasted secrets.
+  '.bash_history', '.zsh_history', '.zhistory', '.sh_history', '.history', '.local/share/fish/fish_history',
+  '.python_history', '.node_repl_history', '.psql_history', '.mysql_history', '.sqlite_history', '.rediscli_history', '.lesshst', '.viminfo',
 ];
 
 /** The macOS data volume. A path under it is a second name of the same path without it. */

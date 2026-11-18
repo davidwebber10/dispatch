@@ -62,10 +62,11 @@ describe('pickCodexTitleModel', () => {
     fs.writeFileSync(p, JSON.stringify({ models }));
     return p;
   };
-  it('prefers 6.1 Terra when Codex lists it, else 5.6 Terra, else the last preference', () => {
+  it('prefers 6.1 Terra when Codex lists it, else 5.6 Terra, else 6 Luna (also when the list cannot be read)', () => {
     expect(pickCodexTitleModel(cache([{ slug: 'gpt-5.6-terra' }, { slug: 'gpt-6.1-terra', visibility: 'list' }]))).toBe('gpt-6.1-terra');
     expect(pickCodexTitleModel(cache([{ slug: 'gpt-6.1-terra', visibility: 'hide' }, { slug: 'gpt-5.6-terra' }]))).toBe('gpt-5.6-terra');
-    expect(pickCodexTitleModel('/nope/models_cache.json')).toBe('gpt-5.6-terra');
+    expect(pickCodexTitleModel(cache([{ slug: 'gpt-6.1-terra', visibility: 'hide' }, { slug: 'gpt-6-luna' }]))).toBe('gpt-6-luna');
+    expect(pickCodexTitleModel('/nope/models_cache.json')).toBe('gpt-6-luna');
   });
 });
 

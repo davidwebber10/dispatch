@@ -32,4 +32,56 @@ describe('TranscriptionService', () => {
     const svc = new TranscriptionService(secrets(null), reg());
     await expect(svc.transcribe({ provider: 'groq', model: 'whisper-large-v3-turbo', secretName: 'X', audio: Buffer.from('a'), mimeType: 'audio/webm' })).rejects.toThrow(/Secret not found/);
   });
+
+  describe('filler cleanup', () => {
+    const TEXT = 'So, um, I think we should, uh, go.';
+    const CLEAN = 'So, I think we should, go.';
+    const run = (text: string, language?: string, reported?: string, cleanFillers?: boolean) => {
+      const registry = reg({
+        groq: { id: 'groq', label: 'Groq', models: ['m'], status: 'ready',
+          adapter: { id: 'groq', transcribe: vi.fn().mockResolvedValue({ text, language: reported, raw: { text } }) } },
+      });
+      return new TranscriptionService(secrets('k'), registry)
+        .transcribe({ provider: 'groq', model: 'm', secretName: 'S', audio: Buffer.from('a'), mimeType: 'audio/webm', language, cleanFillers });
+    };
+
+    it('removes fillers when the provider reports English, and keeps the provider response in raw', async () => {
+      const out = await run(TEXT, undefined, 'en');
+      expect(out.text).toBe(CLEAN);
+      expect(out.raw).toEqual({ text: TEXT });
+    });
+
+    it.each(['en', 'en_us', 'en-GB', 'english', 'eng'])('cleans when the provider reports %s', async (code) => {
+      expect((await run(TEXT, undefined, code)).text).toBe(CLEAN);
+    });
+
+    it('leaves the text alone when no language comes back and none was asked for', async () => {
+      expect((await run(TEXT)).text).toBe(TEXT);
+      expect((await run('Wo ist er? Um fünf Uhr.')).text).toBe('Wo ist er? Um fünf Uhr.');
+    });
+
+    it('cleans when the provider reports nothing but the caller asked for English', async () => {
+      expect((await run(TEXT, 'en')).text).toBe(CLEAN);
+    });
+
+    it('leaves the text alone when the caller asked for another language', async () => {
+      expect((await run('Wo ist er? Um fünf Uhr.', 'de')).text).toBe('Wo ist er? Um fünf Uhr.');
+      expect((await run(TEXT, 'de', 'en')).text).toBe(TEXT);
+    });
+
+    it('passes the provider text through when the switch is off', async () => {
+      const out = await run(TEXT, undefined, 'en', false);
+      expect(out.text).toBe(TEXT);
+    });
+
+    it('cleans when the switch is on, and when it is missing', async () => {
+      expect((await run(TEXT, undefined, 'en', true)).text).toBe(CLEAN);
+      expect((await run(TEXT, undefined, 'en', undefined)).text).toBe(CLEAN);
+    });
+
+    it('leaves the text alone when the provider reports another language', async () => {
+      expect((await run('Wo ist er? Um fünf Uhr.', undefined, 'german')).text).toBe('Wo ist er? Um fünf Uhr.');
+      expect((await run('Wo ist er? Um fünf Uhr.', 'en', 'de')).text).toBe('Wo ist er? Um fünf Uhr.');
+    });
+  });
 });

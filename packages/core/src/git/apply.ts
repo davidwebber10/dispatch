@@ -21,6 +21,7 @@ import { git, gitOrNull, isLockError } from './exec.js';
 import { confine, PathRefused } from './paths.js';
 import { listChanges, isRepo, type Change } from './diff.js';
 import type { SecretRoots } from '../files/secret-paths.js';
+import { agentRemove } from '../privsep/agent-fs.js';
 
 export const MAX_PATHS = 2000;
 const BACKUP_MAX_BYTES = 50 * 1024 * 1024;
@@ -114,7 +115,7 @@ async function unlinkOne(abs: string): Promise<void> {
   const st = await lstatOrNull(abs);
   if (!st) return;
   if (!st.isFile() && !st.isSymbolicLink()) throw new Error('It is not a file. Dispatch removes single files only.');
-  await fs.promises.unlink(abs);
+  agentRemove(abs);
 }
 
 async function discardOne(workDir: string, t: Target): Promise<void> {

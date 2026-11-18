@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 import { existsSync } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { inheritedEnv } from '../platform/inherited-env.js';
+import { childEnv } from '../platform/inherited-env.js';
 
 const exec = promisify(execFile);
 
@@ -161,7 +161,7 @@ export function setProviderProbeEnv(env: Record<string, string>): void {
 async function probeSignedIn(name: ProviderName, bin: string): Promise<boolean | 'unknown' | null> {
   const probe = AUTH_PROBES[name];
   try {
-    const { stdout, stderr } = await exec(bin, probe.args, { timeout: 5000, env: { ...inheritedEnv(), ...probeEnv } });
+    const { stdout, stderr } = await exec(bin, probe.args, { timeout: 5000, env: childEnv(probeEnv) });
     return probe.read(`${stdout}\n${stderr}`);
   } catch (err) {
     // A non-zero exit is how some CLIs say "not signed in", and its message is still on

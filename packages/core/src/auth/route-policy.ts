@@ -4,6 +4,7 @@ import type { KeyPrincipal } from './principals.js';
 import type { CallerFacts, KeyScope } from './key-scope.js';
 import { redactKeys } from './redact-keys.js';
 import { pluginFactsOf, type PluginFacts } from './plugin-facts.js';
+import { businessGuard, isBusinessGuard } from '../profile/business-gate.js';
 export { configurePluginFacts, type PluginFacts } from './plugin-facts.js';
 
 /**
@@ -216,18 +217,33 @@ export function keyRoute(rules: KeyRules): RequestHandler {
 const METHODS = ['get', 'post', 'put', 'patch', 'delete', 'all'] as const;
 
 /**
- * An Express Router whose `get`, `post`, `put`, `patch`, `delete` and `all` prepend `ownerOnly`
- * when the first handler carries no POLICY_TAG. `use` is not a route and is left alone.
+ * The policy handler of a route: its first handler after the profile guard (which `policyRouter`
+ * puts in front of every route). For the completeness tests.
+ */
+export function policyHandlerOf(route: { stack: Array<{ handle: unknown }> }): unknown {
+  return route.stack.find((l) => !isBusinessGuard(l.handle))?.handle;
+}
+
+/**
+ * The ONLY way the daemon makes a router. An Express Router that:
+ *   - matches paths case-sensitively and strictly (no trailing slash), so a route has one spelling
+ *     (http/canonical-path.ts refuses the other spellings before they get here);
+ *   - starts every route with the profile guard (profile/business-gate.ts): the business profile is
+ *     decided by the route that matched, and a route with no row in the table is refused;
+ *   - then prepends `ownerOnly` when the first handler carries no POLICY_TAG (default deny for keys).
+ * `use` is not a route and is left alone. `http/route-registry.ts` refuses to seal an app that holds a
+ * route made any other way.
  */
 export function policyRouter(opts?: RouterOptions): Router {
-  const router = Router(opts);
+  const router = Router({ ...opts, caseSensitive: true, strict: true });
   const raw = router as unknown as Record<string, (...a: unknown[]) => unknown>;
   for (const m of METHODS) {
     const original = raw[m].bind(router);
     raw[m] = (path: unknown, ...handlers: unknown[]) => {
       const first = handlers.flat(Infinity)[0];
-      if (handlers.length > 0 && policyKindOf(first) === undefined) return original(path, ownerOnly, ...handlers);
-      return original(path, ...handlers);
+      const guard = businessGuard(m.toUpperCase());
+      if (handlers.length > 0 && policyKindOf(first) === undefined) return original(path, guard, ownerOnly, ...handlers);
+      return original(path, guard, ...handlers);
     };
   }
   return router;

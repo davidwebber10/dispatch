@@ -47,10 +47,11 @@ export const HARNESSES: Harness[] = [
     id: 'codex', label: 'Codex', type: 'codex', provider: 'codex', modes: ['cli', 'pretty'],
     models: [
       { label: 'Default', model: null },
-      { label: '6 Astra', model: 'gpt-6-astra' },
-      { label: '5.6 Sol', model: 'gpt-5.6-sol' },
-      { label: '5.6 Terra', model: 'gpt-5.6-terra' },
-      { label: '5.6 Luna', model: 'gpt-5.6-luna' },
+      // The models Codex's own model/list offers (2026-11-12; providers/codex-efforts.ts has their efforts).
+      { label: 'GPT-6 Astra', model: 'gpt-6-astra' },
+      { label: 'GPT-6.1 Sol', model: 'gpt-6.1-sol' },
+      { label: 'GPT-6.1 Terra', model: 'gpt-6.1-terra' },
+      { label: 'GPT-6 Luna', model: 'gpt-6-luna' },
     ],
   },
   {
@@ -72,3 +73,22 @@ export const HARNESSES: Harness[] = [
   },
   { id: 'terminal', label: 'Terminal', type: 'shell', provider: null, modes: ['cli'], models: [] },
 ];
+
+/**
+ * The plain name of a model id, for a message a person reads: the catalog label when the id is listed
+ * ("GPT-6.1 Terra"), else a GPT id spelled the same way (gpt-6.2-sol → "GPT-6.2 Sol"), else the id.
+ */
+export function modelLabel(model: string): string {
+  for (const h of HARNESSES) {
+    const hit = h.models.find((m) => m.model === model);
+    if (hit) return hit.label;
+  }
+  const gpt = /^gpt-([\d.]+)(?:-(.+))?$/.exec(model);
+  if (gpt) return `GPT-${gpt[1]}${gpt[2] ? ` ${gpt[2].split('-').map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w)).join(' ')}` : ''}`;
+  return model;
+}
+
+/** What a person reads when the account's provider refuses a model: plain, with what to do next. */
+export function refusedModelMessage(model: string): string {
+  return `This account cannot use ${modelLabel(model)}. Pick another model.`;
+}

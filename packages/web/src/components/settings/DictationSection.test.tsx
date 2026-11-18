@@ -9,7 +9,7 @@ vi.mock('../../api/client', () => ({
   api: { listSecrets: (...a: unknown[]) => listSecrets(...a), putDictationSettings: (...a: unknown[]) => put(...a) },
 }));
 
-beforeEach(() => { put.mockClear(); listSecrets.mockReset(); listSecrets.mockResolvedValue([{ name: 'GROQ_API_KEY', value: 'x' }, { name: 'OPENAI_API_KEY', value: 'y' }]); try { localStorage.clear(); } catch {} useSettings.setState({ sttProvider: 'groq', sttModel: 'whisper-large-v3-turbo', sttSecretName: '' }); });
+beforeEach(() => { put.mockClear(); listSecrets.mockReset(); listSecrets.mockResolvedValue([{ name: 'GROQ_API_KEY', value: 'x' }, { name: 'OPENAI_API_KEY', value: 'y' }]); try { localStorage.clear(); } catch {} useSettings.setState({ sttProvider: 'groq', sttModel: 'whisper-large-v3-turbo', sttSecretName: '', sttCleanFillers: true }); });
 
 it('lists Doppler secret names and updates the store on select', async () => {
   render(<DictationSection />);
@@ -78,5 +78,37 @@ describe('recent recordings (2026-11-07)', () => {
     expect(await within(sheet).findByText(/kept words/)).toBeInTheDocument();
     expect(within(sheet).getByRole('button', { name: 'Copy' })).toBeInTheDocument();
     expect(within(sheet).queryByRole('button', { name: 'Insert' })).toBeNull();
+  });
+});
+
+describe('filler word switch', () => {
+  const sw = () => screen.getByRole('switch', { name: 'Remove filler words (um, uh)' });
+
+  it('is on by default, in a Transcript card', () => {
+    render(<DictationSection />);
+    expect(sw()).toHaveAttribute('aria-checked', 'true');
+    expect(within(screen.getByRole('group', { name: 'Transcript' })).getByRole('switch')).toBe(sw());
+  });
+
+  it('turning it off updates the store and saves to the daemon', () => {
+    render(<DictationSection />);
+    fireEvent.click(sw());
+    expect(useSettings.getState().sttCleanFillers).toBe(false);
+    expect(put).toHaveBeenCalledWith({ cleanFillers: false });
+    expect(sw()).toHaveAttribute('aria-checked', 'false');
+  });
+
+  it('turning it back on saves true', () => {
+    useSettings.setState({ sttCleanFillers: false });
+    render(<DictationSection />);
+    expect(sw()).toHaveAttribute('aria-checked', 'false');
+    fireEvent.click(sw());
+    expect(useSettings.getState().sttCleanFillers).toBe(true);
+    expect(put).toHaveBeenCalledWith({ cleanFillers: true });
+  });
+
+  it('says in plain words what it does', () => {
+    render(<DictationSection />);
+    expect(screen.getByText(/Leaves out um, uh, er, ah and hmm/)).toBeInTheDocument();
   });
 });

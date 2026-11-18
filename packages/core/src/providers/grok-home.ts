@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { privsep } from '../privsep/config.js';
 
 /**
  * Builds the per-thread GROK_HOME a Grok thread runs under.
@@ -105,7 +106,25 @@ export function buildHooksJson(eventsUrl: string, hookHelperPath: string, nodePa
  * — a thread with neither MCP servers nor a status URL should not be handed an empty
  * plugin dir to load.
  */
+/** The per-thread Grok home: `<hooksDir>/grok-homes/<id>`. */
+export function grokHomeDir(hooksDir: string, terminalId: string): string {
+  return path.join(hooksDir, 'grok-homes', terminalId);
+}
+
+/**
+ * Write the plugin directory and return its path, or null when there is nothing to inject.
+ *
+ * Privilege separation: NOT SUPPORTED YET, and null is returned. Grok writes its own files into this
+ * home, so it would have to belong to the agent, and the daemon (root there) must not write or link
+ * below a folder a workload controls. Until the home is built as the agent, a Grok thread on such a
+ * box runs without the injected MCP servers and status hooks.
+ */
 export function writeGrokHome(spec: GrokHomeSpec): string | null {
+  if (privsep()) return null;
+  return writeGrokHomeFiles(spec);
+}
+
+function writeGrokHomeFiles(spec: GrokHomeSpec): string | null {
   const hasMcp = !!spec.mcpServers && Object.keys(spec.mcpServers).length > 0;
   const hasHooks = !!spec.eventsUrl && !!spec.hookHelperPath;
   if (!hasMcp && !hasHooks) return null;

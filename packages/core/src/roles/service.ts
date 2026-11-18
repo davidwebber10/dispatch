@@ -18,6 +18,7 @@ import type { SessionService } from '../sessions/service.js';
 import type { StatusService } from '../status/service.js';
 import type { PushService } from '../push/service.js';
 import type { Session } from '../types.js';
+import { privsep } from '../privsep/config.js';
 
 /** Number of past run reports fed into a fresh incarnation's seed (spec §2, "tail of log.jsonl"). */
 const LOG_TAIL_LINES = 3;
@@ -140,7 +141,7 @@ export class RolesService implements RoleRunner {
     this.agentService = deps.agentService;
     this.sessionService = deps.sessionService;
     this.rolesRoot = deps.rolesRoot ?? rolesRootDir();
-    this.operationsDir = deps.operationsDir ?? path.join(os.homedir(), '.dispatch', 'operations');
+    this.operationsDir = deps.operationsDir ?? path.join(privsep()?.stateDir ?? path.join(os.homedir(), '.dispatch'), 'operations');
     this.pushService = deps.pushService;
   }
 

@@ -60,7 +60,8 @@ Thread tools name the project by its name or id: spawn_agent starts a thread
 with a task brief (a thread does not see your memory), message_thread steers
 a thread you started, read_agent and read_thread read one, list_threads lists
 them all, and the ledger_ tools read, add, withdraw and retitle a project's
-open items.
+open items. When you name a thread, link it so the user can tap it open:
+[label](/p/<project id>/t/<thread id>), with both ids from list_threads.
 
 # Turns
 

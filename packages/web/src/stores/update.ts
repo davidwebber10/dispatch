@@ -11,6 +11,10 @@ interface UpdateInfo {
 
 interface UpdateState {
   available: UpdateInfo | null;
+  /** The release to switch back to, when this copy runs a version above the newest release; else null. */
+  ahead: UpdateInfo | null;
+  /** Why the last check could not tell; Settings shows it instead of "up to date". Null after a good check. */
+  checkError: string | null;
   /** Plugin updates waiting (plugins slice 6): the dot and the banner count them too. */
   pluginUpdates: PluginUpdate[];
   setPluginUpdates: (u: PluginUpdate[]) => void;
@@ -51,6 +55,8 @@ interface UpdateState {
 function fromDto(state: UpdateStateDto): Partial<UpdateState> {
   return {
     available: state.available ? { version: state.version!, url: state.url, publishedAt: state.publishedAt } : null,
+    ahead: state.ahead ? { version: state.ahead.version, url: state.ahead.url, publishedAt: state.ahead.publishedAt } : null,
+    checkError: state.checkError ?? null,
     currentVersion: state.currentVersion,
     notes: state.notes ?? [],
     currentNotes: state.currentNotes ?? null,
@@ -59,6 +65,8 @@ function fromDto(state: UpdateStateDto): Partial<UpdateState> {
 
 export const useUpdate = create<UpdateState>((set, get) => ({
   available: null,
+  ahead: null,
+  checkError: null,
   pluginUpdates: [],
   setPluginUpdates: (pluginUpdates) => set({ pluginUpdates }),
   currentVersion: null,
@@ -110,11 +118,15 @@ export const useUpdate = create<UpdateState>((set, get) => ({
           url: typeof e.url === 'string' ? e.url : null,
           publishedAt: typeof e.publishedAt === 'string' ? e.publishedAt : null,
         },
+        ahead: null,
         inProgress: false,
       });
       // The event stays small on purpose — release notes can run to tens of kilobytes,
       // and this broadcast reaches every connected client. Pull them over REST instead,
       // so a client that was already open still shows what the update contains.
+      void get().load().catch(() => {});
+    } else if (e.type === 'update:checked') {
+      // The check changed what is stored without a release to announce (an ahead state, an error): reload quietly.
       void get().load().catch(() => {});
     } else if (e.type === 'plugin:updates' && Array.isArray(e.updates)) {
       set({ pluginUpdates: e.updates as PluginUpdate[] });
@@ -128,10 +140,11 @@ export const useUpdate = create<UpdateState>((set, get) => ({
 }));
 
 /**
- * An update is waiting for the user: one is available and no client has started applying it.
+ * An update is waiting for the user: one is available (or this copy is ahead of the newest release and
+ * can switch back) and no client has started applying it.
  * Drives the dot on the Settings tab / rail item and the banner at the top of Settings. The
  * modal's Dismiss does not clear it on purpose: the dot is the reminder after the modal is gone.
  */
-export function updatePending(s: Pick<UpdateState, 'available' | 'inProgress' | 'doneVersion'> & { pluginUpdates?: PluginUpdate[] }): boolean {
-  return (s.available !== null && !s.inProgress && s.doneVersion === null) || (s.pluginUpdates?.length ?? 0) > 0;
+export function updatePending(s: Pick<UpdateState, 'available' | 'inProgress' | 'doneVersion'> & { ahead?: UpdateInfo | null; pluginUpdates?: PluginUpdate[] }): boolean {
+  return ((s.available !== null || (s.ahead ?? null) !== null) && !s.inProgress && s.doneVersion === null) || (s.pluginUpdates?.length ?? 0) > 0;
 }

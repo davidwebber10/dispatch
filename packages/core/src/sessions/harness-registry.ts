@@ -21,6 +21,11 @@ export interface HarnessRegistryDeps {
   threads: {
     /** A model or effort the harness refused late goes back (ThreadSettings.undoRefusedPick). */
     undoRefusedPick(terminalId: string, info: { model?: string; effort?: string; restoredModel?: string }): void;
+    /**
+     * A Claude resume was refused (its conversation is gone) and its process has exited: start a new
+     * conversation and send it the messages the old one never answered.
+     */
+    recoverLostConversation?(terminalId: string, messages: { content: string | import('../structured/manager.js').ContentBlock[]; source?: import('../structured/manager.js').MessageSource }[]): void;
   };
 }
 
@@ -85,10 +90,21 @@ export class HarnessRegistry {
    * conversation may have replaced it.
    */
   private forgetLostConversations(m: IStructuredManager): void {
+    // The process exits right after the refusal; the new conversation starts then, not before.
+    const toRecover = new Map<string, ReturnType<NonNullable<IStructuredManager['takeUnanswered']>>>();
+    m.on('exit', (terminalId: string) => {
+      const messages = toRecover.get(terminalId);
+      if (!messages) return;
+      toRecover.delete(terminalId);
+      try { this.deps.threads.recoverLostConversation?.(terminalId, messages); }
+      catch (err) { console.warn(`[structured] thread ${terminalId}: could not start a new conversation:`, err); }
+    });
     m.on('conversation-lost', (terminalId: string, lostId: string) => {
       try {
         const t = terminalsDb.getById(this.db, terminalId);
         if (!t || t.external_id !== lostId) return;
+        const unanswered = m.takeUnanswered?.(terminalId) ?? [];
+        if (unanswered.length && this.deps.threads.recoverLostConversation) toRecover.set(terminalId, unanswered);
         this.configStore.patch(terminalId, { lostConversation: { externalId: lostId, at: new Date().toISOString() } });
         terminalsDb.updateExternalId(this.db, terminalId, null);
         console.warn(`[structured] thread ${terminalId}: conversation ${lostId} is gone; the next message starts a new one`);

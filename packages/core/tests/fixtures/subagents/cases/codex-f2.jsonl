@@ -1,0 +1,5 @@
+{"_note":"subagents-v1 review proof case f2 (synthetic frames)."}
+{"method": "turn/started", "params": {"threadId": "sub-W", "turn": {"id": "tw1", "items": [], "itemsView": "notLoaded", "status": "inProgress"}}}
+{"method": "item/started", "params": {"threadId": "sub-W", "turnId": "tw1", "item": {"type": "commandExecution", "id": "cw1", "command": "sleep 600", "cwd": "/tmp", "status": "inProgress"}}}
+{"method": "item/completed", "params": {"threadId": "$MAIN", "turnId": "turn-fake-1", "item": {"type": "agentMessage", "id": "m2", "text": "Ok.", "phase": "final_answer", "memoryCitation": null}}}
+{"method": "turn/completed", "params": {"threadId": "$MAIN", "turn": {"id": "turn-fake-1", "items": [], "itemsView": "notLoaded", "status": "completed", "durationMs": 3}}}

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { api } from '../api/client';
+import { hostCopy } from '../lib/hostCopy';
 import type { Account, AccountsView, AccountProvider, Terminal, UsageAccessState } from '../api/types';
 
 /**
@@ -54,7 +55,7 @@ export function shortAccountLabel(label: string): string {
 /** The words for each state, the same on the usage card and in Settings → Accounts. */
 export const USAGE_ACCESS_TEXT = {
   signIn: 'Sign in again to see usage for this account',
-  signInCli: "Sign in again on the daemon's computer to see usage for this account: run claude there.",
+  signInCli: hostCopy('accounts.usage.signInCli', "Sign in again on the daemon's computer to see usage for this account: run claude there."),
   notAvailable: 'This sign-in can run threads. It cannot read usage figures.',
 } as const;
 

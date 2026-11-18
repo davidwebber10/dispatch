@@ -1,8 +1,48 @@
-import { execFileSync, spawn } from 'child_process';
+import { execFile, execFileSync, spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { platform } from '../platform/index.js';
 import { markUpdateFailed } from './progress.js';
+import { getRunningVersion } from './version.js';
+import {
+  MoveRefused, planMove, ReleaseSourceError, resolveTarget, stepFailed,
+  type AsyncGitExec, type FetchReleasesOptions, type GitExec, type Move,
+} from './target.js';
+
+export type { GitExec, AsyncGitExec };
+
+/**
+ * Git without blocking the daemon: for the background check, which runs every 15 minutes. A timeout
+ * stops a fetch on a dropping network, and the environment stops git from asking for a password or an
+ * SSH confirmation that nobody can answer. A failed command carries its exit code as `status`, the way
+ * execFileSync's error does (target.ts reads it).
+ */
+export function makeAsyncGitExec(repoDir: string): AsyncGitExec {
+  return (args) => new Promise((resolve, reject) => {
+    execFile('git', ['-C', repoDir, ...args], {
+      encoding: 'utf-8',
+      timeout: 20_000,
+      maxBuffer: 8 * 1024 * 1024,
+      env: {
+        ...process.env,
+        GIT_TERMINAL_PROMPT: '0',
+        GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? 'ssh -o BatchMode=yes -o ConnectTimeout=10',
+      },
+    }, (err, stdout) => {
+      if (err) {
+        const code = (err as { code?: unknown }).code;
+        reject(typeof code === 'number' ? Object.assign(err, { status: code }) : err);
+        return;
+      }
+      resolve(stdout);
+    });
+  });
+}
+
+/** Runs git against `repoDir` (this file is the update's one place that spawns git; see tests/privsep/spawn-sites.test.ts). */
+export function makeGitExec(repoDir: string): GitExec {
+  return (args) => execFileSync('git', ['-C', repoDir, ...args], { encoding: 'utf-8' });
+}
 
 export interface PreflightResult {
   ok: boolean;
@@ -13,6 +53,10 @@ export interface PreflightResult {
   dirtyOverflow?: number;
   /** True when the dirty tree is the ONLY blocker — i.e. `force: true` would proceed. */
   forceable?: boolean;
+  /** On `ok`: how the checkout gets to the release (`back` needs the explicit switch, already given). */
+  move?: Move;
+  /** True when the only thing missing is the explicit switch back (the checkout is ahead of the newest release). */
+  needsSwitchBack?: boolean;
 }
 
 const MAX_DIRTY_ENTRIES = 50;
@@ -30,50 +74,25 @@ export function parsePorcelain(status: string): { entries: { status: string; pat
   return { entries, overflow: Math.max(0, rows.length - MAX_DIRTY_ENTRIES) };
 }
 
-/** Runs a git subcommand against `repoDir` and returns stdout; throws on non-zero exit. */
-export type GitExec = (args: string[]) => string;
-
-export function makeGitExec(repoDir: string): GitExec {
-  return (args) => execFileSync('git', ['-C', repoDir, ...args], { encoding: 'utf-8' });
+export interface PreflightOptions extends FetchReleasesOptions {
+  /** Skip ONLY the dirty-tree gate, for a forward update. Never lifts the clean-tree need of a move back. */
+  force?: boolean;
+  /** The person explicitly chose to move back to the newest release (the Switch button). */
+  switchBack?: boolean;
+  /** The version this checkout runs. Defaults to the running daemon's. */
+  version?: string;
 }
 
 /**
- * The newest plain release tag (vX.Y.Z) among the tags ORIGIN advertises: the output of
- * `git ls-remote --tags --refs origin`, lines of `sha<TAB>refs/tags/NAME`. Reading origin's list, not
- * the local one, keeps a local-only tag from standing in for a release. Prerelease and other tag shapes
- * are ignored; versions compare as numbers. Keep in step with the same function in packages/cli/src/index.ts.
- */
-export function latestReleaseTag(lsRemote: string): string | null {
-  let best: { tag: string; v: number[] } | null = null;
-  for (const line of lsRemote.split('\n')) {
-    const m = /refs\/tags\/(v(\d+)\.(\d+)\.(\d+))\s*$/.exec(line.trim());
-    if (!m) continue;
-    const v = [Number(m[2]), Number(m[3]), Number(m[4])];
-    if (!best || v[0] > best.v[0] || (v[0] === best.v[0] && (v[1] > best.v[1] || (v[1] === best.v[1] && v[2] > best.v[2])))) best = { tag: m[1], v };
-  }
-  return best?.tag ?? null;
-}
-
-/**
- * A step's failure as the client may see it. A git failure's own text is "Command failed: git -C <folder> ..."
- * plus git's stderr, which name the install folder, the home folder and the remote. The text goes to the
- * daemon log; the client gets the step and a pointer to the log.
- */
-function stepFailed(what: string, err: any): string {
-  console.error(`[update] ${what}:`, err?.message ?? err);
-  return `${what}. The detail is in the Dispatch daemon log.`;
-}
-
-/**
- * Confirms it's safe to run `bin/dispatch update` (which fast-forwards to the newest release tag):
- * a clean working tree and a checkout that can fast-forward to that tag. Injectable
- * `gitExec` lets tests simulate dirty trees / diverged branches without touching real git.
+ * Confirms it is safe to run `bin/dispatch update`: it asks the shared rule (update/target.ts) for the
+ * target (the newest published release on main), then how this checkout gets there. Injectable `gitExec`
+ * lets tests simulate dirty trees and diverged branches without touching real git.
  *
- * `opts.force` skips ONLY the dirty-tree gate below — fetch, branch resolution, and
- * the tag and fast-forward/ancestor checks always run and can still fail the preflight (a
- * diverged branch is never forceable; `git pull --ff-only` has the final say).
+ * `opts.force` skips ONLY the dirty-tree gate of a forward update. Fetch, target and move checks always
+ * run and can still refuse (a diverged branch is never forceable). A move back is never forced and
+ * needs `opts.switchBack`; without it the answer carries `needsSwitchBack`.
  */
-export function preflightUpdate(repoDir: string, gitExec?: GitExec, opts?: { force?: boolean }): PreflightResult {
+export async function preflightUpdate(repoDir: string, gitExec?: GitExec, opts: PreflightOptions = {}): Promise<PreflightResult> {
   const git = gitExec ?? makeGitExec(repoDir);
 
   let status: string;
@@ -82,7 +101,8 @@ export function preflightUpdate(repoDir: string, gitExec?: GitExec, opts?: { for
   } catch (err: any) {
     return { ok: false, reason: stepFailed('git status failed', err) };
   }
-  if (status.trim().length > 0 && !opts?.force) {
+  const dirty = status.trim().length > 0;
+  const dirtyFailure = (): PreflightResult => {
     const { entries, overflow } = parsePorcelain(status);
     return {
       ok: false,
@@ -91,49 +111,26 @@ export function preflightUpdate(repoDir: string, gitExec?: GitExec, opts?: { for
       dirtyOverflow: overflow,
       forceable: true,
     };
-  }
-
-  try {
-    // Tags are what a release is: update follows the newest one, not the tip of main.
-    // No --force: a tag that moved upstream is refused, not silently followed.
-    git(['fetch', 'origin', '--tags']);
-  } catch (err: any) {
-    return { ok: false, reason: stepFailed('git fetch failed', err) };
-  }
-
-  let tag: string | null;
-  try {
-    tag = latestReleaseTag(git(['ls-remote', '--tags', '--refs', 'origin']));
-  } catch (err: any) {
-    return { ok: false, reason: stepFailed('could not list release tags', err) };
-  }
-  if (!tag) {
-    return { ok: false, reason: 'No release tag (vX.Y.Z) was found on origin, so there is nothing to update to.' };
-  }
-
-  let localHead: string;
-  let tagHead: string;
-  try {
-    localHead = git(['rev-parse', 'HEAD']).trim();
-    tagHead = git(['rev-parse', `${tag}^{commit}`]).trim();
-  } catch (err: any) {
-    return { ok: false, reason: stepFailed(`could not resolve ${tag}`, err) };
-  }
-
-  // Either way round is fine: HEAD behind the tag fast-forwards to it, and HEAD already containing
-  // the tag (a checkout that is ahead of the newest release) has nothing to take.
-  const isAncestor = (a: string, b: string): boolean => {
-    try { git(['merge-base', '--is-ancestor', a, b]); return true; } catch { return false; }
   };
-  if (!isAncestor(localHead, tagHead) && !isAncestor(tagHead, localHead)) {
-    return { ok: false, reason: `This checkout has diverged from release ${tag} — cannot fast-forward. Run 'dispatch update' manually after resolving.` };
-  }
+  // A move back decides for itself (its own clean-tree message, never forceable), so the forward gate
+  // waits until the plan is known.
+  if (dirty && !opts.force && !opts.switchBack) return dirtyFailure();
 
-  return { ok: true };
+  let move: Move;
+  try {
+    const target = await resolveTarget(git, opts);
+    move = planMove(git, target, { version: opts.version ?? getRunningVersion(), allowBack: opts.switchBack === true });
+  } catch (err: unknown) {
+    if (err instanceof MoveRefused) return { ok: false, reason: err.message, ...(err.needsSwitchBack ? { needsSwitchBack: true } : {}) };
+    if (err instanceof ReleaseSourceError) return { ok: false, reason: err.message };
+    return { ok: false, reason: stepFailed('could not work out the release to install', err) };
+  }
+  if (dirty && !opts.force && move !== 'back') return dirtyFailure();
+  return { ok: true, move };
 }
 
 /** Keep build diagnostics, and notify clients if the detached updater fails before restart. */
-export function applyUpdate(repoDir: string, onFailure?: (reason: string) => void): void {
+export function applyUpdate(repoDir: string, onFailure?: (reason: string) => void, opts?: { switchBack?: boolean }): void {
   const logDir = platform.logDir();
   fs.mkdirSync(logDir, { recursive: true });
   const logPath = path.join(logDir, 'update.log');
@@ -148,7 +145,7 @@ export function applyUpdate(repoDir: string, onFailure?: (reason: string) => voi
   };
   try {
     fs.writeSync(log, `\n[dispatch] Update started ${new Date().toISOString()}\n`);
-    const child = spawn(path.join(repoDir, 'bin', 'dispatch'), ['update'], {
+    const child = spawn(path.join(repoDir, 'bin', 'dispatch'), ['update', ...(opts?.switchBack ? ['--switch-back'] : [])], {
       cwd: repoDir,
       detached: true,
       stdio: ['ignore', log, log],

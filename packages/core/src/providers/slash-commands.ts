@@ -78,7 +78,9 @@ export function catalogModelChoices(harness: SlashHarness): ModelChoice[] {
  */
 export function resolveModelArg(options: readonly ModelChoice[], arg: string): { model: string } | { error: string } {
   const want = arg.trim().toLowerCase();
-  const hit = options.find((o) => o.label.toLowerCase() === want || o.value.toLowerCase() === want);
+  // "GPT-6.1 Sol" is also found as "6.1 sol" (the short label older builds showed).
+  const short = (label: string) => label.toLowerCase().replace(/^gpt-/, '');
+  const hit = options.find((o) => o.label.toLowerCase() === want || short(o.label) === want || o.value.toLowerCase() === want);
   if (hit) return { model: hit.value };
   const choices = options.map((o) => o.value).join(', ');
   return { error: choices ? `Unknown model "${arg}". Choose one of: ${choices}.` : `Unknown model "${arg}".` };

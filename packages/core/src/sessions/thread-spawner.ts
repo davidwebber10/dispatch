@@ -1,3 +1,5 @@
+import { expandHome } from './project-dir.js';
+import { noteResumeAsked } from '../os/process-reaper.js';
 import { redactKeys } from '../auth/redact-keys.js';
 import { clientMessage } from '../http/client-message.js';
 import os from 'os';
@@ -7,6 +9,7 @@ import * as sessionsDb from '../db/sessions.js';
 import * as terminalsDb from '../db/terminals.js';
 import * as messageSourceDb from '../db/message-source.js';
 import { getProvider } from '../providers/registry.js';
+import { dispatchClaudeSettings } from '../providers/claude-code.js';
 import { PTYManager } from '../pty/manager.js';
 import type { KeyHandle, KeyRegistry } from '../auth/principals.js';
 import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
@@ -14,10 +17,23 @@ import { readCodexSessionModel } from './codex-sessions.js';
 import { platform } from '../platform/index.js';
 import { maxLiveThreadsPerProject } from '../caps.js';
 import { systemPromptFor, modelFor } from '../overseer/prompts.js';
+import { approvalsFor, claudeSmartAskRules, claudeSmartSettings } from '../os/approvals.js';
+import { osServerNames } from '../os/os-servers.js';
+import { currentProfile } from '../os/profile.js';
+import { businessMayDrive, NOT_A_CHAT } from '../profile/business-gate.js';
+import { harnessPolicyIsStrict, NOT_A_BUSINESS_IMAGE } from '../os/harness-policy.js';
+import { isHostedBox } from '../os/hosted-mode.js';
+import { boxLog } from '../os/box-log.js';
+import { hostedCodexDefaultModel } from '../structured/codex-fast.js';
+import { CLAUDE_HOSTED_MCP_ARGS, CLAUDE_HOSTED_MCP_ENV } from '../os/hosted-mcp-policy.js';
 import { resolveSpawnModel, isClaudeTierAlias } from '../overseer/spawn-model.js';
 import { COORDINATOR_DISALLOWED_TOOLS, makeCoordinatorPolicy } from '../overseer/coordinator-policy.js';
 import { ROLE_DISALLOWED_TOOLS, roleToolPolicy } from '../roles/role-policy.js';
 import { adoptTranscriptSettings as adoptTranscriptSettingsInto, effortFor } from './thread-settings.js';
+import { resolveTranscriptPath } from './transcript-path.js';
+import { privsep } from '../privsep/config.js';
+import { MessageJournal } from '../journal/journal.js';
+import { journalRecap } from '../journal/recap.js';
 import { readSessionBackfill, readSessionSettings, applyDurableSources, resumeAdvice as readResumeAdvice } from './cc-sessions.js';
 import { randomUUID } from 'crypto';
 import { effectiveSpawnDepth } from '../auth/key-scope.js';
@@ -32,6 +48,9 @@ import { LOGIN_ARGV, isProviderName } from '../setup/install.js';
 import { reportsStatus, ThreadConfigStore, type ConfigPatch } from './thread-config.js';
 import type { SessionWiring } from './session-wiring.js';
 import { AGENCY_MCP_SERVER, type SpawnInjection } from './spawn-injection.js';
+import { grokHomeDir } from '../providers/grok-home.js';
+import { COMPANY_DISALLOWED_TOOLS, companyClaudeEnv, isCompanyClaudeThread } from '../os/company-model.js';
+import { opencodeHomesDir } from '../providers/opencode-config.js';
 
 type IStructuredManager = import('../structured/manager.js').IStructuredManager;
 
@@ -45,6 +64,60 @@ export function disallowedToolsFor(config: Record<string, any>): string[] | unde
   if (config.role === 'coordinator') return [...COORDINATOR_DISALLOWED_TOOLS];
   if (typeof config.roleAuthority === 'string') return [...ROLE_DISALLOWED_TOOLS];
   return undefined;
+}
+
+/** The sentence of a company-model thread that cannot reach the relay (no key registry, no address). */
+export const COMPANY_MODEL_NO_RELAY = 'This thread runs on the company model, and this daemon cannot give it the way there. Restart the workspace.';
+
+/**
+ * The env of one Claude Code process: the account overlay (the thread's own login), or, for a thread on
+ * the company model (os/company-model.ts), the relay env instead of any login. A company thread never
+ * gets an account's CLAUDE_CONFIG_DIR, and its key reaches it twice: DISPATCH_AUTH (the daemon's tools)
+ * and ANTHROPIC_AUTH_TOKEN (the relay). The two are the same per-thread key. Throws for a company
+ * thread with no key or no daemon address: it must never fall back to the person's own login.
+ */
+export function claudeLoginEnv(
+  type: string,
+  config: Record<string, any>,
+  accountEnv: Record<string, string>,
+  relay: { daemonApi: string | null; key: string | null },
+): Record<string, string> {
+  if (!isCompanyClaudeThread(type, config)) return accountEnv;
+  if (!relay.daemonApi || !relay.key) throw new Error(COMPANY_MODEL_NO_RELAY);
+  const rest = { ...accountEnv };
+  delete rest.CLAUDE_CONFIG_DIR;
+  return { ...rest, ...companyClaudeEnv(relay.daemonApi, relay.key, config.model) };
+}
+
+/** A company-model Claude thread may not use the tools the platform refuses (hosted web search). */
+export function companyDisallowedTools(type: string, config: Record<string, any>, base: string[] | undefined): string[] | undefined {
+  if (!isCompanyClaudeThread(type, config)) return base;
+  return [...new Set([...(base ?? []), ...COMPANY_DISALLOWED_TOOLS])];
+}
+
+/**
+ * The launch layer of the hosted MCP rule (os/hosted-mcp-policy.ts): a Claude Code thread on a hosted
+ * box loads only the servers Dispatch passes (`--strict-mcp-config`). First on the line, so it can
+ * never fall inside a list flag or after the prompt. Every other harness and a local install: unchanged.
+ */
+export function hostedClaudeArgs(type: string, args: string[], hosted: boolean = isHostedBox()): string[] {
+  if (!hosted || type !== 'claude-code' || args.includes('--strict-mcp-config')) return args;
+  return [...CLAUDE_HOSTED_MCP_ARGS, ...args];
+}
+
+/** OpenCode on a hosted box loads no project config: no `<project>/opencode.json`, no `.opencode/` plugin or server. */
+export const OPENCODE_HOSTED_ENV: Readonly<Record<string, string>> = { OPENCODE_DISABLE_PROJECT_CONFIG: '1' };
+
+/**
+ * The environment layer of the same rule. Claude Code: the account's claude.ai connectors are not
+ * fetched. OpenCode: a file the agent wrote in the project cannot replace the thread's approval rules,
+ * add a server or run a plugin at the next start (only the thread's own OPENCODE_CONFIG applies).
+ */
+export function hostedClaudeEnv(type: string, hosted: boolean = isHostedBox()): Record<string, string> {
+  if (!hosted) return {};
+  if (type === 'claude-code') return { ...CLAUDE_HOSTED_MCP_ENV };
+  if (type === 'opencode') return { ...OPENCODE_HOSTED_ENV };
+  return {};
 }
 
 /** What ThreadSpawner needs. Every field is required. */
@@ -64,6 +137,15 @@ export interface ThreadSpawnerDeps {
     /** The effort a Codex thread starts with, checked against the efforts of its model. */
     codexEffortFor(config: Record<string, any>, model?: string): string | undefined;
   };
+}
+
+/** What the person is told when a thread's earlier conversation could not be loaded. */
+export const CONVERSATION_LOST_NOTICE = 'This thread\'s earlier conversation could not be loaded (Claude no longer has it), so it started a new one. Your message goes to the new conversation. If Dispatch kept the earlier messages, the model was given a short recap of them, but it does not have the full history.';
+
+/** True when Claude's own transcript store has no file for this session. Not checked where the store is another user's (privsep). */
+function transcriptIsGone(workDir: string, sessionId: string): boolean {
+  if (privsep()) return false;
+  return !resolveTranscriptPath(workDir, sessionId);
 }
 
 /**
@@ -166,7 +248,7 @@ export class ThreadSpawner {
     const session = sessionsDb.getById(this.db, terminal.session_id);
     if (!session) throw new Error('Session not found');
 
-    const workDir = terminal.working_dir || session.working_dir;
+    const workDir = expandHome(terminal.working_dir || session.working_dir);
 
     // Runner terminals (agent runs) persist their prompt in config and always
     // launch the headless autonomous command — never resume/interactive.
@@ -174,6 +256,7 @@ export class ThreadSpawner {
     try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
     const runnerPrompt: string | undefined =
       config.runner && typeof config.runnerPrompt === 'string' ? config.runnerPrompt : undefined;
+    this.assertProfileAllowsSpawn(terminal, config);
 
     // Fail closed for a coordinator that cannot run governed — see assertCoordinatorGoverned.
     // Checked HERE, before the shell branch and before composeInjection writes a per-thread MCP file,
@@ -187,6 +270,8 @@ export class ThreadSpawner {
     let assignedSessionId: string | undefined;
     /** Set for Grok: the per-thread config home carrying its hooks and MCP servers. */
     let grokHomeDir: string | undefined;
+    /** The model the CLI is started with (`--model`); undefined: the CLI's own default. For the box log. */
+    let launchModel: string | undefined;
 
     if (terminal.type === 'shell') {
       // A "Sign in — X" thread runs that CLI's login command DIRECTLY rather than a shell
@@ -240,7 +325,9 @@ export class ThreadSpawner {
         // just structured ones — the New Thread modal offers the picker in both modes.
         // modelFor returns config.model for a plain user thread (no role/agentType).
         this.adoptTranscriptSettings(terminal, config, workDir);
-        const model = modelFor(config);
+        // A company-model thread runs exactly its granted model (os/company-model.ts).
+        const model = isCompanyClaudeThread(terminal.type, config) ? config.model as string : modelFor(config) ?? (terminal.type === 'codex' ? hostedCodexDefaultModel() : undefined);
+        launchModel = model;
         const effort = terminal.type === 'codex' ? this.codexEffortFor(config, model) : effortFor(config);
         // A provider that names its own session (Grok) gets a fresh uuid here, which is
         // stored once the process is alive. Without it a relaunch after a daemon restart
@@ -254,14 +341,20 @@ export class ThreadSpawner {
             : provider.buildNewCommand({ workDir, secretsMcp, statusHooks, model, effort, sessionId: assignedSessionId });
       }
       command = cmd.command;
-      args = cmd.args;
+      // A company-model thread: no web search (the CLI's options come first, so the list ends at the next option).
+      const company = companyDisallowedTools(terminal.type, config, undefined);
+      args = hostedClaudeArgs(terminal.type, company ? ['--disallowedTools', ...company, ...cmd.args] : cmd.args);
+      // A CLI (PTY) Claude thread: the same MCP timeout and transcript retention as a Pretty one (see dispatchClaudeSettings).
+      if (terminal.type === 'claude-code' && runnerPrompt === undefined) args = [...args, '--settings', JSON.stringify(dispatchClaudeSettings())];
     }
 
     // GROK_HOME is how Grok's hooks and MCP servers reach the thread — argv cannot carry
     // them for the top-level command. Everything but `plugins` links back to the real home.
     // The account overlay first, so a thread's own Claude token or Codex home rides every launch
     // (new, resume, relaunch), and the per-process keys below can never be shadowed by it.
-    const spawnEnv: Record<string, string> = { ...(this.wiring.accountEnv?.(terminal.type, config) ?? {}), [TERMINAL_ID_ENV_VAR]: terminalId };
+    const loginEnv = terminal.type === 'shell' ? (this.wiring.accountEnv?.(terminal.type, config) ?? {})
+      : claudeLoginEnv(terminal.type, config, this.wiring.accountEnv?.(terminal.type, config) ?? {}, { daemonApi: this.wiring.daemonApi, key: sk && !sk.keyFile ? sk.key : null });
+    const spawnEnv: Record<string, string> = { ...loginEnv, ...hostedClaudeEnv(terminal.type), ...(terminal.type === 'claude-code' ? { MCP_TIMEOUT: dispatchClaudeSettings().env.MCP_TIMEOUT } : {}), [TERMINAL_ID_ENV_VAR]: terminalId };
     if (grokHomeDir) spawnEnv.GROK_HOME = grokHomeDir;
     // The key travels in the environment of this one process, never in argv and never in the shared
     // default env. The Codex CLI view writes its environment to a snapshot file, so it gets the path
@@ -271,6 +364,8 @@ export class ThreadSpawner {
       else spawnEnv.DISPATCH_AUTH = sk.key;
     }
     const pid = this.ptyManager.spawn(terminalId, command, args, workDir, spawnEnv);
+    // `model`: what the CLI was started with; null = its own default (the log line then cannot say which ran).
+    boxLog('thread.start', { thread: terminalId, harness: terminal.type, transport: 'pty', resume: !!terminal.external_id, model: launchModel ?? null });
     if (sk) this.wiring.threadKeys?.bindPty(terminalId, pid, sk.handle);
     terminalsDb.updatePid(this.db, terminalId, pid);
     // AFTER the spawn, never before: a stored id for a process that failed to start would
@@ -339,7 +434,23 @@ export class ThreadSpawner {
     try { this.configStore.patch(terminal.id, adopted); } catch { /* best effort */ }
   }
 
+  /**
+   * The business profile, enforced where a process STARTS. The route gate (profile/business-gate.ts)
+   * decides what a person may ask for; this decides what may run, whatever wrote the thread's row: a
+   * thread made while the person was a developer, a schedule that falls due, a row changed on disk.
+   * Under the business profile only a chat thread starts (structured transport, no role, approvals
+   * `smart`): never a shell, a CLI, an agent, a runner or a coordinator.
+   */
+  private assertProfileAllowsSpawn(terminal: terminalsDb.TerminalRow, config: Record<string, any>): void {
+    if (currentProfile() !== 'business') return;
+    if (!businessMayDrive({ type: terminal.type, config })) throw new Error(NOT_A_CHAT);
+    // A hosted box: the image must carry the strict harness policy (os/harness-policy.ts). On a developer
+    // image a harness an agent starts by itself could skip approvals, so no business thread runs there.
+    if (isHostedBox() && !harnessPolicyIsStrict()) throw new Error(NOT_A_BUSINESS_IMAGE);
+  }
+
   private spawnStructured(terminal: terminalsDb.TerminalRow, config: Record<string, any>, workDir: string): void {
+    this.assertProfileAllowsSpawn(terminal, config);
     this.assertCoordinatorGoverned(terminal, config);
     this.adoptTranscriptSettings(terminal, config, workDir);
     const manager = this.structuredManagerFor(terminal.type);
@@ -395,7 +506,7 @@ export class ThreadSpawner {
       try {
         const mcpServers = this.mcpEntries(specs, '${DISPATCH_AUTH}');
         const dir = writeGrokHome({
-          dir: path.join(this.wiring.statusContext.hooksDir, 'grok-homes', terminal.id),
+          dir: grokHomeDir(this.wiring.statusContext.hooksDir, terminal.id),
           realHome: path.join(os.homedir(), '.grok'),
           mcpServers,
         });
@@ -403,7 +514,27 @@ export class ThreadSpawner {
       } catch { /* best-effort — a thread without injections still runs */ }
     }
 
-    const resumeSessionId = terminal.external_id || undefined;
+    let resumeSessionId = terminal.external_id || undefined;
+    // A saved Claude conversation with no transcript on disk cannot be resumed ("No conversation
+    // found"), and the id is often one that init reported before the first turn ever wrote a file.
+    // Start a new conversation instead, tell the person, and give it a recap from Dispatch's journal.
+    let lostNotice: string | undefined;
+    let recap: string | null = null;
+    if (terminal.type === 'claude-code' && resumeSessionId && !this.wiring.structuredCommandOverride && transcriptIsGone(workDir, resumeSessionId)) {
+      const lostId = resumeSessionId;
+      resumeSessionId = undefined;
+      lostNotice = CONVERSATION_LOST_NOTICE;
+      this.configStore.patch(terminal.id, { lostConversation: { externalId: lostId, at: new Date().toISOString() } });
+      terminalsDb.updateExternalId(this.db, terminal.id, null);
+      console.warn(`[structured] thread ${terminal.id}: conversation ${lostId} has no transcript on disk; starting a new one`);
+      boxLog('thread.conversation_lost', { thread: terminal.id, harness: terminal.type, session: lostId, when: 'spawn' }, 'warn');
+    }
+    // A new conversation that replaces a lost one (here, or after a resume Claude refused).
+    if (terminal.type === 'claude-code' && !resumeSessionId && (lostNotice || config.lostConversation)) {
+      lostNotice ??= CONVERSATION_LOST_NOTICE;
+      const skip = this.recoveringMessages.get(terminal.id) ?? [];
+      recap = journalRecap((this.journal ??= new MessageJournal(this.db)), terminal.id, skip);
+    }
 
     // An overseer may write only to its own memory and to this project's shared memory folder
     // (overseer memory scope spec 2026-10-07, Unit 2), and its persona names those exact folders
@@ -432,16 +563,26 @@ export class ThreadSpawner {
     const opencodeSettingDefault = readHarnessSettings(this.db).opencode?.defaultModel;
     const opencodeDefault =
       opencodeSettingDefault && !isClaudeTierAlias(opencodeSettingDefault) ? opencodeSettingDefault : OPENCODE_DEFAULT_MODEL;
-    const resolvedModel = resolveSpawnModel({
+    let resolvedModel = resolveSpawnModel({
       harness: terminal.type,
       config,
       opencodeDefault,
+      // A hosted box: a Codex thread with no pick runs GPT-6.1 Sol, not Codex's own default.
+      codexDefault: hostedCodexDefaultModel(),
     });
+    // A company-model thread runs exactly its granted model, whatever a default says.
+    const companyModel = isCompanyClaudeThread(terminal.type, config) ? config.model as string : null;
+    if (companyModel) resolvedModel = companyModel;
     if (resolvedModel && !config.model) {
       config.model = resolvedModel;
       this.configStore.patch(terminal.id, { model: resolvedModel });
     }
 
+    // The thread's approvals setting (os/approvals.ts): `ask` escalates every gated tool, `auto` runs
+    // them, `smart` lets the harness's own judgement decide. Null: today's rule, unchanged.
+    const approvals = approvalsFor(config, currentProfile());
+    const smart = approvals === 'smart' && !config.role;
+    const smartForCommand = smart && terminal.type === 'claude-code';
     let sc: { command: string; args: string[] };
     if (this.wiring.structuredCommandOverride) {
       // Test seam: spawn the fake instead of real claude. Still surface `-r <id>` on
@@ -455,10 +596,11 @@ export class ThreadSpawner {
       // toolset is the enforcement; the policy deny remains as a backstop.
       // A Claude overseer loads only its own memory folder (overseer memory scope spec, Unit 1).
       const autoMemoryDirectory = this.overseerMemoryFor(terminal, config, workDir, coordinatorFolders);
-      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: persona, resumeSessionId, model: resolvedModel, effort: terminal.type === 'claude-code' ? effortFor(config) : undefined, grokPluginDir, disallowedTools: disallowedToolsFor(config), autoMemoryDirectory });
+      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: [persona, recap].filter(Boolean).join('\n\n') || undefined, resumeSessionId, model: resolvedModel, effort: terminal.type === 'claude-code' ? effortFor(config) : undefined, grokPluginDir, disallowedTools: companyDisallowedTools(terminal.type, config, disallowedToolsFor(config)), autoMemoryDirectory, ...(smartForCommand ? { smartApprovals: { settings: claudeSmartSettings(claudeSmartAskRules()) } } : {}) });
       if (!built) throw new Error('structured transport not supported for this provider');
       sc = built;
     }
+    sc = { command: sc.command, args: hostedClaudeArgs(terminal.type, sc.args) };
 
     // On resume, restore prior conversation from the claude transcript JSONL. Claude-only:
     // the Codex manager has no Claude transcript to read — it backfills its own history from
@@ -483,7 +625,7 @@ export class ThreadSpawner {
     // an explicit config.autonomy === 'supervised' re-arms the per-tool membrane (rare opt-in,
     // surfaces plain gated tools to the human). Persisted in config.autonomy so it survives a
     // resume after a daemon restart.
-    const escalate = config.role === 'agent' && config.autonomy === 'supervised';
+    const escalate = approvals === 'ask' ? true : approvals === 'auto' ? false : config.role === 'agent' && config.autonomy === 'supervised';
 
     // Daemon-enforced ground rules for the coordinator's own tool use (see coordinator-policy.ts) —
     // consulted by the manager's can_use_tool membrane ahead of the escalate/auto-allow branches.
@@ -519,7 +661,7 @@ export class ThreadSpawner {
     let opencodeEnv: Record<string, string> | undefined;
     if (terminal.type === 'opencode' && this.wiring.statusContext) {
       try {
-        const mcpServers = this.mcpEntries(specs, '{env:DISPATCH_AUTH}');
+        const mcpServers = this.mcpEntries(specs, '{env:DISPATCH_AUTH}', { http: true });
         // A model with no tool-capable endpoint (settings/model-capabilities.ts) runs
         // chat-only: every tool off, no MCP, and no peer-tools block in the prompt (it
         // would describe tools the model cannot call). The verdict is pinned in
@@ -537,11 +679,13 @@ export class ThreadSpawner {
           }
         }
         const cfgPath = writeOpencodeConfig({
-          dir: path.join(this.wiring.statusContext.hooksDir, 'opencode-homes', terminal.id),
+          dir: path.join(opencodeHomesDir(this.wiring.statusContext.hooksDir), terminal.id),
           model: resolvedModel,
           escalate,
+          smart,
           systemPrompt: [persona, toolsDisabled ? undefined : structuredMcp?.systemPrompt].filter(Boolean).join('\n\n') || undefined,
           mcpServers,
+          osServers: osServerNames(specs),
           toolsDisabled,
         });
         opencodeEnv = { OPENCODE_CONFIG: cfgPath };
@@ -555,6 +699,7 @@ export class ThreadSpawner {
       escalate,
       toolPolicy,
       seedEvents,
+      ...(smart ? { approvals: 'smart' as const } : {}),
       // Codex resumes/pins-model out-of-band over JSON-RPC (Claude encodes both in `args` and
       // ignores these); shared on the interface so this one call drives either manager.
       resumeId: resumeSessionId,
@@ -606,11 +751,23 @@ export class ThreadSpawner {
       // thread always runs on the CLI login; an added Codex account is for CLI-mode threads.
       env: terminal.type === 'codex'
         ? {}
-        : { ...(this.wiring.accountEnv?.(terminal.type, config) ?? {}), [TERMINAL_ID_ENV_VAR]: terminal.id, ...(sk ? { DISPATCH_AUTH: sk.key } : {}), ...(opencodeEnv ?? {}) },
+        : { ...claudeLoginEnv(terminal.type, config, this.wiring.accountEnv?.(terminal.type, config) ?? {}, { daemonApi: this.wiring.daemonApi, key: sk?.key ?? null }), ...hostedClaudeEnv(terminal.type), [TERMINAL_ID_ENV_VAR]: terminal.id, ...(sk ? { DISPATCH_AUTH: sk.key } : {}), ...(opencodeEnv ?? {}) },
+      // A hosted Claude Code thread: the box logs the servers its init frame names and warns about any
+      // it did not pass (os/hosted-mcp-policy.ts).
+      ...(isHostedBox() && terminal.type === 'claude-code' ? { mcpExpected: specs.map((s) => s.name) } : {}),
+      ...(companyModel ? { modelSource: 'company' as const } : {}),
     });
+    // `model`: what the harness was asked to run; null = its own default. The model it reports back is the
+    // `thread.model` line (structured/manager.ts, structured/codex-manager.ts).
+    boxLog('thread.start', { thread: terminal.id, harness: terminal.type, transport: 'structured', resume: !!resumeSessionId, model: resolvedModel ?? null, ...(companyModel ? { modelSource: 'company' } : {}) });
     if (sk) this.wiring.threadKeys?.bindStructured(terminal.id, sk.handle);
     terminalsDb.updatePid(this.db, terminal.id, pid);
+    if (lostNotice) manager.postEvent?.(terminal.id, { type: 'system', subtype: 'dispatch_notice', level: 'warning', message: lostNotice });
   }
+
+  /** Text of the messages being sent again to a new conversation (so the recap leaves them out). */
+  readonly recoveringMessages = new Map<string, string[]>();
+  private journal?: MessageJournal;
 
   /**
    * Lazily revive a structured thread on demand (its ws connects or it receives a
@@ -639,7 +796,8 @@ export class ThreadSpawner {
     // messages. With an external_id, spawnStructured resumes the same conversation.
     const session = sessionsDb.getById(this.db, terminal.session_id);
     if (!session) return false;
-    const workDir = terminal.working_dir || session.working_dir;
+    const workDir = expandHome(terminal.working_dir || session.working_dir);
+    noteResumeAsked(terminalId, config); // a dormant thread's resume clock (os/process-reaper.ts); nothing otherwise
     try {
       this.spawnStructured(terminal, config, workDir);
       this.lastSpawnError.delete(terminalId);
