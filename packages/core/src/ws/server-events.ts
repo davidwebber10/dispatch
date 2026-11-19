@@ -83,6 +83,8 @@ export type UpdateCheckedEvent = { type: 'update:checked' };
 export type UpdateFailedEvent = { type: 'update:failed'; reason?: string };
 export type AnalyticsDirtyEvent = { type: 'analytics-dirty' };
 export type LedgerChangedEvent = { type: 'ledger:changed'; sessionId: string };
+/** Memory changed in one scope ('you' or 'project:<id>'): pages, notes or settings. */
+export type MemoryChangedEvent = { type: 'memory:changed'; scope: string };
 export type UsageLimitsEvent = {
   type: 'usage-limits';
   warnPercent: number;
@@ -125,7 +127,7 @@ export type KnownServerEvent =
   | AgentRunCreatedEvent | AgentRunUpdatedEvent | AgentRunStepEvent
   | AuthRequestEvent | AuthUpdatedEvent
   | UpdateAvailableEvent | UpdateInProgressEvent | UpdateCheckedEvent | UpdateFailedEvent
-  | AnalyticsDirtyEvent | LedgerChangedEvent | UsageLimitsEvent
+  | AnalyticsDirtyEvent | LedgerChangedEvent | MemoryChangedEvent | UsageLimitsEvent
   | EndlessMessageEvent | EndlessDeltaEvent | EndlessSettingsEvent | EndlessTurnEvent
   | PluginChangedEvent | PluginDataEvent | PluginUpdatesEvent;
 

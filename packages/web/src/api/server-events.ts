@@ -46,6 +46,7 @@ const REQUIRED_FIELDS: Record<KnownServerEventType, Record<string, FieldKind>> =
   'update:failed': {},
   'analytics-dirty': {},
   'ledger:changed': { sessionId: 'string' },
+  'memory:changed': { scope: 'string' },
   'usage-limits': { warnPercent: 'number', providers: 'array', paused: 'array' },
   'endless:message': { message: 'object' },
   'endless:delta': { kind: 'string', text: 'string' },

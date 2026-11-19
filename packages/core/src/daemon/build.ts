@@ -108,6 +108,7 @@ import type { DeliveryOutbox } from '../delivery/outbox.js';
 import { createDeliveryOutbox, subscribeDeliveryOutbox } from '../delivery/wiring.js';
 import { wireRestoredQuestions } from '../sessions/boot-reconcile.js';
 import { EndlessService, limitsFromEnv, startEndless } from '../endless/service.js';
+import { MemoryService, projectsFromDb } from '../memory/service.js';
 import { normalizeBasePath, stripBasePath } from './base-path.js';
 import { NoopPTYManager, type PtyLike } from './noop-pty.js';
 import { wireAuth } from './wire-auth.js';
@@ -223,6 +224,7 @@ export interface DaemonServices {
   // Chat
   endless: EndlessService;
   endlessManager: IStructuredManager;
+  memory: MemoryService;
   // Limits and usage
   usageLimits: UsageLimitService;
   limitSnapshots: LimitSnapshots;
@@ -490,6 +492,11 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     });
   }
   const journalWiring = wireJournal(db, harnesses.managers.values()); // W3-D: the message journal
+  // Memory (spec 2026-11-17-memory-design.md): the daemon-owned store, its routes and the block. No model call.
+  const memory = new MemoryService({
+    db, projects: () => projectsFromDb(db), broadcast: (e) => broadcaster.broadcast(e),
+    business: () => profileRef() === 'business', lastSeq: (id) => journalWiring.journal.lastSeq(id) || null,
+  });
   // Idle thread processes (os/process-reaper.ts): only when the host sets DISPATCH_IDLE_PROCESS_MINUTES or
   // DISPATCH_MAX_LIVE_PROCESSES. A local install sets neither: no reaper, no hook, nothing changes.
   const processReaper = createProcessReaper({
@@ -764,7 +771,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     broadcaster, plugins, assistRunner, terminalsBroadcaster: broadcaster,
     noCredentialStats: auth.noCredentialStats, pairCodes: auth.pairCodes, devices: auth.devices, cookiePath: basePath || '/',
     reachableAddresses: auth.reachableAddresses, refreshPtyEnv: spawnEnv.refresh,
-    endless: opts.endless ?? endless, usageLimits: opts.usageLimits ?? limits.routeDeps,
+    endless: opts.endless ?? endless, memory, usageLimits: opts.usageLimits ?? limits.routeDeps,
     watchCatchUp: (id) => watchDispatcher.catchUp(id), outbox, journal: journalWiring.journal, osRouters,
     hostContext,
   });
@@ -784,7 +791,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     db, dataDir, keys, noCredentialStats: auth.noCredentialStats, accessGate: auth.accessGate, pairCodes: auth.pairCodes, devices: auth.devices,
     authRequestService, claudeLogin, codexLogin, accounts, sockets, broadcaster, ptyManager, sessionService, statusService,
     harnessManagers: harnesses.managers, structuredManager: harnesses.claude, terminalMonitor, threadAutoNamer, stallWatchdog, processReaper,
-    agentService, rolesService, outbox, watchDispatcher, ledgerService, pushService, endless, endlessManager,
+    agentService, rolesService, outbox, watchDispatcher, ledgerService, pushService, endless, endlessManager, memory,
     usageLimits, limitSnapshots, usageGauge, usage, boxHeartbeat, secretsService, integrationsService, osConnections, toolsAuth,
     refreshSpawnEnv: spawnEnv.refresh, plugins, marketplaces, installer, skills, threadEvents, pluginHooks, pluginWorkers, assistRunner,
   };

@@ -40,6 +40,7 @@ const NO_FOLDERS = 'In your workspace a project is made from its name. Its folde
 const NO_DEVICES = 'Sign-in for other devices is not part of your workspace.';
 const NO_ANALYTICS = 'Analytics are not available in your workspace.';
 const NO_SECRET_DROP = 'A secret that a thread handed you is not shown in your workspace.';
+const NO_MEMORY = 'Memory is not available in your workspace yet.';
 
 const body = (req: Request): Record<string, unknown> =>
   (req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {}) as Record<string, unknown>;
@@ -109,6 +110,7 @@ const secrets = refuse('secrets', NO_SECRETS);
 const managed = refuse('settings', MANAGED);
 const analytics = refuse('analytics', NO_ANALYTICS);
 const review = refuse('review.diff', NO_REVIEW);
+const memory = refuse('memory', NO_MEMORY);
 
 export const BUSINESS_ROUTES: Readonly<Record<string, BusinessRow>> = {
   // ── identity, launch, access ────────────────────────────────────────────────────────────────────
@@ -455,6 +457,27 @@ export const BUSINESS_ROUTES: Readonly<Record<string, BusinessRow>> = {
   'GET /api/endless/settings': allow(),
   'PUT /api/endless/settings': chat,
   'GET /api/endless/media/:name': chat,
+
+  // ── Memory (spec 2026-11-17-memory-design.md): off for a business person until the host turns it on
+  //    (phase 4 gives the host the switch and the review setting). Threads get no block and no tools there.
+  'GET /api/memory/scopes': memory,
+  'GET /api/memory/pages': memory,
+  'GET /api/memory/pages/:id': memory,
+  'POST /api/memory/pages': memory,
+  'PUT /api/memory/pages/:id': memory,
+  'DELETE /api/memory/pages/:id': memory,
+  'GET /api/memory/pages/:id/versions': memory,
+  'POST /api/memory/pages/:id/restore': memory,
+  'GET /api/memory/read': memory,
+  'GET /api/memory/notes': memory,
+  'POST /api/memory/notes': memory,
+  'DELETE /api/memory/notes/:id': memory,
+  'GET /api/memory/search': memory,
+  'GET /api/memory/block': memory,
+  'GET /api/memory/settings': memory,
+  'PUT /api/memory/settings': memory,
+  'GET /api/memory/threads/:terminalId': memory,
+  'PUT /api/memory/threads/:terminalId': memory,
 
   // ── the page itself ─────────────────────────────────────────────────────────────────────────────
   'GET /plugins/:id/*': allow(),
