@@ -97,6 +97,11 @@ export class ThreadTranscripts {
     return threadHarnessCapabilities(terminalsDb.getById(this.db, terminalId)?.type).restPageable;
   }
 
+  /** Where a thread's transcript file is, and its line parser (memory's conversation index reads it too). */
+  transcriptLocation(terminalId: string): TranscriptLocation | null | 'unsupported' {
+    return this.locateTranscript(terminalId);
+  }
+
   /**
    * Where a thread's transcript file is, and the parser for one line of its format.
    * `null`: no transcript (yet). `'unsupported'`: the thread type never has one.

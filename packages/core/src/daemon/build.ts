@@ -109,6 +109,8 @@ import { createDeliveryOutbox, subscribeDeliveryOutbox } from '../delivery/wirin
 import { wireRestoredQuestions } from '../sessions/boot-reconcile.js';
 import { EndlessService, limitsFromEnv, startEndless } from '../endless/service.js';
 import { MemoryService, projectsFromDb } from '../memory/service.js';
+import { TurnIndexer } from '../memory/turn-indexer.js';
+import { ThreadTranscripts } from '../sessions/thread-transcripts.js';
 import { normalizeBasePath, stripBasePath } from './base-path.js';
 import { NoopPTYManager, type PtyLike } from './noop-pty.js';
 import { wireAuth } from './wire-auth.js';
@@ -225,6 +227,8 @@ export interface DaemonServices {
   endless: EndlessService;
   endlessManager: IStructuredManager;
   memory: MemoryService;
+  /** Conversation search (memory layer 1): indexes each thread's words. */
+  memoryTurns: TurnIndexer;
   // Limits and usage
   usageLimits: UsageLimitService;
   limitSnapshots: LimitSnapshots;
@@ -497,6 +501,12 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     db, projects: () => projectsFromDb(db), broadcast: (e) => broadcaster.broadcast(e),
     business: () => profileRef() === 'business', lastSeq: (id) => journalWiring.journal.lastSeq(id) || null,
   });
+  // Layer 1: the words of each thread, for conversation search. Read when a thread settles and once at start.
+  const transcriptFiles = new ThreadTranscripts(db);
+  const memoryTurns = new TurnIndexer({
+    db, journal: journalWiring.journal, locate: (id) => transcriptFiles.transcriptLocation(id),
+    active: () => memory.active(), skip: (id) => memory.keepsOut(id),
+  });
   // Idle thread processes (os/process-reaper.ts): only when the host sets DISPATCH_IDLE_PROCESS_MINUTES or
   // DISPATCH_MAX_LIVE_PROCESSES. A local install sets neither: no reaper, no hook, nothing changes.
   const processReaper = createProcessReaper({
@@ -534,6 +544,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   // Stage 2: a thread Chat started reports when it settles (finished or asking) or fails.
   endless.setKeyRegistry(keys);
   statusService.addThreadSettledListener(({ terminalId, threadStatus }) => endless.onThreadSettled({ terminalId, threadStatus }));
+  statusService.addThreadSettledListener(({ terminalId }) => memoryTurns.schedule(terminalId));
   onEndlessStatus = (terminalId, status) => endless.onThreadStatus(terminalId, status);
 
   // ── Sign-ins, accounts and limits ───────────────────────────────────────────
@@ -795,7 +806,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     db, dataDir, keys, noCredentialStats: auth.noCredentialStats, accessGate: auth.accessGate, pairCodes: auth.pairCodes, devices: auth.devices,
     authRequestService, claudeLogin, codexLogin, accounts, sockets, broadcaster, ptyManager, sessionService, statusService,
     harnessManagers: harnesses.managers, structuredManager: harnesses.claude, terminalMonitor, threadAutoNamer, stallWatchdog, processReaper,
-    agentService, rolesService, outbox, watchDispatcher, ledgerService, pushService, endless, endlessManager, memory,
+    agentService, rolesService, outbox, watchDispatcher, ledgerService, pushService, endless, endlessManager, memory, memoryTurns,
     usageLimits, limitSnapshots, usageGauge, usage, boxHeartbeat, secretsService, integrationsService, osConnections, toolsAuth,
     refreshSpawnEnv: spawnEnv.refresh, plugins, marketplaces, installer, skills, threadEvents, pluginHooks, pluginWorkers, assistRunner,
   };

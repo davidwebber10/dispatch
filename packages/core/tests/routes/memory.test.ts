@@ -9,6 +9,7 @@ import * as terminalsDb from '../../src/db/terminals.js';
 import * as sessionsDb from '../../src/db/sessions.js';
 import { createApp } from '../../src/server.js';
 import { configureRefusalLog } from '../../src/auth/route-policy.js';
+import { addTurns } from '../../src/db/memory.js';
 
 /** /api/memory (spec 2026-11-17-memory-design.md, part 6): the person, thread keys, scopes. */
 describe('memory routes', () => {
@@ -123,6 +124,20 @@ describe('memory routes', () => {
     expect((await request(app).delete(`/api/memory/pages/${id}`)).status).toBe(200);
     expect((await request(app).get(`/api/memory/pages/${id}`)).status).toBe(404);
     expect((await request(app).get('/api/memory/pages/abc')).status).toBe(404);
+  });
+
+  it('conversation search (in=conversations): a thread sees its own project only; the person sees all or one', async () => {
+    addTurns(db, 'cA', [{ role: 'user', text: 'the rollout plan for A' }], { source: 'x', fileOffset: 1 });
+    addTurns(db, 'cB', [{ role: 'assistant', text: 'the rollout plan for B' }], { source: 'y', fileOffset: 1 });
+    const mine = await request(app).get('/api/memory/search').query({ q: 'rollout', in: 'conversations' }).set(key('xA'));
+    expect(mine.body.results.map((h: any) => h.terminalId)).toEqual(['cA']);
+    const all = await request(app).get('/api/memory/search').query({ q: 'rollout', in: 'conversations' });
+    expect(all.body.results.map((h: any) => h.terminalId).sort()).toEqual(['cA', 'cB']);
+    const one = await request(app).get('/api/memory/search').query({ q: 'rollout', in: 'conversations', project: 'B' });
+    expect(one.body.results.map((h: any) => h.terminalId)).toEqual(['cB']);
+    // A thread cannot widen its search with the project parameter.
+    const wide = await request(app).get('/api/memory/search').query({ q: 'rollout', in: 'conversations', project: 'B' }).set(key('xA'));
+    expect(wide.body.results.map((h: any) => h.terminalId)).toEqual(['cA']);
   });
 
   it('settings: defaults, merge, the cap is clamped', async () => {

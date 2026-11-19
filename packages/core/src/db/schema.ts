@@ -748,4 +748,34 @@ function initializeSchema(db: Database.Database): void {
     CREATE TRIGGER IF NOT EXISTS memory_notes_fts_delete AFTER DELETE ON memory_notes
       BEGIN DELETE FROM memory_fts WHERE rowid = -old.id; END;
   `));
+  // Memory layer 1 (spec 2026-11-17-memory-design.md, section 4.2 and slice 1.4): the words of the person and
+  // the agent in each thread, for conversation search. No model reads them in phase 1. The project of a
+  // turn is its thread's project at search time (a join), so a moved thread needs no rewrite. A cursor
+  // per thread says how far its source was read: a byte offset in its harness file (`source` names the
+  // file), or the journal seq (`last_seq`) for a harness that has no file.
+  migrate(db, 'memory-2-turns', () => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS memory_turns (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        terminal_id TEXT NOT NULL,
+        role        TEXT NOT NULL,
+        ref         TEXT,
+        at          TEXT,
+        text        TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_memory_turns_terminal ON memory_turns(terminal_id, id);
+      CREATE VIRTUAL TABLE IF NOT EXISTS memory_turns_fts USING fts5(text, content='memory_turns', content_rowid='id');
+      CREATE TRIGGER IF NOT EXISTS memory_turns_fts_insert AFTER INSERT ON memory_turns
+        BEGIN INSERT INTO memory_turns_fts(rowid, text) VALUES (new.id, new.text); END;
+      CREATE TRIGGER IF NOT EXISTS memory_turns_fts_delete AFTER DELETE ON memory_turns
+        BEGIN INSERT INTO memory_turns_fts(memory_turns_fts, rowid, text) VALUES ('delete', old.id, old.text); END;
+      CREATE TRIGGER IF NOT EXISTS memory_turns_thread_deleted AFTER DELETE ON terminals
+      BEGIN
+        DELETE FROM memory_turns WHERE terminal_id = OLD.id;
+      END;
+    `);
+    const cols = new Set((db.prepare('PRAGMA table_info(memory_cursors)').all() as { name: string }[]).map((c) => c.name));
+    if (!cols.has('source')) db.exec('ALTER TABLE memory_cursors ADD COLUMN source TEXT');
+    if (!cols.has('file_offset')) db.exec('ALTER TABLE memory_cursors ADD COLUMN file_offset INTEGER NOT NULL DEFAULT 0');
+  });
 }

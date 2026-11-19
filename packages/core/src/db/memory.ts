@@ -323,3 +323,58 @@ export function setOffRecord(db: Database.Database, terminalId: string, off: boo
   db.prepare(`INSERT INTO memory_cursors (terminal_id, off_record) VALUES (?, ?)
     ON CONFLICT(terminal_id) DO UPDATE SET off_record = excluded.off_record`).run(terminalId, off ? 1 : 0);
 }
+
+// ---- conversation turns (layer 1) ----
+
+export interface TurnCursor { terminalId: string; lastSeq: number; source: string | null; fileOffset: number; offRecord: boolean }
+export interface TurnInput { role: 'user' | 'assistant'; text: string; ref?: string | null; at?: string | null }
+export interface TurnHit { id: number; terminalId: string; sessionId: string; thread: string; role: string; ref: string | null; at: string | null; snippet: string }
+
+/** The longest turn text that is indexed; the rest of a very long message is not searchable. */
+export const MAX_TURN_CHARS = 8000;
+
+export function getCursor(db: Database.Database, terminalId: string): TurnCursor {
+  const r = db.prepare('SELECT * FROM memory_cursors WHERE terminal_id = ?').get(terminalId) as
+    { terminal_id: string; last_seq: number; source: string | null; file_offset: number; off_record: number } | undefined;
+  return { terminalId, lastSeq: r?.last_seq ?? 0, source: r?.source ?? null, fileOffset: r?.file_offset ?? 0, offRecord: r?.off_record === 1 };
+}
+
+/** Add the turns read from a thread and move its cursor, in one transaction. */
+export function addTurns(db: Database.Database, terminalId: string, turns: TurnInput[], cursor: { lastSeq?: number; source?: string | null; fileOffset?: number }): number {
+  return db.transaction(() => {
+    const ins = db.prepare('INSERT INTO memory_turns (terminal_id, role, ref, at, text) VALUES (?, ?, ?, ?, ?)');
+    let n = 0;
+    for (const t of turns) {
+      const text = t.text.trim().slice(0, MAX_TURN_CHARS);
+      if (!text) continue;
+      ins.run(terminalId, t.role, t.ref ?? null, t.at ?? null, text);
+      n++;
+    }
+    const old = getCursor(db, terminalId);
+    db.prepare(`INSERT INTO memory_cursors (terminal_id, last_seq, last_at, source, file_offset) VALUES (@id, @seq, @at, @source, @offset)
+      ON CONFLICT(terminal_id) DO UPDATE SET last_seq = @seq, last_at = @at, source = @source, file_offset = @offset`)
+      .run({ id: terminalId, seq: cursor.lastSeq ?? old.lastSeq, at: new Date().toISOString(), source: cursor.source === undefined ? old.source : cursor.source, offset: cursor.fileOffset ?? old.fileOffset });
+    return n;
+  })();
+}
+
+/**
+ * Search the turns of threads that are not off the record. `sessionIds` null: every project
+ * (the person); else only threads that are now in those projects.
+ */
+export function searchTurns(db: Database.Database, q: string, sessionIds: string[] | null, limit = 20): TurnHit[] {
+  const match = ftsQuery(q);
+  if (!match || (sessionIds && !sessionIds.length)) return [];
+  const projects = sessionIds ? `AND t.session_id IN (${sessionIds.map(() => '?').join(', ')})` : '';
+  const rows = db.prepare(`SELECT mt.id, mt.terminal_id, t.session_id, t.label, mt.role, mt.ref, mt.at,
+      snippet(memory_turns_fts, 0, ?, ?, '…', 16) AS snippet
+    FROM memory_turns_fts
+    JOIN memory_turns mt ON mt.id = memory_turns_fts.rowid
+    JOIN terminals t ON t.id = mt.terminal_id
+    LEFT JOIN memory_cursors c ON c.terminal_id = mt.terminal_id
+    WHERE memory_turns_fts MATCH ? AND COALESCE(c.off_record, 0) = 0 ${projects}
+    ORDER BY rank LIMIT ?`)
+    .all(SNIPPET_OPEN, SNIPPET_CLOSE, match, ...(sessionIds ?? []), Math.max(1, Math.min(limit, 100))) as
+    { id: number; terminal_id: string; session_id: string; label: string; role: string; ref: string | null; at: string | null; snippet: string }[];
+  return rows.map((r) => ({ id: r.id, terminalId: r.terminal_id, sessionId: r.session_id, thread: r.label, role: r.role, ref: r.ref, at: r.at, snippet: r.snippet }));
+}
