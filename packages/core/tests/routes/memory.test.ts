@@ -113,8 +113,10 @@ describe('memory routes', () => {
     expect(versions.map((v: any) => v.op)).toEqual(['pin', 'edit', 'create']);
     expect((await request(app).post(`/api/memory/pages/${id}/restore`).send({ versionId: versions[2].id })).body.body).toBe('one');
     const scopes = (await request(app).get('/api/memory/scopes')).body.scopes;
-    expect(scopes.map((s: any) => s.label)).toEqual(['You', 'proj-A', 'proj-B']);
-    expect(scopes[1]).toMatchObject({ scope: 'project:A', pages: 1, remembered: true });
+    // You first; the projects in the projects' own order (sort order, then activity).
+    expect(scopes[0].label).toBe('You');
+    expect(scopes.slice(1).map((s: any) => s.label).sort()).toEqual(['proj-A', 'proj-B']);
+    expect(scopes.find((s: any) => s.scope === 'project:A')).toMatchObject({ pages: 1, remembered: true });
     const block = (await request(app).get('/api/memory/block').query({ project: 'A', harness: 'codex' })).body;
     expect(block.text).toContain('### This project\n- deploy: How to deploy');
     expect(block.chars).toBeLessThanOrEqual(block.cap);
