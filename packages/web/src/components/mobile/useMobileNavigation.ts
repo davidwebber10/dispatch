@@ -37,6 +37,8 @@ function initOf(route: Route): NavInit {
   if (route.view === 'settings') return { level: 0, bottomTab: 'settings', settingsSection: route.section };
   // The desktop's Automations list is the phone's Agents tab.
   if (route.view === 'automations') return { level: 0, bottomTab: 'agents' };
+  // Memory has no bottom tab (the bar is full, spec 2026-11-17-memory-design.md 5.1): Settings → Memory.
+  if (route.view === 'memory') return { level: 0, bottomTab: 'settings', settingsSection: 'memory' };
   return { level: 0, bottomTab: route.view };
 }
 const readInit = (): NavInit => initOf(parseRoute(location.pathname, BASE));
@@ -243,6 +245,9 @@ export function useMobileNavigation() {
       // Push the section once the walk back to the root has landed (onPop runs it), as a tab switch
       // does. This was a 50 ms timer; a walk that took longer left the section on top of the thread.
       if (deep) pendingSpot.current = spot; else restoreSpot(spot);
+    } else if (route.view === 'memory') {
+      // No bottom tab for Memory (the bar is full): Settings → Memory.
+      navigate({ view: 'settings', section: 'memory' });
     } else {
       showTab(route.view === 'automations' ? 'agents' : route.view);
     }

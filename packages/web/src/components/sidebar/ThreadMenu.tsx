@@ -9,7 +9,7 @@ import { useHint } from '../../stores/hint';
 import { useSecrets } from '../../stores/secrets';
 import { canReceiveAlerts, ensurePushEnrolled } from '../../lib/push';
 import { copyText } from '../../lib/clipboard';
-import { THREAD_TYPES } from '../../lib/harnesses';
+import { THREAD_TYPES, AGENT_TYPES } from '../../lib/harnesses';
 import { ConfirmModal } from '../common/ConfirmModal';
 import { RenameThreadModal } from './RenameThreadModal';
 import { AutoArchiveModal } from './AutoArchiveModal';
@@ -21,7 +21,7 @@ import { useIsMobile } from '../../hooks/useIsMobile';
 import { pluginIcon } from '../../plugins/sdk';
 import {
   PencilSimple, GitBranch, UserSwitch, Bell, BellSlash, Info, Copy, ArrowClockwise, ArrowCounterClockwise,
-  Timer, Archive, PushPinSlash, Key, Question, DownloadSimple,
+  Timer, Archive, PushPinSlash, Key, Question, DownloadSimple, EyeSlash,
 } from '@phosphor-icons/react';
 import { can } from '../../lib/profile';
 import type { Icon } from '@phosphor-icons/react';
@@ -159,6 +159,21 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows, inli
   const menuOpen = !!at;
   // No secrets call where Doppler is hidden (lib/profile.ts): the business workspace has none.
   useEffect(() => { if (menuOpen && can('settings.secrets')) void useSecrets.getState().loadScope(); }, [menuOpen]);
+  // Off the record (memory spec 2026-11-17, 5.3): the thread saves nothing to memory, and its words stay
+  // out of conversation search. Read when the menu opens for an agent thread.
+  const [offRecord, setOffRecordState] = useState<{ id: string; on: boolean } | null>(null);
+  const memoryThread = at && can('memory') && AGENT_TYPES.includes(at.tab.type) ? at.tab.id : null;
+  useEffect(() => {
+    if (!memoryThread) return;
+    let live = true;
+    Promise.resolve().then(() => api.memoryThread(memoryThread)).then((r) => { if (live) setOffRecordState({ id: memoryThread, on: r.offRecord }); }).catch(() => {});
+    return () => { live = false; };
+  }, [memoryThread]);
+  async function toggleOffRecord(tab: Terminal) {
+    const on = !(offRecord?.id === tab.id && offRecord.on);
+    try { await api.memorySetOffRecord(tab.id, on); setOffRecordState({ id: tab.id, on }); }
+    catch { useHint.getState().show('Could not change "Off the record". Try again.'); }
+  }
 
   async function archive(tab: Terminal) {
     setArchiveTarget(null);
@@ -309,6 +324,17 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows, inli
                 {row('reset', ArrowCounterClockwise, 'Reset status', pick((x) => void resetStatus(x)), 'Clear a stuck Working or Needs-you state')}
                 {row('why', Question, 'Why is this thread in this state?', pick(setWhyTarget), 'Explains the status and lists the last events')}
                 {row('auto-archive', Timer, 'Auto-archive…', pick(setAutoArchiveTarget), 'Archive the thread on its own after a set time')}
+                {offRecord?.id === t.id && (
+                  <button key="off-record" type="button" role="switch" aria-checked={offRecord.on} aria-label="Off the record"
+                    onClick={pick((x) => void toggleOffRecord(x))} style={{ ...z.row, alignItems: 'flex-start' }}>
+                    <EyeSlash size={z.icon} style={{ flexShrink: 0, marginTop: 1 }} />
+                    <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
+                      <span>Off the record</span>
+                      <span style={{ fontSize: fontVar(z.hint), color: 'var(--color-text-tertiary)' }}>This thread saves nothing to memory, and its words stay out of search.</span>
+                    </span>
+                    <span style={{ flexShrink: 0, fontSize: fontVar(z.hint), fontWeight: 600, color: offRecord.on ? 'var(--color-accent)' : 'var(--color-text-tertiary)' }}>{offRecord.on ? 'On' : 'Off'}</span>
+                  </button>
+                )}
                 {tokenOptIn && canTakeToken(t) && can('settings.secrets') && (
                   <button key="secrets-env" type="button" role="switch" aria-checked={secretsEnvOn(t)} aria-label="Doppler token in this thread's shell"
                     onClick={pick((x) => void toggleSecretsEnv(x))} style={{ ...z.row, alignItems: 'flex-start' }}>

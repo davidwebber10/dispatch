@@ -20,7 +20,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 test('renders the section nav and the autosave footer, without the daemon block or the shortcut hint (2026-11-07)', () => {
   render(<SettingsView />);
-  for (const label of ['Appearance', 'Notifications', 'Dictation', 'Agents', 'Accounts', 'Usage limits', 'Integrations', 'Secrets', 'Tools', 'Devices & access', 'Servers', 'Plugins', 'Skills', 'About & updates']) {
+  for (const label of ['Appearance', 'Notifications', 'Memory', 'Dictation', 'Agents', 'Accounts', 'Usage limits', 'Integrations', 'Secrets', 'Tools', 'Devices & access', 'Servers', 'Plugins', 'Skills', 'About & updates']) {
     expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
   }
   expect(screen.queryByRole('button', { name: 'General' })).toBeNull();
@@ -33,7 +33,7 @@ test('renders the section nav and the autosave footer, without the daemon block 
 test('the nav is grouped YOU / AGENTS / THIS MAC, each holding its sections', () => {
   render(<SettingsView />);
   const names = (g: string) => within(screen.getByRole('group', { name: g })).getAllByRole('button').map((b) => b.textContent);
-  expect(names('YOU')).toEqual(['Appearance', 'Notifications', 'Dictation']);
+  expect(names('YOU')).toEqual(['Appearance', 'Notifications', 'Memory', 'Dictation']);
   expect(names('AGENTS')).toEqual(['Agents', 'Accounts', 'Usage limits', 'Integrations', 'Secrets', 'Tools']);
   expect(names('THIS MAC')).toEqual(['Devices & access', 'Servers', 'Plugins', 'Skills', 'About & updates']);
 });

@@ -15,7 +15,7 @@ import { can, pluginViewAllowed } from '../../lib/profile';
 import { useNavigation } from '../../stores/navigation';
 import { useOsConnections } from '../../stores/osConnections';
 import { THREADS_ICON } from '../common/viewIcons';
-import { ChartBar, ChatCircleDots, Network, Timer, PlugsConnected } from '@phosphor-icons/react';
+import { Brain, ChartBar, ChatCircleDots, Network, Timer, PlugsConnected } from '@phosphor-icons/react';
 
 // A hosted workspace (and the business preview) wears the Polywood OS shell: OsLeftRail in place of the
 // icon rail, holding `rail` (the Threads | Projects list). A local install keeps the icon rail.
@@ -32,6 +32,7 @@ export function AppShell({ children, rail }: { children: ReactNode; rail?: React
   const nav = os ? [
     { key: 'threads', icon: THREADS_ICON, label: 'Threads', active: view === 'workspace', onSelect: () => go('workspace') },
     ...(can('endless') ? [{ key: 'chat', icon: ChatCircleDots, label: 'Chat', active: view === 'chat', onSelect: () => go('chat') }] : []),
+    ...(can('memory') ? [{ key: 'memory', icon: Brain, label: 'Memory', active: view === 'memory', onSelect: () => go('memory') }] : []),
     ...(can('control-plane') && activeProject ? [{ key: 'control', icon: Network, label: dispatchName, active: false, onSelect: () => { go('workspace'); useTabs.getState().openDispatch(activeProject); } }] : []),
     ...(can('analytics') ? [{ key: 'analytics', icon: ChartBar, label: 'Analytics', active: view === 'analytics', onSelect: () => go('analytics') }] : []),
     // Automations across every project (the list the phone shows), then the Inbox and the other plugin screens.
