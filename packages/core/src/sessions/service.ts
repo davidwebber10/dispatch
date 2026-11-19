@@ -300,6 +300,10 @@ export class SessionService {
     this.wiring.toolsAwareness = fn;
   }
 
+  setMemoryOn(fn: () => boolean): void {
+    this.wiring.memoryOn = fn;
+  }
+
   registerStructuredManager(type: string, manager: import('../structured/manager.js').IStructuredManager): void { this.harnesses.registerStructuredManager(type, manager); }
 
   setStructuredManager(m: import('../structured/manager.js').IStructuredManager): void {

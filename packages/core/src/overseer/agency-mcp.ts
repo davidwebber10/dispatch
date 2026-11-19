@@ -346,6 +346,45 @@ export const TOOLS = [
     description: 'The skills this Dispatch has: id, name, version, description, and whether each is enabled. Read-only. Enabled skills are already in your system prompt under "## Skill:".',
     inputSchema: { type: 'object', properties: {} },
   },
+  // --- memory (docs/superpowers/specs/2026-11-17-memory-design.md, section 4.3): listed only when DISPATCH_MEMORY=1 ---
+  {
+    name: 'memory_search',
+    description:
+      'Search your memory: the pages and notes of "you" (the person) and of this project. ' +
+      'Returns short snippets, each with its page slug or note id.',
+    inputSchema: {
+      type: 'object',
+      properties: { query: { type: 'string', description: 'Words to look for.' } },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'memory_read',
+    description:
+      'Read one memory page by its slug: its text, when it changed and was last checked, and newer notes about it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        slug: { type: 'string', description: 'The page slug, e.g. from memory_search or the Memory block.' },
+        scope: { type: 'string', enum: ['you', 'project'], description: 'Optional: which memory. Default: this project first, then "you".' },
+      },
+      required: ['slug'],
+    },
+  },
+  {
+    name: 'remember',
+    description:
+      'Save a note to memory. Every later thread can find it at once.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'The note, as a plain statement (at most 2,000 characters).' },
+        about: { type: 'string', description: 'Optional: the slug of a page that this note corrects or extends.' },
+        scope: { type: 'string', enum: ['you', 'project'], description: 'Optional: "you" for the person (true in every project), "project" for this project. Default: this project.' },
+      },
+      required: ['text'],
+    },
+  },
   // --- peer/thread tools: every non-archived thread in the project, not just typed agents ---
   {
     name: 'list_projects',
@@ -958,6 +997,55 @@ async function listThreads(args: { projectId?: string }): Promise<Array<{
   }));
 }
 
+// --- memory -----------------------------------------------------------------
+
+/** The search snippet markers (db/memory.ts) as plain emphasis. */
+const plainSnippet = (s: string): string => s.replace(/\u0002/g, '**').replace(/\u0003/g, '**');
+
+/** A memory call: the daemon's own sentence on a refusal ("This thread is off the record ..."), not the HTTP line. */
+async function memoryJson(method: string, url: string, body?: unknown): Promise<any> {
+  try {
+    return await httpJson(method, url, body);
+  } catch (err: any) {
+    const m = /-> \d{3} [^:]*: (\{.*\})$/s.exec(String(err?.message ?? ''));
+    if (m) { try { const e = JSON.parse(m[1]); if (typeof e?.error === 'string') throw new Error(e.error); } catch (inner) { if (inner instanceof Error && !(inner instanceof SyntaxError)) throw inner; } }
+    throw err;
+  }
+}
+
+async function memorySearch(args: { query?: string }): Promise<unknown> {
+  const q = typeof args?.query === 'string' ? args.query.trim() : '';
+  if (!q) throw new Error('query is required');
+  const r = await memoryJson('GET', `${apiBase()}/api/memory/search?q=${encodeURIComponent(q)}&limit=20`);
+  const results = (Array.isArray(r?.results) ? r.results : []).map((h: any) => ({
+    ...(h.kind === 'page' ? { page: h.slug } : { note: h.id, ...(h.slug ? { about: h.slug } : {}) }),
+    in: h.scope === 'you' ? 'you' : 'project',
+    snippet: plainSnippet(String(h.snippet ?? '')),
+  }));
+  return results.length ? { results } : { results, hint: 'Nothing found. Try other words.' };
+}
+
+async function memoryRead(args: { slug?: string; scope?: string }): Promise<unknown> {
+  const slug = typeof args?.slug === 'string' ? args.slug.trim() : '';
+  if (!slug) throw new Error('slug is required');
+  const scope = args?.scope === 'you' || args?.scope === 'project' ? `&scope=${args.scope}` : '';
+  const r = await memoryJson('GET', `${apiBase()}/api/memory/read?slug=${encodeURIComponent(slug)}${scope}`);
+  const p = r?.page ?? {};
+  return {
+    slug: p.slug, in: p.scope === 'you' ? 'you' : 'project', description: p.description, text: p.body,
+    changed: p.updatedAt, changedBy: p.updatedBy, lastChecked: p.verifiedAt ?? null,
+    newerNotes: (Array.isArray(r?.notes) ? r.notes : []).map((n: any) => ({ note: n.id, text: n.text, at: n.createdAt })),
+  };
+}
+
+async function remember(args: { text?: string; about?: string; scope?: string }): Promise<unknown> {
+  const body: Record<string, unknown> = { text: typeof args?.text === 'string' ? args.text : '' };
+  if (typeof args?.about === 'string' && args.about.trim()) body.about = args.about.trim();
+  if (args?.scope === 'you' || args?.scope === 'project') body.scope = args.scope;
+  const n = await memoryJson('POST', `${apiBase()}/api/memory/notes`, body);
+  return { saved: true, note: n?.id, in: n?.scope === 'you' ? 'you' : 'project' };
+}
+
 /** Generalizes read_agent to any thread in the project (after a project-scope check). */
 async function readThread(args: { id: string; tail?: number }): Promise<{ id: string; status: string | null; output: string; tools: string[] }> {
   if (!args?.id) throw new Error('id is required');
@@ -1301,6 +1389,10 @@ export async function callTool(
       case 'watch_thread': result = await watchThread(args ?? {}); break;
       case 'unwatch_thread': result = await unwatchThread(args ?? {}); break;
       case 'list_watches': result = await listWatches(); break;
+      case 'memory_search': case 'memory_read': case 'remember':
+        if (!memoryToolsListed()) throw new Error('Memory is not available in this thread.');
+        result = name === 'memory_search' ? await memorySearch(args ?? {}) : name === 'memory_read' ? await memoryRead(args ?? {}) : await remember(args ?? {});
+        break;
       case 'report_status':
         if (statusToolHidden()) throw new Error('report_status is not available in this thread.');
         result = await reportStatus(args ?? {}); break;
@@ -1350,8 +1442,17 @@ export const STATUS_TOOLS: readonly string[] = ['report_status'];
 export function statusToolHidden(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.DISPATCH_NO_STATUS_TOOL === '1' || env.DISPATCH_REPORT_STATUS === '0';
 }
+/**
+ * The memory tools are listed only when the spawner says memory is on for this thread
+ * (DISPATCH_MEMORY=1, sessions/spawn-injection.ts): a keyed thread, memory on, not the business profile.
+ */
+export const MEMORY_TOOLS: readonly string[] = ['memory_search', 'memory_read', 'remember'];
+export function memoryToolsListed(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.DISPATCH_MEMORY === '1';
+}
 export function listedTools(env: NodeJS.ProcessEnv = process.env): ReadonlyArray<(typeof TOOLS)[number]> {
-  return statusToolHidden(env) ? TOOLS.filter((t) => !STATUS_TOOLS.includes(t.name)) : TOOLS;
+  const hidden = [...(statusToolHidden(env) ? STATUS_TOOLS : []), ...(memoryToolsListed(env) ? [] : MEMORY_TOOLS)];
+  return hidden.length ? TOOLS.filter((t) => !hidden.includes(t.name)) : TOOLS;
 }
 
 /**

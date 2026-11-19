@@ -41,7 +41,7 @@ describe('agency-mcp', () => {
       'list_projects', 'list_threads', 'list_watches', 'message_agent', 'message_thread', 'plugin_list', 'post_image', 'queue_agent', 'read_agent',
       'read_thread', 'report_status', 'skill_list', 'spawn_agent', 'start_agent', 'unwatch_thread', 'watch_thread',
     ]);
-    expect(TOOLS).toHaveLength(30);
+    expect(TOOLS).toHaveLength(33); // memory_search, memory_read and remember are listed only with DISPATCH_MEMORY=1
   });
 
   it('initialize returns protocolVersion + tools capability', async () => {

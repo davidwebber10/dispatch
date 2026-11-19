@@ -338,6 +338,9 @@ export class SpawnInjection {
         ...(api ? { DISPATCH_API: api } : {}),
         // A chat thread on a hosted box gets no status tool (overseer/agency-mcp.ts listedTools).
         ...(this.isHostedChat(terminalId) ? { DISPATCH_NO_STATUS_TOOL: '1' } : {}),
+        // The memory tools (memory_search, memory_read, remember) need the thread's own key: the daemon
+        // scopes them by the key's project. Listed only when memory is on (memory/service.ts available()).
+        ...(authEnv && this.wiring.memoryOn?.() ? { DISPATCH_MEMORY: '1' } : {}),
       },
       ...(authEnv ? { authEnv: true } : {}),
       // Ships with Dispatch: a hosted business thread keeps it (os/hosted-mcp-policy.ts). Its tools
