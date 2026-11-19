@@ -54,7 +54,8 @@ export interface NoteInput {
   seqFrom?: number | null; seqTo?: number | null; harness?: string | null; askedByUser?: boolean; externalContext?: boolean;
   sourceRef?: string | null; createdAt?: string;
 }
-export interface MemorySearchHit { kind: 'page' | 'note'; id: number; scope: MemoryScope; slug: string | null; snippet: string }
+/** `source`: 'dispatch' for pages and notes, the provider id for a mirrored entry (kind 'entry', `slug` = its title). */
+export interface MemorySearchHit { kind: 'page' | 'note' | 'entry'; id: number; scope: MemoryScope; slug: string | null; snippet: string; source: string }
 export interface ScopeCounts { scope: MemoryScope; pages: number; newNotes: number }
 
 /** Snippet highlight markers: control characters that never occur in typed text (as in Chat search). */
@@ -308,8 +309,15 @@ export function search(db: Database.Database, q: string, scopes: MemoryScope[], 
   const marks = scopes.map(() => '?').join(', ');
   const rows = db.prepare(`SELECT rowid AS rid, scope, kind, slug, snippet(memory_fts, 1, ?, ?, '…', 16) AS snippet
     FROM memory_fts WHERE memory_fts MATCH ? AND scope IN (${marks}) ORDER BY bm25(memory_fts, 4.0, 1.0) LIMIT ?`)
-    .all(SNIPPET_OPEN, SNIPPET_CLOSE, match, ...scopes, Math.max(1, Math.min(limit, 100))) as { rid: number; scope: string; kind: 'page' | 'note'; slug: string; snippet: string }[];
-  return rows.map((r) => ({ kind: r.kind, id: Math.abs(r.rid), scope: r.scope, slug: r.slug || null, snippet: r.snippet }));
+    .all(SNIPPET_OPEN, SNIPPET_CLOSE, match, ...scopes, Math.max(1, Math.min(limit, 100))) as { rid: number; scope: string; kind: 'page' | 'note' | 'entry'; slug: string; snippet: string }[];
+  const providerOf = db.prepare('SELECT provider FROM memory_mirror WHERE id = ?');
+  return rows.map((r) => {
+    if (r.kind === 'entry') {
+      const id = r.rid - MIRROR_ROWID_BASE;
+      return { kind: 'entry' as const, id, scope: r.scope, slug: r.slug || null, snippet: r.snippet, source: (providerOf.get(id) as { provider: string } | undefined)?.provider ?? 'unknown' };
+    }
+    return { kind: r.kind, id: Math.abs(r.rid), scope: r.scope, slug: r.slug || null, snippet: r.snippet, source: 'dispatch' };
+  });
 }
 
 // ---- threads ----
@@ -377,4 +385,60 @@ export function searchTurns(db: Database.Database, q: string, sessionIds: string
     .all(SNIPPET_OPEN, SNIPPET_CLOSE, match, ...(sessionIds ?? []), Math.max(1, Math.min(limit, 100))) as
     { id: number; terminal_id: string; session_id: string; label: string; role: string; ref: string | null; at: string | null; snippet: string }[];
   return rows.map((r) => ({ id: r.id, terminalId: r.terminal_id, sessionId: r.session_id, thread: r.label, role: r.role, ref: r.ref, at: r.at, snippet: r.snippet }));
+}
+
+// ---- the provider mirror (spec 4.8) ----
+
+/** memory_fts rowids of mirrored entries start here (pages: +id, notes: -id). */
+export const MIRROR_ROWID_BASE = 1099511627776;
+
+export interface MirrorRow {
+  id: number; provider: string; scope: MemoryScope; rel: string; path: string | null; sha: string; mtimeMs: number;
+  title: string; description: string; text: string; writable: boolean; syncedAt: string;
+}
+interface MirrorDbRow { id: number; provider: string; scope: string; rel: string; path: string | null; sha: string; mtime: number; title: string; description: string; text: string; writable: number; synced_at: string }
+const toMirror = (r: MirrorDbRow): MirrorRow => ({ id: r.id, provider: r.provider, scope: r.scope, rel: r.rel, path: r.path, sha: r.sha, mtimeMs: r.mtime, title: r.title, description: r.description, text: r.text, writable: r.writable === 1, syncedAt: r.synced_at });
+
+export interface MirrorInput { rel: string; path?: string | null; sha: string; mtimeMs: number; title: string; description: string; text: string; writable: boolean }
+
+/**
+ * Make the mirror of one provider and scope equal to `entries`: insert new ones, update a changed sha,
+ * delete the rows whose file is gone. Returns how many rows changed.
+ */
+export function syncMirror(db: Database.Database, provider: string, scope: MemoryScope, entries: MirrorInput[]): number {
+  return db.transaction(() => {
+    const rows = new Map((db.prepare('SELECT * FROM memory_mirror WHERE provider = ? AND scope = ?').all(provider, scope) as MirrorDbRow[]).map((r) => [r.rel, r]));
+    const at = now();
+    let changed = 0;
+    for (const e of entries) {
+      const old = rows.get(e.rel);
+      rows.delete(e.rel);
+      if (old && old.sha === e.sha && old.title === e.title && old.writable === (e.writable ? 1 : 0)) continue;
+      db.prepare(`INSERT INTO memory_mirror (provider, scope, rel, path, sha, mtime, title, description, text, writable, synced_at)
+        VALUES (@provider, @scope, @rel, @path, @sha, @mtime, @title, @description, @text, @writable, @at)
+        ON CONFLICT(provider, scope, rel) DO UPDATE SET path = @path, sha = @sha, mtime = @mtime, title = @title, description = @description,
+          text = @text, writable = @writable, synced_at = @at`)
+        .run({ provider, scope, rel: e.rel, path: e.path ?? null, sha: e.sha, mtime: Math.round(e.mtimeMs), title: e.title, description: e.description, text: e.text, writable: e.writable ? 1 : 0, at });
+      changed++;
+    }
+    for (const gone of rows.values()) { db.prepare('DELETE FROM memory_mirror WHERE id = ?').run(gone.id); changed++; }
+    return changed;
+  })();
+}
+
+/** Forget a provider's mirror (its "Dispatch reads it" switch went off). */
+export function clearMirror(db: Database.Database, provider: string): number {
+  return db.prepare('DELETE FROM memory_mirror WHERE provider = ?').run(provider).changes;
+}
+
+export function listMirror(db: Database.Database, scopes: MemoryScope[], provider?: string): MirrorRow[] {
+  if (!scopes.length) return [];
+  const rows = db.prepare(`SELECT * FROM memory_mirror WHERE scope IN (${scopes.map(() => '?').join(', ')}) ${provider ? 'AND provider = ?' : ''}
+    ORDER BY provider, title`).all(...scopes, ...(provider ? [provider] : [])) as MirrorDbRow[];
+  return rows.map(toMirror);
+}
+
+export function getMirror(db: Database.Database, id: number): MirrorRow | null {
+  const r = db.prepare('SELECT * FROM memory_mirror WHERE id = ?').get(id) as MirrorDbRow | undefined;
+  return r ? toMirror(r) : null;
 }

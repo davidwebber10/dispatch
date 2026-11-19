@@ -7,7 +7,7 @@ import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, Se
 import type { SpinnerVerbs, SpinnerSet, ChatSettings, ThreadDiagnostics } from './types';
 import type { ThreadDiff, DiscardResult, ThreadWorktree, ThreadWorktreeState } from './types';
 import { accountDisplayLabel } from '../lib/hostCopy';
-import type { MemoryScopeInfo, MemoryPageSummary, MemoryPage, MemoryNote, MemoryVersion, MemorySearchHit, MemoryTurnHit, MemorySettings } from './types';
+import type { MemoryScopeInfo, MemoryPageSummary, MemoryPage, MemoryNote, MemoryVersion, MemorySearchHit, MemoryTurnHit, MemorySettings, MemoryProviderInfo, MemoryEntry } from './types';
 import type { EndlessPage, EndlessState, EndlessSearchHit, EndlessView, EndlessProject, EndlessProjectsResponse, EndlessImage, EndlessFile, EndlessDocCopy, EndlessDocRow, ClaudeLoginSession, UpdateProgress, ThreadUsageLimits, UsageSummary, UsageLimitSettings } from './types';
 
 /**
@@ -638,6 +638,14 @@ export const api = {
   memorySearch: (q: string, scope?: string) => req<{ results: MemorySearchHit[] }>(`/api/memory/search?q=${encodeURIComponent(q)}${scope ? `&scope=${encodeURIComponent(scope)}` : ''}`),
   memorySearchConversations: (q: string, project?: string | null) => req<{ results: MemoryTurnHit[] }>(`/api/memory/search?in=conversations&q=${encodeURIComponent(q)}${project ? `&project=${encodeURIComponent(project)}` : ''}`),
   memoryBlock: (project: string | null) => req<{ text: string; chars: number; cap: number }>(`/api/memory/block${project ? `?project=${encodeURIComponent(project)}` : ''}`),
+  memoryProviders: (project: string | null) => req<{ providers: MemoryProviderInfo[] }>(`/api/memory/providers${project ? `?project=${encodeURIComponent(project)}` : ''}`),
+  memorySetProviderRead: (id: string, reading: boolean) => req<{ providers: MemoryProviderInfo[] }>(`/api/memory/providers/${encodeURIComponent(id)}`, { method: 'PUT', body: body({ reading }) }),
+  memoryEntries: (scope: string) => req<{ entries: MemoryEntry[] }>(`/api/memory/entries?scope=${encodeURIComponent(scope)}`),
+  /** Write-through. A 409 means the file changed: the error carries no text; call memoryEntryConflict to read it. */
+  memoryAddEntry: (provider: string, p: { scope: string; title?: string; description?: string; text: string }) =>
+    req<{ ok: true; entry: MemoryEntry | null }>(`/api/memory/providers/${encodeURIComponent(provider)}/entries`, { method: 'POST', body: body(p) }),
+  memoryUpdateEntry: (id: number, text: string, expectedSha: string) => req<{ ok: true; entry: MemoryEntry | null }>(`/api/memory/entries/${id}`, { method: 'PUT', body: body({ text, expectedSha }) }),
+  memoryDeleteEntry: (id: number, expectedSha: string) => req<{ ok: true }>(`/api/memory/entries/${id}?expectedSha=${encodeURIComponent(expectedSha)}`, { method: 'DELETE' }),
   memorySettings: () => req<MemorySettings>('/api/memory/settings'),
   memoryUpdateSettings: (p: Partial<Omit<MemorySettings, 'available'>>) => req<MemorySettings>('/api/memory/settings', { method: 'PUT', body: body(p) }),
   memoryThread: (terminalId: string) => req<{ offRecord: boolean }>(`/api/memory/threads/${encodeURIComponent(terminalId)}`),

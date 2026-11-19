@@ -95,6 +95,17 @@ describe('memory tools in the dispatch MCP server', () => {
     expect(r.results).toEqual([expect.objectContaining({ thread: 'claudeA', who: 'person', snippet: expect.stringContaining('**rollout**') })]);
   });
 
+  it('memory_search with no query returns the index; every result names its source', async () => {
+    as('claudeA', 'A');
+    await callTool('remember', { text: 'Integration tests need FOO=1.' });
+    const ix = json(await callTool('memory_search', {}));
+    expect(ix.newestNotes).toEqual([expect.objectContaining({ text: 'Integration tests need FOO=1.', source: 'dispatch' })]);
+    expect(ix).toHaveProperty('pages');
+    expect(ix).toHaveProperty('entries');
+    const hits = json(await callTool('memory_search', { query: 'integration' })).results;
+    expect(hits.every((h: any) => typeof h.source === 'string')).toBe(true);
+  });
+
   it('an off-the-record thread cannot write a note: the tool says why', async () => {
     await fetch(`${process.env.DISPATCH_API}/api/memory/threads/claudeA`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ offRecord: true }) });
     as('claudeA', 'A');

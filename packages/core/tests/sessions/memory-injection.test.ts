@@ -32,8 +32,9 @@ function makeService() {
   for (const id of ['s1', 's2']) sessionsDb.create(db, { id, provider: 'claude-code', name: id, workingDir: tmpDir });
   const memory = new MemoryService({ db, projects: () => projectsFromDb(db) });
   updateMemorySettings(db, { enabled: true }); // off by default
-  memory.createPage({ scope: 'project:s1', slug: 'deploy', description: 'How s1 deploys' });
-  memory.createPage({ scope: 'project:s2', slug: 'other', description: 'Only for s2' });
+  memory.createPage({ scope: 'project:s1', slug: 'deploy', description: 'How s1 deploys', pinned: true });
+  memory.createPage({ scope: 'project:s2', slug: 'other', description: 'Only for s2', pinned: true });
+  memory.createPage({ scope: 'you', slug: 'how-i-work', description: 'Short replies', pinned: true });
   memory.addUserNote({ scope: 'you', text: 'Replies are short.' });
   const pty = new CapturingPty();
   const svc = new SessionService(db, pty, path.join(tmpDir, 'mcp.json'));
@@ -58,7 +59,8 @@ describe('the memory block at spawn', () => {
     const prompt = claudePrompt(pty.calls.find((c) => c.command === 'claude')!.args);
     expect(prompt).toContain('## Memory');
     expect(prompt).toContain('- deploy: How s1 deploys');
-    expect(prompt).toContain('- Replies are short. (you)');
+    expect(prompt).toContain('- how-i-work: Short replies (you)');
+    expect(prompt).not.toContain('Replies are short.'); // notes are found with memory_search, not injected
     expect(prompt).not.toContain('Only for s2');
   });
 

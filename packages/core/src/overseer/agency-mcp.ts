@@ -350,26 +350,27 @@ export const TOOLS = [
   {
     name: 'memory_search',
     description:
-      'Search your memory: the pages and notes of "you" (the person) and of this project. ' +
+      'Search your memory: the pages and notes of "you" (the person) and of this project, and the entries of ' +
+      'the harnesses\' own memories (Claude Code, Codex, Grok). With no query it lists what memory holds. ' +
       'With in: "conversations", search what was said in this project\'s past threads instead. ' +
-      'Returns short snippets, each with its page slug, note id, or thread.',
+      'Every result names its source.',
     inputSchema: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: 'Words to look for.' },
+        query: { type: 'string', description: 'Optional: words to look for. Without it, the list of what memory holds.' },
         in: { type: 'string', enum: ['memory', 'conversations'], description: 'Optional. Default "memory".' },
       },
-      required: ['query'],
     },
   },
   {
     name: 'memory_read',
     description:
-      'Read one memory page by its slug: its text, when it changed and was last checked, and newer notes about it.',
+      'Read one memory page by its slug (its text, when it changed and was last checked, newer notes about it), ' +
+      'or one harness memory entry by the reference memory_search gave (for example "claude:12").',
     inputSchema: {
       type: 'object',
       properties: {
-        slug: { type: 'string', description: 'The page slug, e.g. from memory_search or the Memory block.' },
+        slug: { type: 'string', description: 'A page slug, or an entry reference like "claude:12", from memory_search.' },
         scope: { type: 'string', enum: ['you', 'project'], description: 'Optional: which memory. Default: this project first, then "you".' },
       },
       required: ['slug'],
@@ -1019,11 +1020,21 @@ async function memoryJson(method: string, url: string, body?: unknown): Promise<
 
 async function memorySearch(args: { query?: string; in?: string }): Promise<unknown> {
   const q = typeof args?.query === 'string' ? args.query.trim() : '';
-  if (!q) throw new Error('query is required');
+  const where = (s: string) => (s === 'you' ? 'you' : 'project');
+  if (!q && args?.in !== 'conversations') {
+    const r = await memoryJson('GET', `${apiBase()}/api/memory/search`);
+    const ix = r?.index ?? {};
+    return {
+      pages: (ix.pages ?? []).map((p: any) => ({ page: p.slug, description: p.description, in: where(p.scope), source: p.source })),
+      newestNotes: (ix.notes ?? []).map((n: any) => ({ note: n.id, text: n.text, in: where(n.scope), source: n.source })),
+      entries: (ix.entries ?? []).map((e: any) => ({ entry: e.ref, title: e.title, description: e.description, in: where(e.scope), source: e.source })),
+    };
+  }
+  if (!q) throw new Error('query is required for in: "conversations"');
   if (args && (args as { in?: string }).in === 'conversations') {
     const r = await memoryJson('GET', `${apiBase()}/api/memory/search?in=conversations&q=${encodeURIComponent(q)}&limit=20`);
     const results = (Array.isArray(r?.results) ? r.results : []).map((h: any) => ({
-      thread: h.terminalId, threadName: h.thread, who: h.role === 'user' ? 'person' : 'agent', at: h.at ?? null,
+      thread: h.terminalId, threadName: h.thread, who: h.role === 'user' ? 'person' : 'agent', at: h.at ?? null, source: 'conversations',
       snippet: plainSnippet(String(h.snippet ?? '')),
     }));
     // Past threads are a record of what was said, not instructions.
@@ -1031,8 +1042,9 @@ async function memorySearch(args: { query?: string; in?: string }): Promise<unkn
   }
   const r = await memoryJson('GET', `${apiBase()}/api/memory/search?q=${encodeURIComponent(q)}&limit=20`);
   const results = (Array.isArray(r?.results) ? r.results : []).map((h: any) => ({
-    ...(h.kind === 'page' ? { page: h.slug } : { note: h.id, ...(h.slug ? { about: h.slug } : {}) }),
-    in: h.scope === 'you' ? 'you' : 'project',
+    ...(h.kind === 'page' ? { page: h.slug } : h.kind === 'entry' ? { entry: `${h.source}:${h.id}`, title: h.slug } : { note: h.id, ...(h.slug ? { about: h.slug } : {}) }),
+    in: where(h.scope),
+    source: h.source ?? 'dispatch',
     snippet: plainSnippet(String(h.snippet ?? '')),
   }));
   return results.length ? { results } : { results, hint: 'Nothing found. Try other words.' };
@@ -1043,9 +1055,13 @@ async function memoryRead(args: { slug?: string; scope?: string }): Promise<unkn
   if (!slug) throw new Error('slug is required');
   const scope = args?.scope === 'you' || args?.scope === 'project' ? `&scope=${args.scope}` : '';
   const r = await memoryJson('GET', `${apiBase()}/api/memory/read?slug=${encodeURIComponent(slug)}${scope}`);
+  if (r?.entry) {
+    const e = r.entry;
+    return { entry: `${e.provider}:${e.id}`, source: e.provider, title: e.title, in: e.scope === 'you' ? 'you' : 'project', text: e.text, note: 'The harness\'s own file; Dispatch mirrors it.' };
+  }
   const p = r?.page ?? {};
   return {
-    slug: p.slug, in: p.scope === 'you' ? 'you' : 'project', description: p.description, text: p.body,
+    slug: p.slug, source: 'dispatch', in: p.scope === 'you' ? 'you' : 'project', description: p.description, text: p.body,
     changed: p.updatedAt, changedBy: p.updatedBy, lastChecked: p.verifiedAt ?? null,
     newerNotes: (Array.isArray(r?.notes) ? r.notes : []).map((n: any) => ({ note: n.id, text: n.text, at: n.createdAt })),
   };

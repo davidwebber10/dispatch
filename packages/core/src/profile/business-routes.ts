@@ -478,6 +478,13 @@ export const BUSINESS_ROUTES: Readonly<Record<string, BusinessRow>> = {
   'PUT /api/memory/settings': memory,
   'GET /api/memory/threads/:terminalId': memory,
   'PUT /api/memory/threads/:terminalId': memory,
+  'GET /api/memory/providers': memory,
+  'PUT /api/memory/providers/:id': memory,
+  'POST /api/memory/providers/:id/entries': memory,
+  'GET /api/memory/entries': memory,
+  'GET /api/memory/entries/:id': memory,
+  'PUT /api/memory/entries/:id': memory,
+  'DELETE /api/memory/entries/:id': memory,
 
   // ── the page itself ─────────────────────────────────────────────────────────────────────────────
   'GET /plugins/:id/*': allow(),

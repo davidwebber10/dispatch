@@ -121,7 +121,7 @@ describe('memory routes', () => {
     expect(scopes.slice(1).map((s: any) => s.label).sort()).toEqual(['proj-A', 'proj-B']);
     expect(scopes.find((s: any) => s.scope === 'project:A')).toMatchObject({ pages: 1, remembered: true });
     const block = (await request(app).get('/api/memory/block').query({ project: 'A', harness: 'codex' })).body;
-    expect(block.text).toContain('### This project\n- deploy: How to deploy');
+    expect(block.text).toContain('Pinned by the person:\n- deploy: How to deploy');
     expect(block.chars).toBeLessThanOrEqual(block.cap);
     expect((await request(app).delete(`/api/memory/pages/${id}`)).status).toBe(200);
     expect((await request(app).get(`/api/memory/pages/${id}`)).status).toBe(404);
@@ -151,8 +151,21 @@ describe('memory routes', () => {
     expect((await request(app).put('/api/memory/settings').send({ enabled: true })).body).toMatchObject({ enabled: true, available: true });
   });
 
+  it('providers: a thread key reads entries and the index, never writes through or changes a switch', async () => {
+    expect((await request(app).post('/api/memory/providers/claude/entries').set(key('cA')).send({ scope: 'project:A', text: 'x' })).status).toBe(403);
+    expect((await request(app).put('/api/memory/entries/1').set(key('cA')).send({ text: 'x', expectedSha: 'y' })).status).toBe(403);
+    expect((await request(app).delete('/api/memory/entries/1').set(key('cA'))).status).toBe(403);
+    expect((await request(app).put('/api/memory/providers/claude').set(key('cA')).send({ reading: false })).status).toBe(403);
+    expect((await request(app).get('/api/memory/entries').set(key('cA'))).body).toEqual({ entries: [] });
+    await request(app).post('/api/memory/pages').send({ scope: 'project:A', slug: 'deploy', description: 'How to deploy' });
+    const ix = (await request(app).get('/api/memory/search').set(key('xA'))).body.index;
+    expect(ix.pages).toEqual([expect.objectContaining({ slug: 'deploy', source: 'dispatch' })]);
+    const providers = (await request(app).get('/api/memory/providers').query({ project: 'A' })).body.providers.map((p: any) => p.id);
+    expect(providers).toEqual(['dispatch', 'claude', 'codex', 'grok', 'opencode']);
+  });
+
   it('settings: defaults, merge, the cap is clamped', async () => {
-    expect((await request(app).get('/api/memory/settings')).body).toMatchObject({ enabled: true, paused: false, blockChars: 4000, available: true });
-    expect((await request(app).put('/api/memory/settings').send({ blockChars: 50000 })).body.blockChars).toBe(8000);
+    expect((await request(app).get('/api/memory/settings')).body).toMatchObject({ enabled: true, paused: false, blockChars: 1000, available: true });
+    expect((await request(app).put('/api/memory/settings').send({ blockChars: 50000 })).body.blockChars).toBe(2000);
   });
 });

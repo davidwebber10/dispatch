@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { create } from 'zustand';
 import { api } from '../api/client';
-import type { MemoryScopeInfo, MemoryPageSummary, MemoryNote, MemorySettings } from '../api/types';
+import type { MemoryScopeInfo, MemoryPageSummary, MemoryNote, MemorySettings, MemoryProviderInfo, MemoryEntry } from '../api/types';
 import type { ServerEvent } from '../api/server-events';
 
 /**
@@ -19,6 +19,10 @@ export interface MemoryState {
   pages: MemoryPageSummary[] | null;
   notes: MemoryNote[] | null;
   block: { text: string; chars: number; cap: number } | null;
+  /** The memory providers (Dispatch and the harnesses), for the scope on screen. */
+  providers: MemoryProviderInfo[] | null;
+  /** The harness entries Dispatch mirrors for the scope on screen. */
+  entries: MemoryEntry[] | null;
   error: string | null;
   setScope: (scope: string) => void;
   load: () => Promise<void>;
@@ -49,10 +53,12 @@ export const useMemory = create<MemoryState>((set, get) => ({
   pages: null,
   notes: null,
   block: null,
+  providers: null,
+  entries: null,
   error: null,
   setScope: (scope) => {
     saveScopeKey(scope);
-    set({ scope, pages: null, notes: null, block: null });
+    set({ scope, pages: null, notes: null, block: null, providers: null, entries: null });
     void get().loadScope();
   },
   load: async () => {
@@ -72,10 +78,12 @@ export const useMemory = create<MemoryState>((set, get) => ({
     const request = ++scopeRequest;
     const scope = get().scope;
     try {
-      const [{ pages }, { notes }, block] = await Promise.all([
-        api.memoryPages(scope), api.memoryNotes(scope, 'new'), api.memoryBlock(projectOfScope(scope)),
+      // The providers first: asking for them syncs the mirror (opening the tab is a sync point, spec 4.8).
+      const { providers } = await api.memoryProviders(projectOfScope(scope));
+      const [{ pages }, { notes }, block, { entries }] = await Promise.all([
+        api.memoryPages(scope), api.memoryNotes(scope, 'new'), api.memoryBlock(projectOfScope(scope)), api.memoryEntries(scope),
       ]);
-      if (request === scopeRequest && get().scope === scope) set({ pages, notes, block, error: null });
+      if (request === scopeRequest && get().scope === scope) set({ pages, notes, block, providers, entries, error: null });
     } catch (e) {
       if (request === scopeRequest) set({ error: message(e) });
     }
