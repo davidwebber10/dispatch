@@ -1,3 +1,4 @@
+import os from 'node:os';
 import { warmModelCapabilities } from '../settings/model-capabilities.js';
 import { warmClaudeVersion, prunePromptFiles } from '../providers/claude-prompt-file.js';
 import { sweepThreadMcpConfigs, sweepThreadKeyFiles } from '../sessions/mcp-config-sweep.js';
@@ -87,6 +88,15 @@ export async function runBootRecovery(s: DaemonServices, opts: { network: boolea
     // Memory layer 1: the words that threads wrote while this daemon was stopped. In the background,
     // one thread at a time; a thread that settles meanwhile joins the same queue.
     void s.memoryTurns.catchUp().catch((err) => console.warn('[memory] conversation catch-up failed:', err));
+    // Claude Code's own memory of each project, as notes (memory/import-claude.ts). It asks git for each
+    // project's folder, so it runs after the start, not in it.
+    setTimeout(() => {
+      if (!db.open) return;
+      try {
+        const saved = s.memory.importClaudeMemory(os.homedir());
+        if (saved) console.log(`[memory] imported ${saved} Claude Code memory note(s)`);
+      } catch (err) { console.warn('[memory] Claude Code memory import failed:', err); }
+    }, 1000).unref();
   } finally {
     setTimeout(() => endless.endBoot(), 1000).unref();
   }

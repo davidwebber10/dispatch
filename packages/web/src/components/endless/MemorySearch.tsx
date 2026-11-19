@@ -13,7 +13,10 @@ function Snippet({ text }: { text: string }) {
 
 const when = (ms: number) => new Date(ms).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-/** Full-text memory search for the human only (spec section 7); the model has no search tool. */
+/**
+ * "Chat search": full-text search of Chat's log, for the human only (spec section 7); the model has no
+ * search tool. Named "Chat", not "Memory", since the Memory tab (spec 2026-11-17-memory-design.md, 4.8).
+ */
 export function MemorySearch() {
   const [q, setQ] = useState('');
   const [results, setResults] = useState<EndlessSearchHit[] | null>(null);
@@ -43,10 +46,10 @@ export function MemorySearch() {
   return (
     <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
       <MagnifyingGlass size={15} style={{ position: 'absolute', left: 10, top: 9, color: 'var(--color-text-tertiary)' }} />
-      <input aria-label="Search memory" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search memory"
+      <input aria-label="Search chat" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search chat"
         style={{ width: '100%', height: 32, padding: '0 10px 0 30px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: fontVarInput(16) }} />
       {results && (
-        <div role="listbox" aria-label="Memory search results"
+        <div role="listbox" aria-label="Chat search results"
           style={{ position: 'absolute', top: 36, left: 0, right: 0, zIndex: 20, maxHeight: '60vh', overflowY: 'auto', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-pane)', boxShadow: '0 12px 28px -8px var(--color-shadow)' }}>
           {results.length === 0 ? (
             <div style={{ padding: 12, color: 'var(--color-text-tertiary)', fontSize: fontVar(13) }}>{failed ? 'Search is unavailable' : 'No matches'}</div>

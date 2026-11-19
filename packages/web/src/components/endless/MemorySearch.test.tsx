@@ -12,7 +12,7 @@ beforeEach(() => {
 });
 afterEach(() => { useEndless.setState(saved, true); });
 
-const box = () => screen.getByRole('textbox', { name: 'Search memory' });
+const box = () => screen.getByRole('textbox', { name: 'Search chat' });
 const hit = (i: number, snippet: string) => ({ i, kind: 'user' as const, project: 's1', projectName: 'salsify', createdAt: Date.UTC(2026, 9, 1), snippet });
 
 describe('MemorySearch', () => {

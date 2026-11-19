@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Brain, Folders } from '@phosphor-icons/react';
+import { Article, Folders } from '@phosphor-icons/react';
 import { useEndless } from '../../stores/endless';
 import { EndlessColumn } from './EndlessColumn';
 import { ProjectsPanel } from './ProjectsPanel';
@@ -57,7 +57,7 @@ export function ChatMode({ mobile = false }: { mobile?: boolean }) {
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
         <div data-testid="chat-toolbar" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: mobile ? '8px 16px' : '8px 12px', flexWrap: mobile ? 'wrap' : undefined, flexShrink: 0, borderBottom: '1px solid var(--color-border)', background: 'var(--color-pane)' }}>
           <MemorySearch />
-          <button type="button" onClick={() => setInspector(true)} style={toolbarButton}><Brain size={15} /> Memory</button>
+          <button type="button" onClick={() => setInspector(true)} style={toolbarButton}><Article size={15} /> Context</button>
           <button type="button" aria-pressed={panel} aria-label={needs > 0 ? `Projects, ${needs} need${needs === 1 ? 's' : ''} you` : undefined} onClick={() => setPanel((p) => !p)} style={toolbarButton}>
             <Folders size={15} /> Projects
             {needs > 0 && <span aria-hidden style={{ minWidth: 16, height: 16, padding: '0 4px', borderRadius: 'var(--radius-md)', background: 'var(--color-status-yellow)', color: 'var(--color-canvas)', font: `600 ${fontVar(10.5)}/16px var(--font-mono)`, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{needs}</span>}

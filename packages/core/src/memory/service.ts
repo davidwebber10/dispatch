@@ -4,6 +4,7 @@ import * as store from '../db/memory.js';
 import { MemoryError, YOU, projectScope, scopeProject, type MemoryScope, type MemoryPage, type MemoryNote, type MemorySearchHit } from '../db/memory.js';
 import { readMemorySettings, updateMemorySettings, projectRemembered, type MemorySettings } from './settings.js';
 import { buildBlock, type BlockScope } from './block.js';
+import { importClaudeMemory } from './import-claude.js';
 
 /**
  * Memory (docs/superpowers/specs/2026-11-17-memory-design.md). The composition root: scopes, pages,
@@ -272,6 +273,16 @@ export class MemoryService {
       notes,
       cap: readMemorySettings(this.db).blockChars,
     });
+  }
+
+  /**
+   * Claude Code's own memory of each project, as notes of its scope (decision 1 of the spec). At every
+   * start; a file is saved once for each version of its text. Returns the number of notes saved.
+   */
+  importClaudeMemory(home: string): number {
+    const saved = importClaudeMemory({ db: this.db, home, memory: this });
+    if (saved) this.changed(YOU);
+    return saved;
   }
 
   /** The prompt parts for a spawn, beside the skills (daemon/build.ts). */
