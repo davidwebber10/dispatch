@@ -73,6 +73,8 @@ import { createJournalRouter } from './routes/journal.js';
 import { createSubagentsRouter } from './routes/subagents.js';
 import { createAnalyticsRouter } from './routes/analytics.js';
 import { createEndlessRouter } from './routes/endless.js';
+import { createMemoryRouter } from './routes/memory.js';
+import type { MemoryService } from './memory/service.js';
 import { createUsageLimitsRouter } from './routes/usage-limits.js';
 import { createBootstrapRouter } from './routes/bootstrap.js';
 import { hostContextResponse, type HostContext } from './profile/host-context.js';
@@ -125,6 +127,8 @@ export interface ApiRouteDeps {
   refreshPtyEnv?: () => void;
   /** Absent in `createApp` unless a test passes a stub: `/api/endless` then answers 503. */
   endless?: EndlessService;
+  /** Memory (spec 2026-11-17-memory-design.md). Absent in a bare createApp: `/api/memory` is not mounted. */
+  memory?: MemoryService;
   /** Daemon only: the account limit figures behind `/api/usage-limits`. `createApp` leaves it unset, as main does. */
   /** Catches a watch up with a target that already settled; absent in tests that do not need it. */
   watchCatchUp?: (watchId: string) => string | null;
@@ -299,6 +303,7 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   mount('/api/analytics', createAnalyticsRouter(d.db));
   if (d.usageLimits) mount('/api', createUsageLimitsRouter(d.db, d.usageLimits.snapshots, { accountFor: d.usageLimits.accountFor, refreshCodex: d.usageLimits.refreshCodex, summary: d.usageLimits.summary, refresh: d.usageLimits.refresh, useResetCredit: d.usageLimits.useResetCredit }));
   if (d.endless) mount('/api/endless', createEndlessRouter(d.endless));
+  if (d.memory) mount('/api/memory', createMemoryRouter(d.memory));
   else app.use('/api/endless', ownerOnly, (_req, res) => { res.status(503).json({ error: 'Chat is unavailable' }); });
   mount('/api/bootstrap', createBootstrapRouter(app)); // W2-H: the launch calls in one answer, each part read through its own route
 }

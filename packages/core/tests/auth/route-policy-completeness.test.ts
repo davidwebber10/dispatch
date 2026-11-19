@@ -104,6 +104,12 @@ const EXPECTED_KEY_ROUTES: string[] = [
   'POST /api/endless/ledger/:action',
   'GET /api/endless/zoom',
   'GET /api/endless/date',
+  // Memory (spec 2026-11-17-memory-design.md): a thread reads, searches and remembers in its own scopes.
+  'GET /api/memory/pages',
+  'GET /api/memory/pages/:id',
+  'GET /api/memory/read',
+  'POST /api/memory/notes',
+  'GET /api/memory/search',
 ];
 
 /** Routes under `/api` that any principal may call (`publicRoute`). */
