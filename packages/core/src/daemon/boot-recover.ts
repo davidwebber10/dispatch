@@ -84,6 +84,9 @@ export async function runBootRecovery(s: DaemonServices, opts: { network: boolea
     // The messages that waited through the restart (W2-C). After the kickstart, so a thread that runs again takes its own.
     const flushed = flushOutboxAtBoot(outbox);
     if (flushed.delivered) console.log(`Delivered ${flushed.delivered} message(s) that waited in the outbox`);
+    // Memory layer 1: the words that threads wrote while this daemon was stopped. In the background,
+    // one thread at a time; a thread that settles meanwhile joins the same queue.
+    void s.memoryTurns.catchUp().catch((err) => console.warn('[memory] conversation catch-up failed:', err));
   } finally {
     setTimeout(() => endless.endBoot(), 1000).unref();
   }

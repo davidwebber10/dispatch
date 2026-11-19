@@ -117,6 +117,8 @@ export function createMemoryRouter(svc: MemoryService): Router {
     const q = String(req.query.q ?? '');
     const limit = Number(req.query.limit) || 20;
     const caller = callerOf(res);
+    // `in=conversations`: the words of past threads (layer 1), not pages and notes.
+    if (req.query.in === 'conversations') return { results: svc.searchConversations(q, caller, str(req.query.project) || null, limit) };
     if (caller) return { results: svc.search(q, svc.readableScopes(caller.sessionId), limit) };
     const scopes = req.query.scope === undefined ? svc.allScopes() : [scopeParam(req.query.scope)];
     return { results: svc.search(q, scopes, limit) };

@@ -10,6 +10,7 @@ import * as sessionsDb from '../../src/db/sessions.js';
 import { createApp } from '../../src/server.js';
 import { configureRefusalLog } from '../../src/auth/route-policy.js';
 import { callTool, handleRequest, resetIdentityCache } from '../../src/overseer/agency-mcp.js';
+import { addTurns } from '../../src/db/memory.js';
 
 /**
  * The three memory tools of the `dispatch` server, end to end against a real daemon (spec
@@ -82,6 +83,14 @@ describe('memory tools in the dispatch MCP server', () => {
     as('claudeB', 'B');
     expect(json(await callTool('memory_search', { query: 'integration' })).results).toEqual([]);
     expect(text(await callTool('memory_read', { slug: 'testing' }))).toMatch(/no page "testing"/);
+  });
+
+  it('memory_search in "conversations" finds what was said in this project\'s threads', async () => {
+    addTurns(db, 'claudeA', [{ role: 'user', text: 'Use the blue-green rollout.' }], { source: 'f', fileOffset: 1 });
+    addTurns(db, 'claudeB', [{ role: 'user', text: 'Use the canary rollout.' }], { source: 'g', fileOffset: 1 });
+    as('codexA', 'A');
+    const r = json(await callTool('memory_search', { query: 'rollout', in: 'conversations' }));
+    expect(r.results).toEqual([expect.objectContaining({ thread: 'claudeA', who: 'person', snippet: expect.stringContaining('**rollout**') })]);
   });
 
   it('an off-the-record thread cannot write a note: the tool says why', async () => {

@@ -62,6 +62,30 @@ export class MemoryService {
     return readMemorySettings(this.db).enabled && !this.deps.business?.();
   }
 
+  /** Available and not paused: new things are saved (notes from threads, conversation words). */
+  active(): boolean {
+    return this.available() && !readMemorySettings(this.db).paused;
+  }
+
+  /** A thread whose words memory does not keep: off the record, or its project is not remembered. */
+  keepsOut(terminalId: string): boolean {
+    if (this.offRecord(terminalId)) return true;
+    const t = terminalsDb.getById(this.db, terminalId);
+    return !t || !projectRemembered(readMemorySettings(this.db), t.session_id);
+  }
+
+  /**
+   * Search past conversations (layer 1). A thread: its own project's threads only, and nothing when its
+   * project is not remembered. The person: every project, or the one named.
+   */
+  searchConversations(q: string, caller: ThreadCaller | null, project: string | null, limit?: number): store.TurnHit[] {
+    if (caller) {
+      const sessions = projectRemembered(readMemorySettings(this.db), caller.sessionId) ? [caller.sessionId] : [];
+      return store.searchTurns(this.db, q, sessions, limit);
+    }
+    return store.searchTurns(this.db, q, project ? [project] : null, limit);
+  }
+
   // ---- scopes ----
 
   scopes(): ScopeInfo[] {
