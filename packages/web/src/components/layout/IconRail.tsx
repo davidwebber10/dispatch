@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ChartBar, ChatCircleDots, Eye, Gear } from '@phosphor-icons/react';
+import { Brain, ChartBar, ChatCircleDots, Eye, Gear } from '@phosphor-icons/react';
 import { PROJECTS_ICON, THREADS_ICON } from '../common/viewIcons';
 import { useProjectsView } from '../../stores/projectsView';
 import type { Icon } from '@phosphor-icons/react';
@@ -52,6 +52,7 @@ function RailItem({ icon: I, label, active, onClick, title, badge = 0, dot = fal
 const NAV: { view: View; label: string; icon: Icon; feature?: Feature }[] = [
   { view: 'workspace', label: 'Threads', icon: THREADS_ICON },
   { view: 'chat', label: 'Chat', icon: ChatCircleDots, feature: 'endless' },
+  { view: 'memory', label: 'Memory', icon: Brain, feature: 'memory' },
   { view: 'analytics', label: 'Analytics', icon: ChartBar, feature: 'analytics' },
 ];
 

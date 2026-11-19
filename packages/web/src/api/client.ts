@@ -7,6 +7,7 @@ import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, Se
 import type { SpinnerVerbs, SpinnerSet, ChatSettings, ThreadDiagnostics } from './types';
 import type { ThreadDiff, DiscardResult, ThreadWorktree, ThreadWorktreeState } from './types';
 import { accountDisplayLabel } from '../lib/hostCopy';
+import type { MemoryScopeInfo, MemoryPageSummary, MemoryPage, MemoryNote, MemoryVersion, MemorySearchHit, MemoryTurnHit, MemorySettings } from './types';
 import type { EndlessPage, EndlessState, EndlessSearchHit, EndlessView, EndlessProject, EndlessProjectsResponse, EndlessImage, EndlessFile, EndlessDocCopy, EndlessDocRow, ClaudeLoginSession, UpdateProgress, ThreadUsageLimits, UsageSummary, UsageLimitSettings } from './types';
 
 /**
@@ -622,6 +623,25 @@ export const api = {
   rollbackPlugin: (id: string) => req<PluginRow>(`/api/plugins/${encodeURIComponent(id)}/rollback`, { method: 'POST' }),
   pinPlugin: (id: string, version: string | null) => req<PluginRow>(`/api/plugins/${encodeURIComponent(id)}/pin`, { method: 'POST', body: JSON.stringify({ version }) }),
   setPluginAutoUpdate: (id: string, on: boolean) => req<PluginRow>(`/api/plugins/${encodeURIComponent(id)}/auto-update`, { method: 'POST', body: JSON.stringify({ on }) }),
+  // Memory (docs/superpowers/specs/2026-11-17-memory-design.md, part 6).
+  memoryScopes: () => req<{ scopes: MemoryScopeInfo[] }>('/api/memory/scopes'),
+  memoryPages: (scope: string) => req<{ pages: MemoryPageSummary[] }>(`/api/memory/pages?scope=${encodeURIComponent(scope)}`),
+  memoryPage: (id: number) => req<{ page: MemoryPage; notes: MemoryNote[] }>(`/api/memory/pages/${id}`),
+  memoryCreatePage: (p: { scope: string; slug: string; description?: string; body?: string }) => req<MemoryPage>('/api/memory/pages', { method: 'POST', body: body(p) }),
+  memoryUpdatePage: (id: number, p: { description?: string; body?: string; expectedSha?: string; pinned?: boolean }) => req<MemoryPage>(`/api/memory/pages/${id}`, { method: 'PUT', body: body(p) }),
+  memoryDeletePage: (id: number) => req<MemoryPage>(`/api/memory/pages/${id}`, { method: 'DELETE' }),
+  memoryVersions: (id: number) => req<{ versions: MemoryVersion[] }>(`/api/memory/pages/${id}/versions`),
+  memoryRestore: (id: number, versionId: number) => req<MemoryPage>(`/api/memory/pages/${id}/restore`, { method: 'POST', body: body({ versionId }) }),
+  memoryNotes: (scope: string, status: 'new' | 'live' = 'live') => req<{ notes: MemoryNote[] }>(`/api/memory/notes?scope=${encodeURIComponent(scope)}&status=${status}`),
+  memoryAddNote: (p: { scope: string; text: string; about?: string }) => req<MemoryNote>('/api/memory/notes', { method: 'POST', body: body(p) }),
+  memoryDeleteNote: (id: number) => req<{ ok: true }>(`/api/memory/notes/${id}`, { method: 'DELETE' }),
+  memorySearch: (q: string, scope?: string) => req<{ results: MemorySearchHit[] }>(`/api/memory/search?q=${encodeURIComponent(q)}${scope ? `&scope=${encodeURIComponent(scope)}` : ''}`),
+  memorySearchConversations: (q: string, project?: string | null) => req<{ results: MemoryTurnHit[] }>(`/api/memory/search?in=conversations&q=${encodeURIComponent(q)}${project ? `&project=${encodeURIComponent(project)}` : ''}`),
+  memoryBlock: (project: string | null) => req<{ text: string; chars: number; cap: number }>(`/api/memory/block${project ? `?project=${encodeURIComponent(project)}` : ''}`),
+  memorySettings: () => req<MemorySettings>('/api/memory/settings'),
+  memoryUpdateSettings: (p: Partial<Omit<MemorySettings, 'available'>>) => req<MemorySettings>('/api/memory/settings', { method: 'PUT', body: body(p) }),
+  memoryThread: (terminalId: string) => req<{ offRecord: boolean }>(`/api/memory/threads/${encodeURIComponent(terminalId)}`),
+  memorySetOffRecord: (terminalId: string, offRecord: boolean) => req<{ offRecord: boolean }>(`/api/memory/threads/${encodeURIComponent(terminalId)}`, { method: 'PUT', body: body({ offRecord }) }),
   listSkills: (project?: string) => req<{ skills: SkillRow[] }>(`/api/skills${project ? `?project=${encodeURIComponent(project)}` : ''}`),
   installSkill: (marketplace: string, id: string) => req<SkillRow>('/api/skills/install', { method: 'POST', body: JSON.stringify({ marketplace, id }) }),
   /** A new skill from a draft (coach spec section 4.8): written and enabled; 409 for an id that exists. */

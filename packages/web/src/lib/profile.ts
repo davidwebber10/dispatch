@@ -48,6 +48,7 @@ export const FEATURES = {
   'settings.about': show(), // Settings > About & updates
 
   // ── Hidden from a business person ───────────────────────────────────────────
+  memory: hide(), // Memory: off for a business person until the host turns it on (the daemon refuses its routes there too)
   endless: hide(), // Chat ("Endless"): its turns run with every tool allowed (no approvals), so the daemon refuses it too
   'threads.cli': hide(), // CLI/terminal mode, the Pretty <-> CLI switch, the CLI sign-in shell
   'threads.shell': hide(), // Shell threads

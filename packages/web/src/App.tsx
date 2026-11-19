@@ -5,6 +5,7 @@ import { AuthBanner } from './components/auth/AuthBanner';
 import { UpdateModal } from './components/update/UpdateModal';
 import { HighScoreCelebration } from './components/update/HighScoreCelebration';
 import { useEndless } from './stores/endless';
+import { useMemory } from './stores/memory';
 import { HintToast } from './components/common/HintToast';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { useIsMobile } from './hooks/useIsMobile';
@@ -154,6 +155,7 @@ export default function App() {
         useLedgerCard.getState().applyEvent(e);
         useOsConnections.getState().applyEvent(e);
         useEndless.getState().applyEvent(e);
+        useMemory.getState().applyEvent(e);
         useUsageLimits.getState().applyEvent(e);
         applyPluginEvent(e);
       },

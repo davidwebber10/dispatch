@@ -46,6 +46,7 @@ const OsTopBarActions = lazy(() => import('./os').then((m) => ({ default: m.OsTo
 
 const AnalyticsView = lazy(() => import('../analytics/AnalyticsView').then((m) => ({ default: m.AnalyticsView })));
 const SettingsView = lazy(() => import('../settings/SettingsView').then((m) => ({ default: m.SettingsView })));
+const MemoryView = lazy(() => import('../memory/MemoryView').then((m) => ({ default: m.MemoryView })));
 
 // Centred in the pane at the same footprint the loaded view will occupy, so
 // nothing jumps when the chunk (Recharts is ~120kB gzipped) finishes downloading.
@@ -64,7 +65,7 @@ export function DesktopShell() {
   const openDecisions = useLedgerCard((s) => openDecisionCount((activeId && s.byProject[activeId]?.card) || null));
   // A view the profile hides (a link, a remembered view, a plugin screen) shows the workspace instead.
   const rawView = useUI((s) => s.view);
-  const view = (rawView === 'analytics' && !can('analytics')) || (rawView === 'chat' && !can('endless')) || (rawView === 'automations' && !can('automations')) || (isPluginView(rawView) && !pluginViewAllowed(rawView)) ? 'workspace' : rawView;
+  const view = (rawView === 'analytics' && !can('analytics')) || (rawView === 'chat' && !can('endless')) || (rawView === 'memory' && !can('memory')) || (rawView === 'automations' && !can('automations')) || (isPluginView(rawView) && !pluginViewAllowed(rawView)) ? 'workspace' : rawView;
   const agentFocused = useAgentUI((s) => s.focused);
   const agentSelected = useAgents((s) => s.selectedId);
   const editing = useAgentUI((s) => s.editing);
@@ -100,6 +101,8 @@ export function DesktopShell() {
           ? <PluginView viewKey={view} />
           : view === 'chat'
           ? <ChatMode />
+          : view === 'memory'
+          ? <Suspense fallback={viewFallback}><MemoryView /></Suspense>
           : view === 'automations'
           ? <AutomationsView />
           : view === 'analytics'

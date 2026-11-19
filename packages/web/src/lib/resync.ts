@@ -2,6 +2,7 @@ import { useThreadStatus } from '../stores/threadStatus';
 import { useProjects } from '../stores/projects';
 import { useTabs } from '../stores/tabs';
 import { useLedgerCard } from '../stores/ledgerCard';
+import { useMemory } from '../stores/memory';
 import { useUsageLimits } from '../stores/usageLimits';
 import { resyncWithBootstrap } from './bootstrap';
 
@@ -42,6 +43,7 @@ export async function resyncAfterReconnect(): Promise<void> {
     await Promise.all([
       ...ids.map((id) => useTabs.getState().loadTabs(id).catch(() => { /* project gone — skip it */ })),
       useLedgerCard.getState().reloadAll(),
+      useMemory.getState().reloadAll(),
       useUsageLimits.getState().load(),
       useThreadStatus.getState().loadStalls(),
     ]);

@@ -378,6 +378,7 @@ export type Route =
   | { view: 'workspace'; projectId?: string; threadId?: string; agentId?: string }
   | { view: 'settings'; section?: string; subPage?: string }
   | { view: 'chat' }
+  | { view: 'memory' }
   | { view: 'analytics' }
   | { view: 'automations' }
   | { view: `plugin:${string}` };

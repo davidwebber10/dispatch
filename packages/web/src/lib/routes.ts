@@ -10,6 +10,7 @@
  *   /settings                 Settings
  *   /settings/:section        one section; /settings/:section/:subPage one item's page in it
  *   /chat   /analytics        those views
+ *   /memory                   Memory (spec 2026-11-17-memory-design.md)
  *   /automations              every automation across the projects
  *   /x/:pluginView            a plugin's screen: the view key without its `plugin:` prefix
  *
@@ -19,6 +20,7 @@ export type Route =
   | { view: 'workspace'; projectId?: string; threadId?: string; agentId?: string }
   | { view: 'settings'; section?: string; subPage?: string }
   | { view: 'chat' }
+  | { view: 'memory' }
   | { view: 'analytics' }
   | { view: 'automations' }
   | { view: `plugin:${string}` };
@@ -59,6 +61,7 @@ export function parseRoute(pathname: string, basePath: string): Route {
     return ROOT;
   }
   if (head === 'chat' && n === 1) return { view: 'chat' };
+  if (head === 'memory' && n === 1) return { view: 'memory' };
   if (head === 'analytics' && n === 1) return { view: 'analytics' };
   if (head === 'automations' && n === 1) return { view: 'automations' };
   if (head === 'x' && n === 2) return { view: `${PLUGIN}${a}` };
@@ -79,6 +82,7 @@ export function routePath(route: Route): string {
     return route.subPage ? `/settings/${seg(route.section)}/${seg(route.subPage)}` : `/settings/${seg(route.section)}`;
   }
   if (route.view === 'chat') return '/chat';
+  if (route.view === 'memory') return '/memory';
   if (route.view === 'analytics') return '/analytics';
   if (route.view === 'automations') return '/automations';
   return `/x/${seg(route.view.slice(PLUGIN.length))}`;

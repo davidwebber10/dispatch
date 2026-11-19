@@ -760,3 +760,22 @@ export interface DiscardResult {
 }
 export interface ThreadWorktree { path: string; branch: string }
 export interface ThreadWorktreeState extends ThreadWorktree { dirty: boolean; inUse: boolean }
+
+// ── Memory (docs/superpowers/specs/2026-11-17-memory-design.md) ─────────────────────────────────────
+/** 'you' or 'project:<session id>'. */
+export type MemoryScopeKey = string;
+export interface MemoryScopeInfo { scope: MemoryScopeKey; label: string; projectId: string | null; pages: number; newNotes: number; remembered: boolean; archived: boolean }
+export interface MemoryPageSummary {
+  id: number; scope: MemoryScopeKey; slug: string; description: string; pinned: boolean; status: 'active' | 'retired' | 'deleted';
+  createdAt: string; updatedAt: string; updatedBy: 'user' | 'dream' | 'import'; verifiedAt: string | null; readCount: number; lastReadAt: string | null; sha: string; bytes: number;
+}
+export type MemoryPage = Omit<MemoryPageSummary, 'bytes'> & { body: string };
+export interface MemoryNote {
+  id: number; scope: MemoryScopeKey; text: string; aboutSlug: string | null; origin: 'thread' | 'user' | 'analyzer' | 'import';
+  terminalId: string | null; harness: string | null; askedByUser: boolean; externalContext: boolean; sourceRef: string | null;
+  createdAt: string; status: 'new' | 'used' | 'deleted';
+}
+export interface MemoryVersion { id: number; pageId: number; body: string; description: string; status: string; op: string; actor: string; at: string }
+export interface MemorySearchHit { kind: 'page' | 'note'; id: number; scope: MemoryScopeKey; slug: string | null; snippet: string }
+export interface MemoryTurnHit { id: number; terminalId: string; sessionId: string; thread: string; role: string; ref: string | null; at: string | null; snippet: string }
+export interface MemorySettings { enabled: boolean; paused: boolean; blockChars: number; projectsOff: string[]; available: boolean }

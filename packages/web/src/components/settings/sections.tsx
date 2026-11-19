@@ -2,7 +2,7 @@ import { lazy, Suspense, useMemo, type ComponentType } from 'react';
 import { usePluginRegistry, type PluginSettingsSection } from '../../plugins/registry';
 import { pluginIcon } from '../../plugins/sdk';
 import { PluginBoundary } from '../../plugins/PluginBoundary';
-import { PaintBrush, Bell, Microphone, Robot, Gauge, PlugsConnected, Key, Wrench, DeviceMobile, HardDrives, Info, UserCircle, PuzzlePiece, GraduationCap } from '@phosphor-icons/react';
+import { PaintBrush, Bell, Microphone, Robot, Gauge, PlugsConnected, Key, Wrench, DeviceMobile, HardDrives, Info, UserCircle, PuzzlePiece, GraduationCap, Brain } from '@phosphor-icons/react';
 import type { Icon } from '@phosphor-icons/react';
 import { Spinner } from '../common/Spinner';
 import { can, type Feature } from '../../lib/profile';
@@ -41,6 +41,9 @@ const ServersSection = lazySection('ServersSection');
 const PluginsSection = lazySection('PluginsSection');
 const SkillsSection = lazySection('SkillsSection');
 const AboutSection = lazySection('AboutSection');
+// Memory's code is its own chunk, shared with the desktop Memory view (not part of the sections chunk).
+const MemoryImpl = lazy(() => import('../memory/MemoryView').then((m) => ({ default: m.MemorySection })));
+const MemorySection = () => <Suspense fallback={sectionFallback}><MemoryImpl /></Suspense>;
 
 /**
  * The settings sections, declared once and rendered by both shells:
@@ -53,7 +56,7 @@ const AboutSection = lazySection('AboutSection');
  * (at most 32 characters, so it never wraps on a phone) under the label in the phone's list.
  */
 export type SettingsSectionKey =
-  | 'appearance' | 'notifications' | 'dictation'
+  | 'appearance' | 'notifications' | 'dictation' | 'memory'
   | 'agents' | 'accounts' | 'usage' | 'integrations' | 'secrets' | 'tools'
   | 'devices' | 'servers' | 'plugins' | 'skills' | 'about';
 
@@ -76,6 +79,7 @@ export type SettingsSection = {
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { key: 'appearance', group: 'YOU', label: 'Appearance', blurb: 'Theme, accent, text, density', icon: PaintBrush, Component: AppearanceSection, feature: 'settings.appearance' },
   { key: 'notifications', group: 'YOU', label: 'Notifications', blurb: 'Push alerts and which ones', icon: Bell, Component: NotificationsSection, feature: 'settings.notifications' },
+  { key: 'memory', group: 'YOU', label: 'Memory', blurb: 'What threads keep', icon: Brain, Component: MemorySection, feature: 'memory' },
   { key: 'dictation', group: 'YOU', label: 'Dictation', blurb: 'Speech-to-text provider', icon: Microphone, Component: DictationSection, feature: 'settings.dictation' },
   { key: 'agents', group: 'AGENTS', label: 'Agents', blurb: 'Defaults for each harness', icon: Robot, Component: AgentsSection, feature: 'settings.agents' },
   { key: 'accounts', group: 'AGENTS', label: 'Accounts', blurb: 'Signed-in accounts', icon: UserCircle, Component: AccountsSection, feature: 'accounts' },

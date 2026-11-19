@@ -11,7 +11,7 @@ afterEach(() => { setHostContextForTest({}); vi.restoreAllMocks(); });
 describe('settings follow the profile', () => {
   it('a local developer sees every section, under THIS MAC', () => {
     expect(visibleSettingsSections().map((s) => s.key)).toEqual([
-      'appearance', 'notifications', 'dictation', 'agents', 'accounts', 'usage', 'integrations', 'secrets', 'tools',
+      'appearance', 'notifications', 'memory', 'dictation', 'agents', 'accounts', 'usage', 'integrations', 'secrets', 'tools',
       'devices', 'servers', 'plugins', 'skills', 'about',
     ]);
     expect(settingsGroupLabel('THIS MAC')).toBe('THIS MAC');

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Archive, ArrowClockwise, BellRinging, ChartBar, ChatCircleDots, Folder, Gear, Network, Plus, PuzzlePiece, Stop } from '@phosphor-icons/react';
+import { Archive, ArrowClockwise, BellRinging, Brain, ChartBar, ChatCircleDots, Folder, Gear, Network, Plus, PuzzlePiece, Stop } from '@phosphor-icons/react';
 import { useUI, type View } from '../stores/ui';
 import { useNavigation } from '../stores/navigation';
 import { openNextAttention } from '../lib/attention';
@@ -72,6 +72,7 @@ const ICON = 15;
 const VIEW_ROWS: { view: View; label: string; icon: ReactNode; feature?: Feature }[] = [
   { view: 'workspace', label: 'Threads', icon: <THREADS_ICON size={ICON} /> },
   { view: 'chat', label: 'Chat', icon: <ChatCircleDots size={ICON} />, feature: 'endless' },
+  { view: 'memory', label: 'Memory', icon: <Brain size={ICON} />, feature: 'memory' },
   { view: 'analytics', label: 'Analytics', icon: <ChartBar size={ICON} />, feature: 'analytics' },
   { view: 'settings', label: 'Settings', icon: <Gear size={ICON} /> },
 ];
