@@ -153,8 +153,6 @@ export interface SessionServiceInputs {
   secretsServerSpec: Setter<'setSecretsServerSpec'>[0];
   integrationsSpecs: Setter<'setIntegrationsSpecs'>[0];
   toolsAwareness: Setter<'setToolsAwareness'>[0];
-  /** Memory on for threads: the agency server lists the memory tools (spec 2026-11-17-memory-design.md). */
-  memoryOn: Setter<'setMemoryOn'>[0];
 }
 
 /**
@@ -176,5 +174,4 @@ export function wireSessionService(s: SessionService, i: SessionServiceInputs): 
   s.setSecretsServerSpec(i.secretsServerSpec);
   s.setIntegrationsSpecs(i.integrationsSpecs);
   s.setToolsAwareness(i.toolsAwareness);
-  s.setMemoryOn(i.memoryOn);
 }

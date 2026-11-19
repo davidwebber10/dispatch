@@ -24,14 +24,16 @@ export interface SessionWiring {
   secretsServerSpec: (() => { spec: McpServerSpec | null; prompt: string | null }) | null;
   /** Supplies the catalog MCP specs for spawned CLIs; set by the server wiring. */
   integrationsSpecs: (() => McpServerSpec[]) | null;
-  /** Plugins' MCP servers and instruction blocks per harness (docs/superpowers/specs/2026-11-07-plugins-design.md, section 3). */
-  pluginInjection: ((harness: string, sessionId: string | null) => { specs: McpServerSpec[]; prompts: string[]; toolNames: string[] }) | null;
+  /**
+   * Plugins' MCP servers and instruction blocks per harness (docs/superpowers/specs/2026-11-07-plugins-design.md, section 3),
+   * the skills, and the memory block. `memoryTools`: memory is on, so the agency server lists the memory tools
+   * (spec 2026-11-17-memory-design.md).
+   */
+  pluginInjection: ((harness: string, sessionId: string | null) => { specs: McpServerSpec[]; prompts: string[]; toolNames: string[]; memoryTools?: boolean }) | null;
   usageLimits?: UsageLimitService;
   statusContext: StatusContext | null;
   /** Supplies a tools-awareness note injected into the developer instructions; set by server wiring. */
   toolsAwareness?: () => string | null;
-  /** True when memory is on for threads (spec 2026-11-17-memory-design.md): the agency server then lists the memory tools. */
-  memoryOn?: () => boolean;
   /** The per-thread account env (multi-account spec 2026-11-06): the thread's Claude token or Codex home. Set by the server wiring. */
   accountEnv?: (type: string, config: Record<string, unknown>) => Record<string, string>;
   /** The accounts a thread type can run on (multi-account): validates a switch, and names the default an unpinned thread uses. */

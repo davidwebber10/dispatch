@@ -92,6 +92,10 @@ export class SpawnInjection {
       // variables to an MCP server, so the address rides in the spec's own env (as the agency's does).
       const api = this.apiUrl();
       const reach = { ...(api ? { DISPATCH_API: api } : {}), ...(this.wiring.daemonPort ? { DISPATCH_PORT: String(this.wiring.daemonPort) } : {}) };
+      // The memory tools (memory_search, memory_read, remember) need the thread's own key: the daemon scopes
+      // them by the key's project. Listed only when memory is on (memory/service.ts available()).
+      const agency = specs.find((s) => s.name === AGENCY_MCP_SERVER);
+      if (inj.memoryTools && agency?.authEnv) agency.env = { ...(agency.env ?? {}), DISPATCH_MEMORY: '1' };
       specs.push(...inj.specs.map((s) => ({ ...s, env: { ...reach, ...(s.env ?? {}) } })));
       prompts.push(...inj.prompts);
     }
@@ -338,9 +342,6 @@ export class SpawnInjection {
         ...(api ? { DISPATCH_API: api } : {}),
         // A chat thread on a hosted box gets no status tool (overseer/agency-mcp.ts listedTools).
         ...(this.isHostedChat(terminalId) ? { DISPATCH_NO_STATUS_TOOL: '1' } : {}),
-        // The memory tools (memory_search, memory_read, remember) need the thread's own key: the daemon
-        // scopes them by the key's project. Listed only when memory is on (memory/service.ts available()).
-        ...(authEnv && this.wiring.memoryOn?.() ? { DISPATCH_MEMORY: '1' } : {}),
       },
       ...(authEnv ? { authEnv: true } : {}),
       // Ships with Dispatch: a hosted business thread keeps it (os/hosted-mcp-policy.ts). Its tools

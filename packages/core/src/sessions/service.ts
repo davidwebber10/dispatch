@@ -285,7 +285,7 @@ export class SessionService {
     this.wiring.secretsServerSpec = fn;
   }
 
-  setPluginInjection(fn: (harness: string, sessionId: string | null) => { specs: McpServerSpec[]; prompts: string[]; toolNames: string[] }): void {
+  setPluginInjection(fn: (harness: string, sessionId: string | null) => { specs: McpServerSpec[]; prompts: string[]; toolNames: string[]; memoryTools?: boolean }): void {
     this.wiring.pluginInjection = fn;
   }
   setSpawnListener(fn: (terminalId: string, toolsAvailable: string[]) => void): void { this.wiring.onSpawned = fn; }
@@ -298,10 +298,6 @@ export class SessionService {
 
   setToolsAwareness(fn: () => string | null): void {
     this.wiring.toolsAwareness = fn;
-  }
-
-  setMemoryOn(fn: () => boolean): void {
-    this.wiring.memoryOn = fn;
   }
 
   registerStructuredManager(type: string, manager: import('../structured/manager.js').IStructuredManager): void { this.harnesses.registerStructuredManager(type, manager); }

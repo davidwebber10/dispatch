@@ -661,9 +661,8 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     // Plugins, then skills, then the memory block (spec 2026-11-17-memory-design.md, section 4.3): every harness.
     pluginInjection: (harness, sessionId) => {
       const inj = plugins.modelInjection(harness);
-      return { ...inj, prompts: [...inj.prompts, ...skills.injection(sessionId, harness), ...memory.injection(sessionId, harness)] };
+      return { ...inj, prompts: [...inj.prompts, ...skills.injection(sessionId, harness), ...memory.injection(sessionId, harness)], memoryTools: memory.available() };
     },
-    memoryOn: () => memory.available(),
     terminalStatusWriter: (id, status) => statusService.setTerminalState(id, status),
     onTerminalChanged: (sessionId) => broadcaster.broadcast({ type: 'session:tabs-changed', sessionId }),
     usageLimits,
