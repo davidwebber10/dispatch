@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { composeInjection } from '../../src/mcp/injection.js';
+import { composeInjection, CODEX_CLI_INSTRUCTIONS_MAX } from '../../src/mcp/injection.js';
 
 describe('composeInjection', () => {
   const configPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'inj-')), 'mcp.json');
@@ -18,6 +18,22 @@ describe('composeInjection', () => {
   it('joins prompts and developerNote for the system prompt', () => {
     const r = composeInjection([], { configPath: '/x', prompts: ['mcp hint'], developerNote: 'tools note' });
     expect(r.systemPrompt).toBe('mcp hint\n\ntools note');
+  });
+
+  it('the Codex CLI gets the prompts too (the memory block, skills, the peer prompt), not only the note', () => {
+    const r = composeInjection([], { configPath: '/x', prompts: ['peer prompt', '## Memory\n\nblock'], developerNote: 'tools note' });
+    const arg = r.codexArgs.find((a) => a.startsWith('developer_instructions='))!;
+    expect(JSON.parse(arg.slice('developer_instructions='.length))).toBe('peer prompt\n\n## Memory\n\nblock\n\ntools note');
+    const noNote = composeInjection([], { configPath: '/x', prompts: ['only a prompt'] });
+    expect(noNote.codexArgs).toEqual(['-c', 'developer_instructions="only a prompt"']);
+  });
+
+  it('a Codex CLI text over the limit drops its first parts until it fits', () => {
+    const big = 'x'.repeat(CODEX_CLI_INSTRUCTIONS_MAX);
+    const r = composeInjection([], { configPath: '/x', prompts: [big, '## Memory\n\nblock'], developerNote: 'tools note' });
+    const text = JSON.parse(r.codexArgs.find((a) => a.startsWith('developer_instructions='))!.slice('developer_instructions='.length));
+    expect(text).toBe('## Memory\n\nblock\n\ntools note');
+    expect(r.systemPrompt!.startsWith(big)).toBe(true);
   });
 
   it('no developerNote → no developer_instructions arg', () => {

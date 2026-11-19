@@ -230,6 +230,23 @@ describe('SpawnInjection', () => {
   });
 });
 
+describe('memory tools (spec 2026-11-17-memory-design.md, section 4.3)', () => {
+  it('DISPATCH_MEMORY=1 only for a keyed thread while memory is on', () => {
+    terminalsDb.create(db, { id: 'm', sessionId: 's1', type: 'codex', label: 'm', config: { transport: 'structured' } });
+    let on = true;
+    wiring.pluginInjection = () => ({ specs: [], prompts: [], toolNames: [], memoryTools: on });
+    const env = (authEnv: boolean) => {
+      const specs = [injection.agencyServerSpec('m', 's1', 0, authEnv)];
+      injection.applyPluginInjection('m', 'codex', specs, []);
+      return specs[0].env ?? {};
+    };
+    expect(env(true).DISPATCH_MEMORY).toBe('1');
+    expect(env(false).DISPATCH_MEMORY).toBeUndefined(); // no key: no scope
+    on = false;
+    expect(env(true).DISPATCH_MEMORY).toBeUndefined();
+  });
+});
+
 // Owner decision 2026-11-12: a chat thread on a hosted box has no status tool and no instruction to
 // report a status; a thread with a role keeps both. On a local install (4.6.2) a thread the owner started
 // has no report_status either (DISPATCH_REPORT_STATUS=0, no rule), and gets no hosted reply rule.

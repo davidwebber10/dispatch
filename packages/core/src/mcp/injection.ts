@@ -35,6 +35,9 @@ export interface McpServerSpec {
 /** The variable that carries the key into a server; the Codex CLI view carries a key-file path. */
 export type AuthVar = 'DISPATCH_AUTH' | 'DISPATCH_AUTH_FILE';
 
+/** The longest developer_instructions put on a Codex CLI command line (argv is limited by the OS). */
+export const CODEX_CLI_INSTRUCTIONS_MAX = 192 * 1024;
+
 export function composeInjection(
   specs: McpServerSpec[],
   opts: {
@@ -110,8 +113,13 @@ export function composeInjection(
   }
 
   const note = opts.developerNote?.trim() ? opts.developerNote.trim() : null;
-  if (note) codexArgs.push('-c', `developer_instructions=${JSON.stringify(note)}`);
-
   const sysParts = [...opts.prompts.filter(Boolean), ...(note ? [note] : [])];
+  // The Codex CLI gets the same text as every other harness, as its developer instructions (it used to get
+  // only the note, so the peer prompt, skills and the memory block never reached a Codex terminal thread).
+  // It rides on the command line: past CODEX_CLI_INSTRUCTIONS_MAX, the first parts are dropped until it fits.
+  const codexParts = [...sysParts];
+  while (codexParts.length > 1 && codexParts.join('\n\n').length > CODEX_CLI_INSTRUCTIONS_MAX) codexParts.shift();
+  if (codexParts.length) codexArgs.push('-c', `developer_instructions=${JSON.stringify(codexParts.join('\n\n'))}`);
+
   return { claudeConfigPath, codexArgs, systemPrompt: sysParts.length ? sysParts.join('\n\n') : null, codexThreadConfig };
 }

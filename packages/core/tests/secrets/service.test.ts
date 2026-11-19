@@ -232,7 +232,8 @@ describe('SecretsService token scope', () => {
       const claudeText = fs.readFileSync(inj.claudeConfigPath!, 'utf8');
       expect(claudeText).not.toContain('DOPPLER_TOKEN');
       expect(JSON.parse(claudeText).mcpServers.doppler.args).toEqual([mcpPath, '--secrets-dir', dir]);
-      const codex = inj.codexArgs.join(' ');
+      // The server args only: the developer_instructions text (the Doppler note) names $DOPPLER_TOKEN in words, which is not a reference.
+      const codex = inj.codexArgs.filter((a) => !a.startsWith('developer_instructions=')).join(' ');
       expect(codex).not.toContain('DOPPLER_TOKEN');
       expect(codex).toContain('--secrets-dir');
       expect(codex).toContain(dir);

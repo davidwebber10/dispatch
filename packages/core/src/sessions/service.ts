@@ -285,7 +285,7 @@ export class SessionService {
     this.wiring.secretsServerSpec = fn;
   }
 
-  setPluginInjection(fn: (harness: string, sessionId: string | null) => { specs: McpServerSpec[]; prompts: string[]; toolNames: string[] }): void {
+  setPluginInjection(fn: (harness: string, sessionId: string | null) => { specs: McpServerSpec[]; prompts: string[]; toolNames: string[]; memoryTools?: boolean }): void {
     this.wiring.pluginInjection = fn;
   }
   setSpawnListener(fn: (terminalId: string, toolsAvailable: string[]) => void): void { this.wiring.onSpawned = fn; }
