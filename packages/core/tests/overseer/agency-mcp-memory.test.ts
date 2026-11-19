@@ -11,6 +11,7 @@ import { createApp } from '../../src/server.js';
 import { configureRefusalLog } from '../../src/auth/route-policy.js';
 import { callTool, handleRequest, resetIdentityCache } from '../../src/overseer/agency-mcp.js';
 import { addTurns } from '../../src/db/memory.js';
+import { updateMemorySettings } from '../../src/memory/settings.js';
 
 /**
  * The three memory tools of the `dispatch` server, end to end against a real daemon (spec
@@ -48,6 +49,7 @@ describe('memory tools in the dispatch MCP server', () => {
     terminalsDb.create(db, { id: 'claudeA', sessionId: 'A', type: 'claude-code', label: 'c', config: { transport: 'structured' } });
     terminalsDb.create(db, { id: 'codexA', sessionId: 'A', type: 'codex', label: 'x', config: { transport: 'structured' } });
     terminalsDb.create(db, { id: 'claudeB', sessionId: 'B', type: 'claude-code', label: 'b', config: { transport: 'structured' } });
+    updateMemorySettings(db, { enabled: true }); // off by default
     server = http.createServer(app);
     await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
     process.env.DISPATCH_API = `http://127.0.0.1:${(server.address() as { port: number }).port}`;

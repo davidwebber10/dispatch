@@ -27,6 +27,7 @@ describe('Claude Code memory import', () => {
     sessionsDb.create(db, { id: 'A', provider: 'claude-code', name: 'a', workingDir: '/work/a' });
     sessionsDb.create(db, { id: 'B', provider: 'claude-code', name: 'b', workingDir: '/work/b' });
     memory = new MemoryService({ db, projects: () => projectsFromDb(db) });
+    updateMemorySettings(db, { enabled: true }); // off by default
     folder = sharedProjectMemoryDir(home, '/work/a');
     fs.mkdirSync(folder, { recursive: true });
     fs.writeFileSync(path.join(folder, 'MEMORY.md'), '# Memory\n- [Tests](testing.md) - how to run tests\n');
@@ -63,6 +64,17 @@ describe('Claude Code memory import', () => {
     expect(run()).toBe(0);
     updateMemorySettings(db, { projectsOff: [], enabled: false });
     expect(run()).toBe(0);
+  });
+
+  it('off (the default): nothing is read; turning it on imports once through onActive', () => {
+    updateMemorySettings(db, { enabled: null });
+    expect(run()).toBe(0);
+    let saved = 0;
+    const svc = new MemoryService({ db, projects: () => projectsFromDb(db), onActive: () => { saved = importClaudeMemory({ db, home, memory: svc, projectDir: (w) => w }); } });
+    svc.updateSettings({ enabled: true });
+    expect(saved).toBe(2);
+    svc.updateSettings({ blockChars: 5000 }); // already on: no second catch-up
+    expect(saved).toBe(2);
   });
 
   it('a long file is cut to the note limit and names the file', () => {

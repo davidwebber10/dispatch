@@ -6,7 +6,9 @@ import * as appState from '../db/app-state.js';
  * app_state, the shared-settings pattern. Field-wise merge: a valid field replaces, null clears
  * (back to the default), absent or invalid keeps.
  *
- *   enabled     Memory on or off. Off: no block, the tools answer that memory is off. Default on.
+ *   enabled     Memory on or off. Off: no block, no memory tools, and no background reading of
+ *               conversations or of Claude Code's memory. Default OFF (owner, 2026-11-19): the person
+ *               turns it on in Settings > Memory. A stored value wins.
  *   paused      Threads still read memory; nothing new is saved. Default off.
  *   blockChars  Size cap of the injected block. Default 4,000, at most 8,000, at least 1,000.
  *   projectsOff Session ids of the projects whose own scope is off ("Remember this project" off).
@@ -18,7 +20,7 @@ export const MIN_BLOCK_CHARS = 1000;
 
 export interface MemorySettings { enabled: boolean; paused: boolean; blockChars: number; projectsOff: string[] }
 
-const DEFAULTS: MemorySettings = { enabled: true, paused: false, blockChars: DEFAULT_BLOCK_CHARS, projectsOff: [] };
+const DEFAULTS: MemorySettings = { enabled: false, paused: false, blockChars: DEFAULT_BLOCK_CHARS, projectsOff: [] };
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 function clean(raw: unknown): Partial<MemorySettings> {

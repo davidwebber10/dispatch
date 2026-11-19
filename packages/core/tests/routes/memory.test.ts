@@ -10,6 +10,7 @@ import * as sessionsDb from '../../src/db/sessions.js';
 import { createApp } from '../../src/server.js';
 import { configureRefusalLog } from '../../src/auth/route-policy.js';
 import { addTurns } from '../../src/db/memory.js';
+import { updateMemorySettings } from '../../src/memory/settings.js';
 
 /** /api/memory (spec 2026-11-17-memory-design.md, part 6): the person, thread keys, scopes. */
 describe('memory routes', () => {
@@ -32,6 +33,7 @@ describe('memory routes', () => {
     terminalsDb.create(db, { id: 'cA', sessionId: 'A', type: 'claude-code', label: 'claude in A', config: { transport: 'structured' } });
     terminalsDb.create(db, { id: 'xA', sessionId: 'A', type: 'codex', label: 'codex in A', config: { transport: 'structured' } });
     terminalsDb.create(db, { id: 'cB', sessionId: 'B', type: 'claude-code', label: 'claude in B', config: { transport: 'structured' } });
+    updateMemorySettings(db, { enabled: true }); // memory is off by default; these tests are about memory on
   });
   afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
 
@@ -138,6 +140,15 @@ describe('memory routes', () => {
     // A thread cannot widen its search with the project parameter.
     const wide = await request(app).get('/api/memory/search').query({ q: 'rollout', in: 'conversations', project: 'B' }).set(key('xA'));
     expect(wide.body.results.map((h: any) => h.terminalId)).toEqual(['cA']);
+  });
+
+  it('off by default: no block, a thread key gets nothing; the person can still turn it on', async () => {
+    updateMemorySettings(db, { enabled: null });
+    expect((await request(app).get('/api/memory/settings')).body).toMatchObject({ enabled: false, available: false });
+    expect((await request(app).get('/api/memory/block').query({ project: 'A' })).body.text).toBe('');
+    expect((await request(app).post('/api/memory/notes').set(key('cA')).send({ text: 'x' })).status).toBe(403);
+    expect((await request(app).get('/api/memory/search').query({ q: 'x' }).set(key('cA'))).status).toBe(403);
+    expect((await request(app).put('/api/memory/settings').send({ enabled: true })).body).toMatchObject({ enabled: true, available: true });
   });
 
   it('settings: defaults, merge, the cap is clamped', async () => {

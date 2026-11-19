@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useMemoryOn } from '../stores/memory';
 import { Archive, ArrowClockwise, BellRinging, Brain, ChartBar, ChatCircleDots, Folder, Gear, Network, Plus, PuzzlePiece, Stop } from '@phosphor-icons/react';
 import { useUI, type View } from '../stores/ui';
 import { useNavigation } from '../stores/navigation';
@@ -85,6 +86,7 @@ function showThreads(): void {
 
 export function CommandPalette() {
   const [open, setOpen] = useState(false);
+  const memoryOn = useMemoryOn();
   const [q, setQ] = useState('');
   const [cursor, setCursor] = useState(0);
   const [confirm, setConfirm] = useState<{ kind: 'archive' | 'restart'; thread: Terminal } | null>(null);
@@ -127,12 +129,12 @@ export function CommandPalette() {
         run: () => { showThreads(); useProjects.getState().setActive(s.id); useTabs.getState().openDispatch(s.id); },
       })),
       ...sessions.map((s) => ({ key: `new-thread:${s.id}`, label: `New thread in ${s.name}`, hint: 'Project', icon: <Plus size={ICON} />, run: () => usePickerRequest.getState().request(`${NEW_THREAD_OWNER}${s.id}`) })),
-      ...VIEW_ROWS.filter((r) => !r.feature || can(r.feature)).map(({ view, label, icon }) => ({ key: `view:${view}`, label, hint: 'View', icon, run: () => useNavigation.getState().navigate({ view }) })),
+      ...VIEW_ROWS.filter((r) => (!r.feature || can(r.feature)) && (r.view !== 'memory' || memoryOn)).map(({ view, label, icon }) => ({ key: `view:${view}`, label, hint: 'View', icon, run: () => useNavigation.getState().navigate({ view }) })),
       ...visibleSettingsSections().map((s) => ({ key: `settings:${s.key}`, label: s.label, hint: 'Settings', icon: <s.icon size={ICON} />, run: () => useNavigation.getState().navigate({ view: 'settings', section: s.key }) })),
       ...(can('settings.plugins') ? pluginCommands : []).map((c) => ({ key: `plugin:${c.plugin}:${c.id}`, label: c.label, hint: c.plugin, icon: <PuzzlePiece size={ICON} />, run: c.run })),
     ];
     return { threadRows, otherRows };
-  }, [sessions, byProject, activeTabId, coordinatorName, pluginCommands]);
+  }, [sessions, byProject, activeTabId, coordinatorName, pluginCommands, memoryOn]);
 
   const shown = useMemo<Row[]>(() => {
     const needle = q.trim();

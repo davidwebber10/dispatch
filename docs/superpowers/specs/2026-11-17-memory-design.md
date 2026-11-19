@@ -15,6 +15,7 @@ or a file:line for each fact) are not in this repository.
 | 3 | Core or plugin | Core. The injected block needs a core hook, and plugin storage is too small and has no search. |
 | 4 | Scopes in version 1 | You, and one for each project. |
 | 6 | Where the spec lives | Here. |
+| 7 | Memory on the desktop by default (2026-11-19) | Off. The person turns it on in Settings → Memory. |
 
 ---
 
@@ -422,7 +423,7 @@ Page view (right pane, after you open a page):
 
 | Control | Where | Default |
 |---|---|---|
-| Memory on or off | Tab header and Settings | On for desktop. A host decides for a box. |
+| Memory on or off | Settings → Memory (and the tab header when on) | **Off** on desktop (owner, 2026-11-19). While off: no block, no memory tools, no reading of conversations or of Claude Code's memory, and no Memory item in the rail or the command palette; Settings → Memory shows only the switch. Turning it on runs the catch-up once, and open threads get memory when they start again. A host decides for a box. |
 | Pause | Tab header | Not paused. When paused: threads still read memory, nothing new is saved or dreamed. |
 | Remember this project | Scope row | On |
 | Off the record (one thread) | Thread menu | Off |

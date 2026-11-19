@@ -33,6 +33,11 @@ export interface MemoryDeps {
   business?: () => boolean;
   /** The newest journal seq of a thread, recorded with its notes as provenance. */
   lastSeq?: (terminalId: string) => number | null;
+  /**
+   * Memory became active (turned on, or no longer paused): the background work that waited runs once
+   * now (the conversation catch-up and the Claude Code import), then as designed.
+   */
+  onActive?: () => void;
 }
 
 /** Every project from the sessions table, archived ones too (their memory stays until the person deletes it). */
@@ -53,8 +58,15 @@ export class MemoryService {
   settings(): MemorySettings & { available: boolean } { return { ...readMemorySettings(this.db), available: this.available() }; }
 
   updateSettings(patch: unknown): MemorySettings & { available: boolean } {
+    const before = this.active();
+    const beforeOff = new Set(readMemorySettings(this.db).projectsOff);
     updateMemorySettings(this.db, patch);
     this.changed(YOU);
+    // Off to on (or a pause ended, or a project is remembered again): run the catch-up once.
+    const back = readMemorySettings(this.db).projectsOff.length < beforeOff.size;
+    if (this.active() && (!before || back)) {
+      try { this.deps.onActive?.(); } catch (err) { console.warn('[memory] catch-up failed to start:', err); }
+    }
     return this.settings();
   }
 

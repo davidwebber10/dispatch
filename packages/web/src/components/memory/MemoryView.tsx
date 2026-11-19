@@ -3,7 +3,7 @@ import { Brain, FolderSimple, UserCircle } from '@phosphor-icons/react';
 import { useMemory } from '../../stores/memory';
 import { Select } from '../common/Select';
 import { SettingsGroup, SettingsRow, noteText } from '../settings/ui';
-import { MemoryScopePanel, MemorySwitches } from './MemoryScopePanel';
+import { MemoryScopePanel, MemorySwitches, MemoryOffPanel } from './MemoryScopePanel';
 import { fontVar } from '../../lib/fontSize';
 
 /**
@@ -16,6 +16,15 @@ export function MemoryView() {
   const error = useMemory((s) => s.error);
   useEffect(() => { void useMemory.getState().load(); }, []);
   const active = scopes?.find((s) => s.scope === scope);
+  const settings = useMemory((s) => s.settings);
+  // Off (the default): only the switch, as in Settings > Memory.
+  if (settings && !settings.enabled) {
+    return (
+      <div data-testid="memory-view" style={{ flex: 1, minWidth: 0, overflowY: 'auto', padding: '22px 22px 48px', background: 'var(--color-base)' }}>
+        <div style={{ maxWidth: 860 }}><MemoryOffPanel /></div>
+      </div>
+    );
+  }
 
   return (
     <div data-testid="memory-view" style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', overflow: 'hidden', background: 'var(--color-base)' }}>
@@ -72,7 +81,9 @@ export function MemorySection() {
   const scopes = useMemory((s) => s.scopes);
   const scope = useMemory((s) => s.scope);
   const error = useMemory((s) => s.error);
+  const settings = useMemory((s) => s.settings);
   useEffect(() => { void useMemory.getState().load(); }, []);
+  if (settings && !settings.enabled) return <MemoryOffPanel />;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={noteText}>What threads keep between threads: about you, and about each project. Threads search it and save notes to it; you edit it here.</div>

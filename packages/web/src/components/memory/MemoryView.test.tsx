@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { MemoryView } from './MemoryView';
+import { MemoryView, MemorySection } from './MemoryView';
 import { api } from '../../api/client';
 import { useMemory } from '../../stores/memory';
 import type { MemoryNote, MemoryPage, MemoryPageSummary, MemorySettings } from '../../api/types';
@@ -55,6 +55,24 @@ describe('the Memory view (spec 2026-11-17, part 5)', () => {
     await waitFor(() => expect(api.memoryUpdateSettings).toHaveBeenCalledWith({ paused: true }));
     fireEvent.click(screen.getByRole('switch', { name: 'Remember this project' }));
     await waitFor(() => expect(api.memoryUpdateSettings).toHaveBeenCalledWith({ projectsOff: ['p1'] }));
+  });
+
+  it('off (the default): one row with its switch and one sentence; the switch turns memory on', async () => {
+    settings = { ...settings, enabled: false, available: false };
+    render(<MemoryView />);
+    expect(await screen.findByText(/When memory is on, threads keep notes between threads/)).toBeTruthy();
+    expect(screen.queryByRole('navigation', { name: 'Memory scopes' })).toBeNull();
+    expect(screen.queryByText(/What threads see/)).toBeNull();
+    fireEvent.click(screen.getByRole('switch', { name: 'Memory' }));
+    await waitFor(() => expect(api.memoryUpdateSettings).toHaveBeenCalledWith({ enabled: true }));
+    expect(await screen.findByRole('navigation', { name: 'Memory scopes' })).toBeTruthy();
+  });
+
+  it('Settings > Memory (the phone) is the same: off shows only the switch', async () => {
+    settings = { ...settings, enabled: false, available: false };
+    render(<MemorySection />);
+    expect(await screen.findByRole('switch', { name: 'Memory' })).toBeTruthy();
+    expect(screen.queryByRole('switch', { name: 'Pause' })).toBeNull();
   });
 
   it('opens a page and saves an edit with the sha it started from', async () => {

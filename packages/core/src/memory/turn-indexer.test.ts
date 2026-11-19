@@ -49,7 +49,8 @@ describe('conversation index', () => {
     fs.writeFileSync(files.claudeB.file, [claudeLine('user', 'Deploy notes for project B', 'b1'), ''].join('\n'));
     journal = new MessageJournal(db);
     journal.append('grokA', { kind: 'user', payload: { message: { content: 'Grok deploy question' } } } as any);
-    memory = new MemoryService({ db, projects: () => projectsFromDb(db) });
+    memory = new MemoryService({ db, projects: () => projectsFromDb(db), onActive: () => { void indexer.catchUp(); } });
+    updateMemorySettings(db, { enabled: true }); // off by default
     indexer = new TurnIndexer({ db, journal, locate: (id) => files[id] ?? null, active: () => memory.active(), skip: (id) => memory.keepsOut(id) });
   });
   afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
@@ -109,6 +110,18 @@ describe('conversation index', () => {
     db.prepare("DELETE FROM terminals WHERE id = 'claudeA'").run();
     expect(memory.searchConversations('billing', null, null)).toEqual([]);
     expect(db.prepare("SELECT COUNT(*) AS n FROM memory_turns WHERE terminal_id = 'claudeA'").get()).toEqual({ n: 0 });
+  });
+
+  it('off (the default): no harness file is read; turning it on runs the catch-up once', async () => {
+    memory.updateSettings({ enabled: false });
+    await indexer.catchUp();
+    indexer.schedule('claudeA');
+    await indexer.idle();
+    expect(db.prepare('SELECT COUNT(*) AS n FROM memory_turns').get()).toEqual({ n: 0 });
+    expect(store.getCursor(db, 'claudeA').fileOffset).toBe(0);
+    memory.updateSettings({ enabled: true }); // off -> on: onActive starts the catch-up
+    await indexer.idle();
+    expect([...new Set(memory.searchConversations('deploy', null, null).map((h) => h.terminalId))].sort()).toEqual(['claudeA', 'claudeB', 'codexA', 'grokA']);
   });
 
   it('schedule runs one thread at a time and idle() waits for the queue', async () => {

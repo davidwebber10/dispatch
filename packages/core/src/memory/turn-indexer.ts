@@ -43,6 +43,8 @@ export class TurnIndexer {
 
   /** Every thread of a harness that has words, once (the start catch-up). Resolves when the queue is empty. */
   catchUp(): Promise<void> {
+    // Memory off or paused: no harness file is read (the person has not opted in). Turning it on calls this again.
+    if (!this.deps.active()) return this.idle();
     const rows = this.deps.db.prepare("SELECT id FROM terminals WHERE type != 'shell' ORDER BY created_at ASC").all() as { id: string }[];
     for (const r of rows) this.queue.add(r.id);
     return this.drain();

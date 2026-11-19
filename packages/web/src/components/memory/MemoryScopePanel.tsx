@@ -251,13 +251,28 @@ function HistoryLoader({ id, versions, setVersions }: { id: number; versions: Me
   return versions ? null : <EmptyState>Loading…</EmptyState>;
 }
 
+/** The one sentence that Settings > Memory shows while memory is off. */
+export const MEMORY_OFF_TEXT = 'When memory is on, threads keep notes between threads, and Dispatch reads their conversations so that you and they can search them. Threads that are open get it when they start again.';
+
+/**
+ * Memory is off (the default, owner 2026-11-19): one row with its switch and one sentence. Nothing else
+ * about memory shows until it is on.
+ */
+export function MemoryOffPanel() {
+  return (
+    <SettingsGroup footer={MEMORY_OFF_TEXT}>
+      <SettingsRow label="Memory" control={<Toggle on={false} label="Memory" onClick={() => void useMemory.getState().updateSettings({ enabled: true })} />} />
+    </SettingsGroup>
+  );
+}
+
 /** Memory on, and Pause: the switches that apply to every scope. */
 export function MemorySwitches() {
   const settings = useMemory((s) => s.settings);
   if (!settings) return null;
   return (
     <SettingsGroup>
-      <SettingsRow label="Memory" hint={settings.enabled ? 'Threads get the block and the memory tools.' : 'Off: threads get no block and no memory tools.'}
+      <SettingsRow label="Memory" hint={settings.enabled ? 'Threads get the block and the memory tools. Open threads get them when they start again.' : 'Off: threads get no block and no memory tools.'}
         control={<Toggle on={settings.enabled} label="Memory" onClick={() => void useMemory.getState().updateSettings({ enabled: !settings.enabled })} />} />
       <SettingsRow label="Pause" hint="Threads still read memory. Nothing new is saved."
         control={<Toggle on={settings.paused} label="Pause" onClick={() => void useMemory.getState().updateSettings({ paused: !settings.paused })} />} />

@@ -500,6 +500,11 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   const memory = new MemoryService({
     db, projects: () => projectsFromDb(db), broadcast: (e) => broadcaster.broadcast(e),
     business: () => profileRef() === 'business', lastSeq: (id) => journalWiring.journal.lastSeq(id) || null,
+    // Turned on (memory is off by default): the conversation catch-up and the Claude Code import, once.
+    onActive: () => {
+      void memoryTurns.catchUp().catch((err) => console.warn('[memory] conversation catch-up failed:', err));
+      setImmediate(() => { try { memory.importClaudeMemory(os.homedir()); } catch (err) { console.warn('[memory] Claude Code memory import failed:', err); } });
+    },
   });
   // Layer 1: the words of each thread, for conversation search. Read when a thread settles and once at start.
   const transcriptFiles = new ThreadTranscripts(db);
