@@ -457,17 +457,6 @@ export function NewThreadModal({ sessionId: initialSession, prompts, onClose, on
     <Modal open onClose={onClose} sheet={isMobile} anchor="top">
       <div style={{ display: 'flex', flexDirection: 'column', gap: m ? 14 : 16 }}>
       <div ref={mainRef} style={{ display: 'flex', flexDirection: 'column', gap: m ? 14 : 16, minHeight: m && floor ? floor : undefined }}>
-        {/* The project, as a settings row like Mode, Account and Model (owner, 2026-11-20), above the tools. */}
-        {pickProject && (
-          <Row mobile={m} last>
-            <span style={rowLabel}>Project</span>
-            <div style={{ width: controlWidth }}>
-              <SearchSelect ariaLabel="Project" size={m ? 'lg' : 'md'} value={sessionId}
-                options={projects.filter((p) => !p.archivedAt || p.id === sessionId).map((p) => ({ value: p.id, label: p.name }))}
-                onChange={(v) => { if (v) setChosen(v); }} />
-            </div>
-          </Row>
-        )}
         {/* HARNESS. Desktop: one segmented strip, every harness a column. Phone: a row of
             pills that scrolls sideways, bleeding to the sheet edge. A harness whose CLI is
             missing is dimmed and tagged "Install", but stays SELECTABLE: picking it swaps
@@ -480,6 +469,19 @@ export function NewThreadModal({ sessionId: initialSession, prompts, onClose, on
           isAvailable={(id) => { const h = harnesses.find(x => x.id === id); return h ? isAvailable(h) : true; }}
           mobile={m}
         />
+
+        {/* The project, as a settings row like Mode, Account and Model (owner, 2026-11-20), below the tools
+            (owner, later the same day: "maybe put project below the provider list"). */}
+        {pickProject && (
+          <Row mobile={m} last>
+            <span style={rowLabel}>Project</span>
+            <div style={{ width: controlWidth }}>
+              <SearchSelect ariaLabel="Project" size={m ? 'lg' : 'md'} value={sessionId}
+                options={projects.filter((p) => !p.archivedAt || p.id === sessionId).map((p) => ({ value: p.id, label: p.name }))}
+                onChange={(v) => { if (v) setChosen(v); }} />
+            </div>
+          </Row>
+        )}
 
         {/* The selected harness has no CLI: everything below the picker is replaced by the
             one action that matters. No point offering a model, a mode, or a Start button for

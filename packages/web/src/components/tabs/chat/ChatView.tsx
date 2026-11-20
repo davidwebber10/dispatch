@@ -1,4 +1,5 @@
 import { threadViewCache } from '../../../lib/threadViewCache';
+import { ImageViewerHost } from '../../ChatImage';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { SignedOutCard } from './SignedOutCard';
 import { ConnectClaudeCard } from '../../connections/ConnectClaudeCard';
@@ -221,6 +222,9 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   useLayoutEffect(() => setReady(opensFromCache()), [terminalId]);
 
   return (
+    // The photo viewer lives above the rows (owner, 2026-11-20): a new line redraws an assistant turn,
+    // and a viewer held by a row closed with it. Chat mode does the same (EndlessColumn).
+    <ImageViewerHost>
     <ThreadDocsContext.Provider value={threadDocs}>
     <div className="chat-scope" style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, background: 'var(--color-base)' }}>
       <MessageScroller.Provider autoScroll defaultScrollPosition="end" scrollEdgeThreshold={48}>
@@ -336,6 +340,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
       <DocViewer owner={terminalId} />
     </div>
     </ThreadDocsContext.Provider>
+    </ImageViewerHost>
   );
 }
 

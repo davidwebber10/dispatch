@@ -739,6 +739,9 @@ describe('NewThreadModal with a project picker', () => {
     expect(selectedText('Project')).toContain('Alpha');
     // A settings row like Mode, Account and Model (owner, 2026-11-20): the label left, the dropdown right.
     const label = screen.getByText('Project', { selector: 'span' });
+    // Below the tool picker (owner, 2026-11-20: "maybe put project below the provider list").
+    const tool = screen.getByRole('button', { name: 'Claude Code' });
+    expect(tool.compareDocumentPosition(label) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(label.parentElement!.contains(screen.getByRole('combobox', { name: 'Project' }))).toBe(true);
     pickOption('Project', 'Beta');
     start();

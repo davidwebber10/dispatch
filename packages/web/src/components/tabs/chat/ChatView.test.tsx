@@ -1038,3 +1038,22 @@ describe('ChatView — newest first', () => {
     expect(screen.queryByTestId('thread-start')).toBeNull();
   });
 });
+
+// Owner, 2026-11-20: "when I enlarge a photo in Pretty mode, a new line closes the modal". The viewer
+// lives above the rows (ImageViewerHost, as in Chat), so a new line that redraws the rows keeps it open.
+describe('ChatView — an enlarged photo stays open while new lines arrive', () => {
+  test('a photo opened in the chat stays open when the assistant writes a new line', async () => {
+    let onEvent: (e: unknown) => void = () => {};
+    vi.spyOn(sock, 'openStructuredSocket').mockImplementation((opts: any) => { onEvent = opts.onEvent; return { close: () => {} } as any; });
+    render(<ChatView terminalId="t1" />);
+    // A screenshot a tool returned sits in the assistant's turn; new lines of the same turn redraw that turn.
+    act(() => { onEvent({ type: 'user', uuid: 'u1', message: { content: [{ type: 'text', text: 'take a screenshot' }] } }); });
+    act(() => { onEvent({ type: 'assistant', uuid: 'a1', message: { content: [{ type: 'tool_use', id: 'shot', name: 'Screenshot', input: {} }] } }); });
+    act(() => { onEvent({ type: 'user', uuid: 'r1', message: { content: [{ type: 'tool_result', tool_use_id: 'shot', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } }] }] } }); });
+    fireEvent.click(await screen.findByRole('button', { name: /^Open image/ }));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    act(() => { onEvent({ type: 'assistant', uuid: 'a2', message: { content: [{ type: 'text', text: 'A new line.' }] } }); });
+    await screen.findByText('A new line.');
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+});
