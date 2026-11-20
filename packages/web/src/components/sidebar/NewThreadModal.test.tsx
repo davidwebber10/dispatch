@@ -737,6 +737,9 @@ describe('NewThreadModal with a project picker', () => {
     const created = vi.fn();
     render(<NewThreadModal sessionId="s1" pickProject onClose={() => {}} onCreated={created} />);
     expect(selectedText('Project')).toContain('Alpha');
+    // A settings row like Mode, Account and Model (owner, 2026-11-20): the label left, the dropdown right.
+    const label = screen.getByText('Project', { selector: 'span' });
+    expect(label.parentElement!.contains(screen.getByRole('combobox', { name: 'Project' }))).toBe(true);
     pickOption('Project', 'Beta');
     start();
     await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());

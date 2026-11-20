@@ -457,10 +457,16 @@ export function NewThreadModal({ sessionId: initialSession, prompts, onClose, on
     <Modal open onClose={onClose} sheet={isMobile} anchor="top">
       <div style={{ display: 'flex', flexDirection: 'column', gap: m ? 14 : 16 }}>
       <div ref={mainRef} style={{ display: 'flex', flexDirection: 'column', gap: m ? 14 : 16, minHeight: m && floor ? floor : undefined }}>
+        {/* The project, as a settings row like Mode, Account and Model (owner, 2026-11-20), above the tools. */}
         {pickProject && (
-          <Select ariaLabel="Project" searchable={projects.length > 8} size={m ? 'lg' : 'md'} value={sessionId}
-            options={projects.filter((p) => !p.archivedAt || p.id === sessionId).map((p) => ({ value: p.id, label: p.name }))}
-            onChange={setChosen} />
+          <Row mobile={m} last>
+            <span style={rowLabel}>Project</span>
+            <div style={{ width: controlWidth }}>
+              <SearchSelect ariaLabel="Project" size={m ? 'lg' : 'md'} value={sessionId}
+                options={projects.filter((p) => !p.archivedAt || p.id === sessionId).map((p) => ({ value: p.id, label: p.name }))}
+                onChange={(v) => { if (v) setChosen(v); }} />
+            </div>
+          </Row>
         )}
         {/* HARNESS. Desktop: one segmented strip, every harness a column. Phone: a row of
             pills that scrolls sideways, bleeding to the sheet edge. A harness whose CLI is

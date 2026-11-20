@@ -343,8 +343,10 @@ export function AllThreadsView({ onOpenThread, query = '', onQueryChange }: { on
   // The dialog picks the project, starting on the open thread's project, else the most recent one.
   const plus = (
     <button type="button" aria-label="New thread" title="New thread" onClick={() => setNewThreadIn(defaultNewThreadProject())}
-      style={{ width: desktop ? 32 : 36, height: desktop ? 32 : 36, padding: 0, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', border: 'none', borderRadius: desktop ? 'var(--radius-sm)' : 'var(--radius-md)', color: 'var(--color-on-accent)', cursor: 'pointer' }}>
-      <Plus size={desktop ? 16 : 18} weight="bold" />
+      // 32 px on both, the height of the Filters button next to it (owner, 2026-11-20: at 36 px on the
+      // phone it touched the line under the row).
+      style={{ width: 32, height: 32, padding: 0, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-on-accent)', cursor: 'pointer' }}>
+      <Plus size={16} weight="bold" />
     </button>
   );
   const filterBar = desktop ? (

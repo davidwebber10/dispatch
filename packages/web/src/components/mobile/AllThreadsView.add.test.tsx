@@ -38,27 +38,31 @@ beforeEach(() => {
 
 describe.each([['desktop', false], ['phone', true]] as const)('the Threads list + (%s)', (_n, phone) => {
   beforeEach(() => { isMobile.on = phone; });
+  // The desktop list has its own search field; the phone's search is in the app header (MobileApp).
+  const searchProps = () => (phone ? {} : { query: '', onQueryChange: () => {} });
 
   it('a green + sits right of Filters and opens the new-thread dialog with a project picker', () => {
-    render(<AllThreadsView onOpenThread={() => {}} query="" onQueryChange={() => {}} />);
+    render(<AllThreadsView onOpenThread={() => {}} {...searchProps()} />);
     const filters = screen.getByRole('button', { name: /^Filters/ });
     const plus = screen.getByRole('button', { name: 'New thread' });
     expect(filters.compareDocumentPosition(plus) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(plus.style.background).toBe('var(--color-accent)');
+    // The same height as Filters, so it never touches the line under the row (owner, 2026-11-20).
+    expect(plus.style.height).toBe('32px');
     fireEvent.click(plus);
     expect(screen.getByTestId('pick')).toHaveTextContent('true');
   });
 
   it('starts on the open thread\'s project', () => {
     useTabs.setState({ activeTabId: 'a1' } as any);
-    render(<AllThreadsView onOpenThread={() => {}} query="" onQueryChange={() => {}} />);
+    render(<AllThreadsView onOpenThread={() => {}} {...searchProps()} />);
     fireEvent.click(screen.getByRole('button', { name: 'New thread' }));
     expect(screen.getByTestId('start-project')).toHaveTextContent('A');
   });
 
   it('with no open thread, starts on the most recent project, and opens the new thread', () => {
     const open = vi.fn();
-    render(<AllThreadsView onOpenThread={open} query="" onQueryChange={() => {}} />);
+    render(<AllThreadsView onOpenThread={open} {...searchProps()} />);
     fireEvent.click(screen.getByRole('button', { name: 'New thread' }));
     expect(screen.getByTestId('start-project')).toHaveTextContent('B');
     fireEvent.click(screen.getByRole('button', { name: 'fake start' }));
