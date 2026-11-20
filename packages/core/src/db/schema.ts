@@ -778,4 +778,34 @@ function initializeSchema(db: Database.Database): void {
     if (!cols.has('source')) db.exec('ALTER TABLE memory_cursors ADD COLUMN source TEXT');
     if (!cols.has('file_offset')) db.exec('ALTER TABLE memory_cursors ADD COLUMN file_offset INTEGER NOT NULL DEFAULT 0');
   });
+  // Memory providers (spec 2026-11-17-memory-design.md, 4.8): a MIRROR of each harness's own memory
+  // files, for search and for the screen. The harness file is the truth; the mirror has no history and
+  // is rebuilt from the files at each sync. Its rows join memory_fts with rowid = MIRROR_ROWID_BASE + id
+  // (pages use +id, notes -id), kind 'entry', so one index searches every provider.
+  migrate(db, 'memory-3-mirror', () => db.exec(`
+    CREATE TABLE IF NOT EXISTS memory_mirror (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider    TEXT NOT NULL,
+      scope       TEXT NOT NULL,
+      rel         TEXT NOT NULL,
+      path        TEXT,
+      sha         TEXT NOT NULL,
+      mtime       INTEGER NOT NULL DEFAULT 0,
+      title       TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      text        TEXT NOT NULL,
+      writable    INTEGER NOT NULL DEFAULT 0,
+      synced_at   TEXT NOT NULL,
+      UNIQUE (provider, scope, rel)
+    );
+    CREATE TRIGGER IF NOT EXISTS memory_mirror_fts_insert AFTER INSERT ON memory_mirror
+      BEGIN INSERT INTO memory_fts(rowid, slug, text, scope, kind) VALUES (1099511627776 + new.id, new.title, new.description || char(10) || new.text, new.scope, 'entry'); END;
+    CREATE TRIGGER IF NOT EXISTS memory_mirror_fts_update AFTER UPDATE OF title, description, text, scope ON memory_mirror
+      BEGIN
+        DELETE FROM memory_fts WHERE rowid = 1099511627776 + old.id;
+        INSERT INTO memory_fts(rowid, slug, text, scope, kind) VALUES (1099511627776 + new.id, new.title, new.description || char(10) || new.text, new.scope, 'entry');
+      END;
+    CREATE TRIGGER IF NOT EXISTS memory_mirror_fts_delete AFTER DELETE ON memory_mirror
+      BEGIN DELETE FROM memory_fts WHERE rowid = 1099511627776 + old.id; END;
+  `));
 }

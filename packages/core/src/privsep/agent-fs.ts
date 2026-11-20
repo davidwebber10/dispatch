@@ -239,3 +239,66 @@ export function agentNode(script: string, args: string[]): void {
   if (r.error) throw r.error;
   if (r.status !== 0) throw new Error(String(r.stderr ?? '').trim().split('\n').pop() || `the script failed (status ${r.status})`);
 }
+
+/**
+ * The script of `agentReadFileSync` and `agentListFiles` (`node -e`, as the agent). `read`: open without
+ * following a link at the last part, check the OPEN file (regular, at most `max` bytes), print
+ * `{ mtimeMs, b64 }`. `list`: the names of the regular files (not links) of a folder, as JSON.
+ */
+const AGENT_SYNC_SCRIPT = `
+const fs = require('fs');
+const [op, target, maxText] = process.argv.slice(1);
+try {
+  if (op === 'list') {
+    process.stdout.write(JSON.stringify(fs.readdirSync(target, { withFileTypes: true }).filter((d) => d.isFile()).map((d) => d.name)));
+  } else if (op === 'read') {
+    const max = Number(maxText);
+    const fd = fs.openSync(target, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) process.exit(3);
+    if (st.size > max) process.exit(4);
+    const buf = Buffer.alloc(st.size);
+    let off = 0;
+    while (off < st.size) { const n = fs.readSync(fd, buf, off, st.size - off, off); if (n <= 0) break; off += n; }
+    process.stdout.write(JSON.stringify({ mtimeMs: st.mtimeMs, b64: buf.subarray(0, off).toString('base64') }));
+  } else process.exit(2);
+} catch (e) { process.exit(1); }
+`;
+
+function runSync(args: string[], maxOut: number): string | null {
+  const r = spawnSync(process.execPath, ['-e', AGENT_SYNC_SCRIPT, ...args], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 60_000, maxBuffer: maxOut });
+  return r.error || r.status !== 0 ? null : String(r.stdout ?? '');
+}
+
+/**
+ * Read a small file below the home AS THE AGENT, synchronously (memory providers): the text and its
+ * mtime, or null when the agent cannot open it, it is not a regular file, or it is larger than
+ * `maxBytes`. The kernel applies the agent's rights to every folder on the path, so a folder swapped
+ * for a link to a root-only place is not readable. Without privilege separation: the same open here.
+ */
+export function agentReadFileSync(file: string, maxBytes: number, cfg: PrivsepConfig | null = privsep()): { text: string; mtimeMs: number } | null {
+  if (!cfg) {
+    let fd: number;
+    try { fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK); } catch { return null; }
+    try {
+      const st = fs.fstatSync(fd);
+      if (!st.isFile() || st.size > maxBytes) return null;
+      const buf = Buffer.alloc(st.size);
+      let off = 0;
+      while (off < st.size) { const n = fs.readSync(fd, buf, off, st.size - off, off); if (n <= 0) break; off += n; }
+      return { text: buf.subarray(0, off).toString('utf8'), mtimeMs: st.mtimeMs };
+    } catch { return null; } finally { fs.closeSync(fd); }
+  }
+  const out = runSync(['read', file, String(maxBytes)], maxBytes * 2 + 4096);
+  if (out === null) return null;
+  try { const j = JSON.parse(out); return { text: Buffer.from(j.b64, 'base64').toString('utf8'), mtimeMs: Number(j.mtimeMs) || 0 }; } catch { return null; }
+}
+
+/** The regular files (not links) of a folder, listed AS THE AGENT; [] when the agent cannot read it. */
+export function agentListFiles(dir: string, cfg: PrivsepConfig | null = privsep()): string[] {
+  if (!cfg) {
+    try { return fs.readdirSync(dir, { withFileTypes: true }).filter((d) => d.isFile()).map((d) => d.name); } catch { return []; }
+  }
+  const out = runSync(['list', dir], 4 * 1024 * 1024);
+  try { const names = out === null ? [] : JSON.parse(out); return Array.isArray(names) ? names.filter((n): n is string => typeof n === 'string') : []; } catch { return []; }
+}

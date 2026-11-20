@@ -11,6 +11,7 @@ import { createApp } from '../../src/server.js';
 import { configureRefusalLog } from '../../src/auth/route-policy.js';
 import { callTool, handleRequest, resetIdentityCache } from '../../src/overseer/agency-mcp.js';
 import { addTurns } from '../../src/db/memory.js';
+import { updateMemorySettings } from '../../src/memory/settings.js';
 
 /**
  * The three memory tools of the `dispatch` server, end to end against a real daemon (spec
@@ -48,6 +49,7 @@ describe('memory tools in the dispatch MCP server', () => {
     terminalsDb.create(db, { id: 'claudeA', sessionId: 'A', type: 'claude-code', label: 'c', config: { transport: 'structured' } });
     terminalsDb.create(db, { id: 'codexA', sessionId: 'A', type: 'codex', label: 'x', config: { transport: 'structured' } });
     terminalsDb.create(db, { id: 'claudeB', sessionId: 'B', type: 'claude-code', label: 'b', config: { transport: 'structured' } });
+    updateMemorySettings(db, { enabled: true }); // off by default
     server = http.createServer(app);
     await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
     process.env.DISPATCH_API = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
@@ -91,6 +93,17 @@ describe('memory tools in the dispatch MCP server', () => {
     as('codexA', 'A');
     const r = json(await callTool('memory_search', { query: 'rollout', in: 'conversations' }));
     expect(r.results).toEqual([expect.objectContaining({ thread: 'claudeA', who: 'person', snippet: expect.stringContaining('**rollout**') })]);
+  });
+
+  it('memory_search with no query returns the index; every result names its source', async () => {
+    as('claudeA', 'A');
+    await callTool('remember', { text: 'Integration tests need FOO=1.' });
+    const ix = json(await callTool('memory_search', {}));
+    expect(ix.newestNotes).toEqual([expect.objectContaining({ text: 'Integration tests need FOO=1.', source: 'dispatch' })]);
+    expect(ix).toHaveProperty('pages');
+    expect(ix).toHaveProperty('entries');
+    const hits = json(await callTool('memory_search', { query: 'integration' })).results;
+    expect(hits.every((h: any) => typeof h.source === 'string')).toBe(true);
   });
 
   it('an off-the-record thread cannot write a note: the tool says why', async () => {

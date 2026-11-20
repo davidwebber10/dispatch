@@ -87,6 +87,12 @@ export async function runBootRecovery(s: DaemonServices, opts: { network: boolea
     // Memory layer 1: the words that threads wrote while this daemon was stopped. In the background,
     // one thread at a time; a thread that settles meanwhile joins the same queue.
     void s.memoryTurns.catchUp().catch((err) => console.warn('[memory] conversation catch-up failed:', err));
+    // The mirror of the harnesses' own memory (memory/providers). It asks git for each project's folder,
+    // so it runs after the start, not in it. Nothing while memory is off.
+    setTimeout(() => {
+      if (!db.open) return;
+      try { s.memory.syncProviders(); } catch (err) { console.warn('[memory] provider sync failed:', err); }
+    }, 1000).unref();
   } finally {
     setTimeout(() => endless.endBoot(), 1000).unref();
   }

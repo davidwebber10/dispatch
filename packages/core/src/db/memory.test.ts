@@ -136,7 +136,10 @@ describe('memory settings', () => {
   beforeEach(() => { db = new Database(':memory:'); initSchema(db); });
 
   it('defaults, merge, clamp, null clears', () => {
-    expect(readMemorySettings(db)).toEqual({ enabled: true, paused: false, blockChars: DEFAULT_BLOCK_CHARS, projectsOff: [] });
+    // Off by default (owner, 2026-11-19); a stored value wins.
+    expect(readMemorySettings(db)).toEqual({ enabled: false, paused: false, blockChars: DEFAULT_BLOCK_CHARS, projectsOff: [], providers: { claude: true, codex: true, grok: true } });
+    expect(updateMemorySettings(db, { enabled: true }).enabled).toBe(true);
+    expect(readMemorySettings(db).enabled).toBe(true);
     expect(updateMemorySettings(db, { paused: true, blockChars: 99999, projectsOff: ['s1', 's1', 'bad id'] }))
       .toMatchObject({ paused: true, blockChars: MAX_BLOCK_CHARS, projectsOff: ['s1'] });
     expect(updateMemorySettings(db, { enabled: 'yes', blockChars: null })).toMatchObject({ enabled: true, paused: true, blockChars: DEFAULT_BLOCK_CHARS });

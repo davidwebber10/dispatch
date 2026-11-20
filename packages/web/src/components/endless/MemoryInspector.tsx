@@ -6,7 +6,10 @@ import type { EndlessView } from '../../api/types';
 import { Select } from '../common/Select';
 import { fontVar, fontVarInput } from '../../lib/fontSize';
 
-/** The view exactly as the model sees it (rendered by the server, spec section 7), and the Chat instructions. */
+/**
+ * "Chat context": the view exactly as the model sees it (rendered by the server, spec section 7), and the
+ * Chat instructions. Named "Chat context", not "Memory", since the Memory tab (spec 2026-11-17-memory-design.md, 4.8).
+ */
 export function MemoryInspector({ open, onClose, sheet = false }: { open: boolean; onClose: () => void; sheet?: boolean }) {
   const [view, setView] = useState<EndlessView | null>(null);
   const [unavailable, setUnavailable] = useState(false);
@@ -40,15 +43,15 @@ export function MemoryInspector({ open, onClose, sheet = false }: { open: boolea
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Memory" sheet={sheet}>
+    <Modal open={open} onClose={onClose} title="Chat context" sheet={sheet}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0, width: sheet ? '100%' : 'min(760px, 86vw)' }}>
         <div style={{ fontSize: fontVar(12.5), color: 'var(--color-text-tertiary)' }}>
-          {unavailable ? 'Memory is unavailable.'
+          {unavailable ? 'Chat context is unavailable.'
             : view ? `${view.lines.length} lines · ${(view.bytes / 1000).toFixed(1)} KB — the view exactly as the model sees it`
             : 'Loading…'}
         </div>
         {view && (
-          <pre data-testid="memory-view"
+          <pre data-testid="chat-context-view"
             style={{ margin: 0, maxHeight: '45vh', overflow: 'auto', padding: 10, borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', font: `400 ${fontVar(11.5)} var(--font-mono)`, color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
             {view.rendered}
           </pre>

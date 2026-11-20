@@ -1,6 +1,7 @@
+import { useEffect } from 'react';
 import { create } from 'zustand';
 import { api } from '../api/client';
-import type { MemoryScopeInfo, MemoryPageSummary, MemoryNote, MemorySettings } from '../api/types';
+import type { MemoryScopeInfo, MemoryPageSummary, MemoryNote, MemorySettings, MemoryProviderInfo, MemoryEntry } from '../api/types';
 import type { ServerEvent } from '../api/server-events';
 
 /**
@@ -18,9 +19,15 @@ export interface MemoryState {
   pages: MemoryPageSummary[] | null;
   notes: MemoryNote[] | null;
   block: { text: string; chars: number; cap: number } | null;
+  /** The memory providers (Dispatch and the harnesses), for the scope on screen. */
+  providers: MemoryProviderInfo[] | null;
+  /** The harness entries Dispatch mirrors for the scope on screen. */
+  entries: MemoryEntry[] | null;
   error: string | null;
   setScope: (scope: string) => void;
   load: () => Promise<void>;
+  /** The settings only (the rail asks: memory is off by default and its item shows only when on). */
+  loadSettings: () => Promise<void>;
   loadScope: () => Promise<void>;
   updateSettings: (patch: Partial<Omit<MemorySettings, 'available'>>) => Promise<void>;
   applyEvent: (e: ServerEvent) => void;
@@ -46,10 +53,12 @@ export const useMemory = create<MemoryState>((set, get) => ({
   pages: null,
   notes: null,
   block: null,
+  providers: null,
+  entries: null,
   error: null,
   setScope: (scope) => {
     saveScopeKey(scope);
-    set({ scope, pages: null, notes: null, block: null });
+    set({ scope, pages: null, notes: null, block: null, providers: null, entries: null });
     void get().loadScope();
   },
   load: async () => {
@@ -69,13 +78,18 @@ export const useMemory = create<MemoryState>((set, get) => ({
     const request = ++scopeRequest;
     const scope = get().scope;
     try {
-      const [{ pages }, { notes }, block] = await Promise.all([
-        api.memoryPages(scope), api.memoryNotes(scope, 'new'), api.memoryBlock(projectOfScope(scope)),
+      // The providers first: asking for them syncs the mirror (opening the tab is a sync point, spec 4.8).
+      const { providers } = await api.memoryProviders(projectOfScope(scope));
+      const [{ pages }, { notes }, block, { entries }] = await Promise.all([
+        api.memoryPages(scope), api.memoryNotes(scope, 'new'), api.memoryBlock(projectOfScope(scope)), api.memoryEntries(scope),
       ]);
-      if (request === scopeRequest && get().scope === scope) set({ pages, notes, block, error: null });
+      if (request === scopeRequest && get().scope === scope) set({ pages, notes, block, providers, entries, error: null });
     } catch (e) {
       if (request === scopeRequest) set({ error: message(e) });
     }
+  },
+  loadSettings: async () => {
+    try { set({ settings: await api.memorySettings() }); } catch { /* an older daemon, or offline: the item stays hidden */ }
   },
   updateSettings: async (patch) => {
     try {
@@ -85,8 +99,25 @@ export const useMemory = create<MemoryState>((set, get) => ({
   },
   applyEvent: (e) => {
     if (e.type !== 'memory:changed' || typeof e.scope !== 'string') return;
-    if (get().scopes === null) return; // never shown: nothing to keep current
-    void get().load();
+    if (get().scopes !== null) void get().load();
+    else if (get().settings !== null) void get().loadSettings(); // the rail follows the switch
   },
-  reloadAll: async () => { if (get().scopes !== null) await get().load(); },
+  reloadAll: async () => {
+    if (get().scopes !== null) await get().load();
+    else if (get().settings !== null) await get().loadSettings();
+  },
 }));
+
+let settingsAsked = false;
+/**
+ * Memory is on (owner, 2026-11-19: off by default). The rail, the hosted rail and the command palette
+ * show Memory only then; Settings > Memory always shows, with its switch.
+ */
+export function useMemoryOn(): boolean {
+  useEffect(() => {
+    if (settingsAsked) return;
+    settingsAsked = true;
+    void useMemory.getState().loadSettings();
+  }, []);
+  return useMemory((s) => s.settings?.enabled === true);
+}

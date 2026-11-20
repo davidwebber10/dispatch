@@ -10,11 +10,13 @@ or a file:line for each fact) are not in this repository.
 
 | # | Decision | Chosen |
 |---|---|---|
-| 1 | Claude Code's own memory in Dispatch threads | Keep it and import it in phase 1 (slice 1.6). One switch in phase 3. |
+| 1 | Claude Code's own memory in Dispatch threads | Keep it. Dispatch mirrors it as a provider (4.8), with no conversion and no switch that turns it off. |
 | 2 | How a dream is applied on the desktop | At once, with a change feed and one-button undo (phase 2). |
 | 3 | Core or plugin | Core. The injected block needs a core hook, and plugin storage is too small and has no search. |
 | 4 | Scopes in version 1 | You, and one for each project. |
 | 6 | Where the spec lives | Here. |
+| 7 | Memory on the desktop by default (2026-11-19) | Off. The person turns it on in Settings → Memory. |
+| 8 | Design review (2026-11-19) | Tools first: a short pointer and the pinned titles, not a large block (4.3). Harness memories are providers that Dispatch mirrors and searches, not imports (4.8). |
 
 ---
 
@@ -31,7 +33,7 @@ are small, and Dispatch already has most of them.
 | 1. Transcripts, "a searchable event log" | The thread journal and the harness files, which Dispatch already keeps. New: a search index. |
 | 2. Memory notes, "salient observations written by Claude" | New: a `remember` tool. A note is saved at once and every thread can find it at once. |
 | 3. Memory representations (a wiki) | New: a small set of linked markdown pages with an index, for you and for each project. |
-| 4. Injected context | New: a small block (4,000 characters by default) at the start of every thread, for Claude Code and for Codex. |
+| 4. Injected context | New: a short pointer and the pages the person pinned (1,000 characters by default) at the start of every thread, for every harness. The tools do the rest. |
 | Dreaming | New: a background pass that checks notes against transcripts, writes and corrects pages, and keeps the block small. |
 
 **Real time or nightly: both, on three clocks. None of them is a wall clock.**
@@ -173,7 +175,7 @@ prevents that.
    a source for each item, versions, and the same memory for every harness and every model.
 3. **Notes are instant. Pages are organized later.** Real time comes from notes, not from fast dreams.
 4. **Tell the model what memory is for, not how.** Three tools, one sentence, no rules.
-5. **The injected block is small and the person can read it.** 4,000 characters by default. The
+5. **The injected text is small and the person can read it.** 1,000 characters by default. The
    Memory tab shows the exact text that threads receive.
 6. **Nothing is deleted in place.** Every change is a version. Every dream can be undone.
 7. **Transcripts and notes are data, not instructions.** The cookbook wording goes into every prompt.
@@ -227,28 +229,23 @@ pages before a limit is reached. These numbers are small on purpose.
 
 ### 4.3 What a thread gets
 
-**One block at the start** (both harnesses), built by `memory.injection(sessionId, harness)`:
+**Tools first** (design review, 2026-11-19). The text at the start is small, built by
+`memory.injection(sessionId, harness)` for every harness:
 
 ```
 ## Memory
 
-You have a memory that lasts between threads. It holds what the person and earlier
-threads learned that the code and the tools do not show. Search it and read it when it
-can help. Save a note when something is worth knowing next time.
-Memory can be out of date. Check a fact that matters before you rely on it.
+You have a memory that lasts between threads: what the person and earlier threads learned that the
+code and the tools do not show, from Dispatch and from the harnesses' own memories. memory_search finds
+it (with no query it lists what is there); memory_read opens an entry; remember saves a note.
 
-### You
-<the "Where to start" part of your index: at most 40 lines>
-
-### This project
-<the "Where to start" part of the project index: at most 40 lines>
-
-### New notes (not organized yet)
-<one line for each new note, newest first, at most 10>
+Pinned by the person:
+- <slug>: <one-line description>      (one line for each page the person pinned; none by default)
 ```
 
-- Default cap 4,000 characters, the same order as the Managed Agents cap (4,096). Hard maximum 8,000.
-  When the text is longer, the daemon cuts the last section first and adds "search for more".
+- There is no index and there are no notes in the text: `memory_search` with no query gives them.
+- Default cap 1,000 characters (at least 500, at most 2,000). When the text is longer, pinned lines go
+  from the end first, and one line says to search.
 - The daemon neutralizes control tokens and text that imitates system markup, as Claude Code does.
 - The text says what memory is for. It gives no rule about when to write.
 
@@ -257,8 +254,8 @@ already has this server, and hosted boxes and Codex coordinators already allow i
 
 | Tool | Does |
 |---|---|
-| `memory_search(query, in?)` | Searches pages and notes of your scope and the project scope. `in: "conversations"` searches past thread text (layer 1). Returns short snippets with a slug or a thread reference. |
-| `memory_read(slug)` | Returns one page, its date, when it was last checked, and its sources. It also returns newer notes about that page, so a correction is visible at once without a rewrite. |
+| `memory_search(query?, in?)` | Searches pages and notes of your scope and the project scope, and the mirrored entries of the harness providers (4.8), in one index. With no query it returns the index: the pages, the newest notes, and the entries. `in: "conversations"` searches past thread text (layer 1). Every result names its `source` (`dispatch`, a provider id, or `conversations`). |
+| `memory_read(slug)` | Takes a page slug or an entry reference (`claude:12`). Returns one page, its date, when it was last checked, and its sources. It also returns newer notes about that page, so a correction is visible at once without a rewrite. |
 | `remember(text, about?)` | Saves a note. `about` names a page that the note corrects or extends. |
 
 There is no tool that deletes or rewrites a page. A thread that finds a wrong fact writes a note
@@ -338,12 +335,39 @@ model of either harness.
 | A hosted box sleeps | The host calls `POST /api/memory/dream` before sleep and waits a bounded time. A waiting dream is reported in the heartbeat. |
 | You want dreams while the laptop is off | Not in this plan. It needs transcripts in a cloud. The Dreams API can do it later for people who accept that (Claude only, research preview, not zero data retention). |
 
-### 4.8 Relation to the memory that exists today
+### 4.8 Memory providers, and the memory that exists today
+
+Each harness has, or does not have, a memory of its own. Dispatch treats each one as a **provider**
+(`memory/providers/`, one adapter each: `dispatch`, `claude`, `codex`, `grok`, `opencode`):
+`id`, `label`, `status(project)` → `{ native, state: on | off | not-supported | not-installed, location }`,
+`capabilities` → `{ scopes, write: none | memory | instructions, delete, loadedByHarness }`, `list(scope)`,
+`read(id)`, and optional `write(entry, expectedSha)` and `remove(id, expectedSha)`. Search is not in the
+interface: Dispatch indexes every provider's entries in one full-text index.
+
+**Mirror, not convert.** One table, `memory_mirror` (provider, scope, path, sha, mtime, title, text), and a
+source on every search result. The harness file is the truth; the mirror has no history. Dispatch syncs at
+start, when memory is turned on, when a thread settles, and when the Memory tab opens: it adds or updates a
+row when the sha changed, and deletes the row when the file is gone. Nothing is read while memory is off.
+
+**Two switches.** "Dispatch reads this provider" is a Dispatch setting (on by default locally, off on a
+hosted box). The harness's own memory switch is shown only; Dispatch never changes it in v1.
+
+**Write-through from the screen** (the person only; a thread key reads and searches). The provider reads
+the file again and compares the sha: a changed file returns its new text and nothing is written (the file
+always wins). Else it writes a temp file and renames it, then syncs. Delete removes the file (and its
+index line), then syncs. Every read and write opens the file with `O_NOFOLLOW`, checks the open file, and
+stays inside the provider's root, so a link swapped in is never followed.
+
+| Provider | Where | Default | Dispatch writes |
+|---|---|---|---|
+| Claude Code | `~/.claude/projects/<repo>/memory/`: a `MEMORY.md` index (its first 200 lines or 25 KB load) and one file per memory with frontmatter (`name`, `description`, `metadata.type`) | On | A new file plus one appended index line (the index is never rewritten); refused near 200 lines. `MEMORY.md` is never an entry. |
+| Codex | `$CODEX_HOME/memories_v2/` (the desktop app also `memories/`): `memory_summary.md`, `MEMORY.md`, `raw_memories.md`, `rollout_summaries/` | Off | Never these files (Codex's generated state). "Codex instructions": a marked section of `~/.codex/AGENTS.md`, which Codex loads in every session. Never a repository's AGENTS.md. |
+| Grok | `~/.grok/memory-v2/global/` and `workspaces/<slug>-<hash8>/` (experimental; `GROK_MEMORY=1` or `[memory] enabled = true`) | Off | `topics/*.md` only, and only when its memory is on; never its generated `MEMORY.md`. |
+| OpenCode | none (instructions only) | Not supported | Nothing: "No own memory; uses Dispatch memory". |
+| Dispatch | the daemon database (4.2) | On when memory is on | Pages and notes. |
 
 | Today | Plan |
 |---|---|
-| Claude Code auto-memory (`~/.claude/projects/<repo>/memory/`), which every Claude thread in a repo loads | **Phase 1: keep it and import it.** The daemon reads those files as notes (origin: import) and reads new ones at each dream. **Phase 3: offer a switch** that turns Claude Code's own memory off for Dispatch threads, so there is one memory for every harness. Decision 1 below. |
-| Codex memories (off by default) | Leave off. Dispatch memory replaces it. |
 | Endless Chat ("Chat") | Different thing: the log of one chat. No change. Chat gets the same three tools later. Its two screens named "Memory search" and "Memory inspector" are renamed "Chat search" and "Chat context" to free the name. |
 | Skills | No change. In phase 3 the dream can propose a skill when a note is a procedure. A person accepts it. |
 | Roles `memory.md`, Coach plugin memory | No change. The Coach screen is the model for our controls. |
@@ -378,7 +402,7 @@ Two panes, the same shape as Settings (a 214 px column and a body).
 │ MEMORY                │  You  ▸ Where to start                    Dreamed 2 h ago │
 │                       │                                    [Dream now] [Pause] ⚙ │
 │ Scope                 ├──────────────────────────────────────────────────────────┤
-│  ● You                │  What threads see (1,840 of 4,000 characters)        [▾] │
+│  ● You                │  What threads see (412 of 1,000 characters)          [▾] │
 │  ○ web-app            │  ┌────────────────────────────────────────────────────┐  │
 │  ○ api                │  │ ## Memory ...                                      │  │
 │  ○ docs               │  └────────────────────────────────────────────────────┘  │
@@ -422,7 +446,7 @@ Page view (right pane, after you open a page):
 
 | Control | Where | Default |
 |---|---|---|
-| Memory on or off | Tab header and Settings | On for desktop. A host decides for a box. |
+| Memory on or off | Settings → Memory (and the tab header when on) | **Off** on desktop (owner, 2026-11-19). While off: no block, no memory tools, no reading of conversations or of Claude Code's memory, and no Memory item in the rail or the command palette; Settings → Memory shows only the switch. Turning it on runs the catch-up once, and open threads get memory when they start again. A host decides for a box. |
 | Pause | Tab header | Not paused. When paused: threads still read memory, nothing new is saved or dreamed. |
 | Remember this project | Scope row | On |
 | Off the record (one thread) | Thread menu | Off |
@@ -430,7 +454,7 @@ Page view (right pane, after you open a page):
 | Dream now | Tab header | |
 | Dream model, analyzer model | Settings | Automatic |
 | Weekly budget for memory | Settings | 3% |
-| Size of the injected block | Settings | 4,000 characters |
+| Size of the injected text | Settings | 1,000 characters |
 | Steering text for dreams | Settings, for each scope | The two defaults in 4.6 |
 | Export, import | Left column | Markdown folder as a zip |
 | Forget everything in this scope | Settings, with a typed confirmation | |
@@ -487,7 +511,7 @@ the block is injected. It is already useful, and it costs nothing to run.
 | 1.3 Tools and injection | Three tools in the `dispatch` MCP server. `memory.injection()` next to `skills.injection()`. Codex terminal threads: put the prompts into `developer_instructions` (today they get only the tools note). Role allow-list. | `overseer/agency-mcp.ts`, `daemon/build.ts:654`, `mcp/injection.ts:112`, `roles/role-policy.ts` |
 | 1.4 Conversation search | A cursor for each thread. An indexer that reads new journal rows and harness files into `memory_turns_fts`, with no model. Runs on the settle event and at start. | new `memory/cursor.ts`, `memory/transcript-source.ts`, `daemon/boot-recover.ts` |
 | 1.5 The tab | View, route, rail item, hosted rail, command palette, feature key, store with live events, scope list, pages, notes, page editor, history, "What threads see", pause, project switch, off the record. Phone layout under Settings. | `stores/ui.ts`, `lib/routes.ts`, `stores/navigation.ts`, `IconRail.tsx`, `DesktopShell.tsx`, `AppShell.tsx`, `CommandPalette.tsx`, `lib/profile.ts`, new `components/memory/*`, new `stores/memory.ts` |
-| 1.6 Import | Read each project's Claude Code auto-memory as notes, once and then at each start. Rename the two Chat screens. | `endless/import.ts` pattern, new `memory/import-claude.ts` |
+| 1.6 Providers | Memory providers (Claude Code, Codex, Grok, OpenCode, Dispatch), the mirror, write-through, the Providers section. Rename the two Chat screens. | new `memory/providers/*`, `db/memory.ts` mirror |
 
 Checks for phase 1: a note written in a Claude Code thread is found by a Codex thread of the same
 project. The block is at most the cap. A thread key cannot read another project's scope. A business
@@ -514,7 +538,6 @@ no page change. Undo restores the exact old text.
 |---|---|
 | 3.1 Replay test | A script that replays chosen past threads with memory on and off, in an isolated daemon, and reports the difference. It is the gate for every prompt change. |
 | 3.2 Freshness | Count reads. Dreams check old pages that are read often. Pages not read for 90 days leave "Where to start". After 180 days they are retired, still searchable. |
-| 3.3 One memory | The switch that turns Claude Code's own memory off for Dispatch threads (decision 1). |
 | 3.4 Skills | A dream can propose a skill from a procedure note. The person accepts it in Settings → Skills. |
 | 3.5 Chat | The same three tools and the same block for Endless Chat. |
 
@@ -533,7 +556,7 @@ metering of memory jobs, a read-only Company scope, a delete on access change) i
 | Prompt injection through memory | The daemon owns the store. Sources are recorded. The analyzer has no tools. Validation. Optional review. |
 | Background cost on the person's subscription | Budget of 3% of the week. No run under 25% of the window. Small model for the analyzer. Usage is recorded and shown. |
 | Memory grows and gets less organized (a 2026 study found this for file stores) | Hard limits on page size and page count. Dreams retire and merge. Fading by use. |
-| Two memories in Claude Code threads (its own and ours) | Import in phase 1, one switch in phase 3. |
+| Two memories in Claude Code threads (its own and ours) | Claude Code's memory is a provider: Dispatch mirrors and searches it, and the person can save to it. Each harness keeps its own; one search covers all (4.8). |
 | A Codex Pretty thread keeps its old block after resume | Known limit of Codex. The tools always give the current memory. New threads get the new block. |
 | The journal trims a long thread before the analyzer reads it | The settle pass runs minutes after a thread goes quiet, not nightly. Harness files are the fallback. |
 | The dream agent writes outside its folder | No shell. Folder-only file tools. The daemon reads back only regular files in the folder. |

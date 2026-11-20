@@ -110,6 +110,8 @@ const EXPECTED_KEY_ROUTES: string[] = [
   'GET /api/memory/read',
   'POST /api/memory/notes',
   'GET /api/memory/search',
+  'GET /api/memory/entries',
+  'GET /api/memory/entries/:id',
 ];
 
 /** Routes under `/api` that any principal may call (`publicRoute`). */

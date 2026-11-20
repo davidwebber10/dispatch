@@ -2,8 +2,9 @@ import type Database from 'better-sqlite3';
 import * as terminalsDb from '../db/terminals.js';
 import * as store from '../db/memory.js';
 import { MemoryError, YOU, projectScope, scopeProject, type MemoryScope, type MemoryPage, type MemoryNote, type MemorySearchHit } from '../db/memory.js';
-import { readMemorySettings, updateMemorySettings, projectRemembered, type MemorySettings } from './settings.js';
-import { buildBlock, type BlockScope } from './block.js';
+import { readMemorySettings, updateMemorySettings, projectRemembered, providerRead, type MemorySettings } from './settings.js';
+import { buildBlock } from './block.js';
+import { HARNESS_PROVIDERS, type MemoryProvider, type ProviderId, type ProviderScope, type ProviderEntry, type ProviderStatus, type ProviderCapabilities } from './providers/index.js';
 
 /**
  * Memory (docs/superpowers/specs/2026-11-17-memory-design.md). The composition root: scopes, pages,
@@ -32,7 +33,19 @@ export interface MemoryDeps {
   business?: () => boolean;
   /** The newest journal seq of a thread, recorded with its notes as provenance. */
   lastSeq?: (terminalId: string) => number | null;
+  /**
+   * Memory became active (turned on, or no longer paused): the background work that waited runs once
+   * now (the conversation catch-up and the Claude Code import), then as designed.
+   */
+  onActive?: () => void;
+  /** The memory providers (memory/providers): Dispatch mirrors the harness ones. Absent: no mirror. */
+  providers?: Partial<Record<ProviderId, MemoryProvider>>;
 }
+
+export interface ProviderInfo { id: ProviderId; label: string; status: ProviderStatus; capabilities: ProviderCapabilities; reading: boolean; entries: number }
+export type EntryWriteAnswer = { ok: true; entry: store.MirrorRow | null } | { ok: false; conflict: true; current: ProviderEntry | null } | { ok: false; conflict: false; error: string };
+/** An entry reference for a thread: `<provider>:<mirror id>` (a page slug never holds a colon). */
+export const ENTRY_REF = /^(claude|codex|grok):(\d{1,12})$/;
 
 /** Every project from the sessions table, archived ones too (their memory stays until the person deletes it). */
 export function projectsFromDb(db: Database.Database): MemoryProject[] {
@@ -52,8 +65,15 @@ export class MemoryService {
   settings(): MemorySettings & { available: boolean } { return { ...readMemorySettings(this.db), available: this.available() }; }
 
   updateSettings(patch: unknown): MemorySettings & { available: boolean } {
+    const before = this.active();
+    const beforeOff = new Set(readMemorySettings(this.db).projectsOff);
     updateMemorySettings(this.db, patch);
     this.changed(YOU);
+    // Off to on (or a pause ended, or a project is remembered again): run the catch-up once.
+    const back = readMemorySettings(this.db).projectsOff.length < beforeOff.size;
+    if (this.active() && (!before || back)) {
+      try { this.deps.onActive?.(); } catch (err) { console.warn('[memory] catch-up failed to start:', err); }
+    }
     return this.settings();
   }
 
@@ -249,29 +269,140 @@ export class MemoryService {
 
   // ---- the block ----
 
-  private blockScope(scope: MemoryScope): BlockScope | null {
-    const pages = store.listPages(this.db, scope).filter((p) => p.status === 'active');
-    const index = pages.find((p) => p.slug === 'index');
-    const rest = pages.filter((p) => p.slug !== 'index')
-      .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.readCount - a.readCount || b.updatedAt.localeCompare(a.updatedAt));
-    if (!index && !rest.length) return null;
-    return { indexBody: index ? store.getPage(this.db, index.id)!.body : null, pages: rest };
-  }
-
-  /** The exact text a thread of this project gets ('' when memory is not available). */
+  /**
+   * The exact text a thread of this project gets ('' when memory is not available): the pointer and the
+   * pages the person pinned in You and in this project (design review 2026-11-19: tools first).
+   */
   block(sessionId: string | null, _harness?: string): string {
     if (!this.available()) return '';
+    const pinned = this.readableScopes(sessionId).flatMap((sc) => store.listPages(this.db, sc)
+      .filter((p) => p.status === 'active' && p.pinned)
+      .map((p) => ({ slug: p.slug, description: p.description, scope: (sc === YOU ? 'you' : 'project') as 'you' | 'project' })));
+    return buildBlock({ pinned, cap: readMemorySettings(this.db).blockChars });
+  }
+
+  // ---- the index (memory_search with no query) ----
+
+  /** What memory holds for these scopes: the pages, the newest notes, the mirrored entries; each with its source. */
+  index(scopes: MemoryScope[]) {
+    const pages = scopes.flatMap((sc) => store.listPages(this.db, sc).filter((p) => p.status === 'active')
+      .map((p) => ({ kind: 'page' as const, slug: p.slug, description: p.description, scope: sc, pinned: p.pinned, source: 'dispatch' })));
+    const notes = scopes.flatMap((sc) => store.listNotes(this.db, sc, { status: 'new', limit: 10 })).sort((a, b) => b.id - a.id).slice(0, 10)
+      .map((n) => ({ kind: 'note' as const, id: n.id, text: n.text, about: n.aboutSlug, scope: n.scope, at: n.createdAt, source: 'dispatch' }));
+    const entries = store.listMirror(this.db, scopes).slice(0, 50)
+      .map((e) => ({ kind: 'entry' as const, ref: `${e.provider}:${e.id}`, title: e.title, description: e.description, scope: e.scope, source: e.provider }));
+    return { pages, notes, entries };
+  }
+
+  // ---- providers and the mirror (spec 4.8) ----
+
+  private provider(id: string): MemoryProvider {
+    const p = this.deps.providers?.[id as ProviderId];
+    if (!p) throw new MemoryError(`no memory provider "${id}"`, 404);
+    return p;
+  }
+
+  /** The provider view of a scope: a project needs its working folder. */
+  private providerScope(scope: MemoryScope): ProviderScope | null {
+    if (scope === YOU) return { scope: 'you' };
+    const id = scopeProject(scope);
+    const row = id ? this.db.prepare('SELECT working_dir FROM sessions WHERE id = ?').get(id) as { working_dir: string } | undefined : undefined;
+    return row ? { scope: scope as `project:${string}`, workingDir: row.working_dir } : null;
+  }
+
+  /** The providers with their state, the Dispatch switch, and how many entries the mirror holds. */
+  providersInfo(sessionId: string | null): ProviderInfo[] {
+    const s = readMemorySettings(this.db);
+    const ref = sessionId ? this.providerScope(projectScope(sessionId)) : null;
     const scopes = this.readableScopes(sessionId);
-    const projectSc = scopes.find((s) => s !== YOU) ?? null;
-    const notes = scopes.flatMap((sc) => store.listNotes(this.db, sc, { status: 'new', limit: 10 }))
-      .sort((a, b) => b.id - a.id)
-      .map((n) => ({ text: n.text, scope: (n.scope === YOU ? 'you' : 'project') as 'you' | 'project' }));
-    return buildBlock({
-      you: this.blockScope(YOU),
-      project: projectSc ? this.blockScope(projectSc) : null,
-      notes,
-      cap: readMemorySettings(this.db).blockChars,
+    return Object.values(this.deps.providers ?? {}).map((p) => {
+      const harness = p.id !== 'dispatch';
+      return {
+        id: p.id, label: p.label, status: p.status(ref), capabilities: p.capabilities,
+        reading: !harness || (p.capabilities.scopes.length > 0 && providerRead(s, p.id)),
+        entries: harness ? store.listMirror(this.db, scopes, p.id).length : scopes.reduce((n, sc) => n + store.listPages(this.db, sc).length, 0),
+      };
     });
+  }
+
+  /**
+   * Make the mirror equal to the files (spec 4.8): for each harness provider that Dispatch reads, each
+   * scope (You and the remembered projects; only the given project when a thread settled). A provider that
+   * Dispatch does not read loses its rows. Nothing is read while memory is off. Returns the rows changed.
+   */
+  syncProviders(opts: { sessionId?: string } = {}): number {
+    if (!this.available() || !this.deps.providers || !this.db.open) return 0;
+    const s = readMemorySettings(this.db);
+    const scopes: MemoryScope[] = opts.sessionId
+      ? this.readableScopes(opts.sessionId)
+      : [YOU, ...this.deps.projects().filter((p) => !p.archived && projectRemembered(s, p.id)).map((p) => projectScope(p.id))];
+    let changed = 0;
+    for (const id of HARNESS_PROVIDERS) {
+      const p = this.deps.providers[id];
+      if (!p) continue;
+      if (!providerRead(s, id)) { changed += store.clearMirror(this.db, id); continue; }
+      for (const sc of scopes) {
+        const kind = sc === YOU ? 'you' : 'project';
+        if (!p.capabilities.scopes.includes(kind)) continue;
+        const ref = this.providerScope(sc);
+        if (!ref) continue;
+        let entries: ProviderEntry[];
+        try { entries = p.list(ref); } catch (err) { console.warn(`[memory] could not read ${id}:`, err); continue; }
+        changed += store.syncMirror(this.db, id, sc, entries.map((e) => ({ ...e, path: null })));
+      }
+    }
+    if (changed) this.changed(YOU);
+    return changed;
+  }
+
+  /** "Dispatch reads this provider" (the harness's own switch is not touched). */
+  setProviderRead(id: string, on: boolean): ProviderInfo[] {
+    if (!(HARNESS_PROVIDERS as readonly string[]).includes(id) || id === 'opencode') throw new MemoryError('this provider has no memory to read');
+    updateMemorySettings(this.db, { providers: { [id]: on } });
+    if (on) this.syncProviders(); else if (store.clearMirror(this.db, id)) this.changed(YOU);
+    return this.providersInfo(null);
+  }
+
+  entries(scopes: MemoryScope[], provider?: string) { return store.listMirror(this.db, scopes, provider); }
+
+  /** One mirrored entry; a thread only in its own scopes. */
+  entry(id: number, caller: ThreadCaller | null): store.MirrorRow {
+    const e = store.getMirror(this.db, id);
+    if (!e) throw new MemoryError('no such entry', 404);
+    if (caller) this.checkThreadScope(caller, e.scope);
+    return e;
+  }
+
+  /**
+   * Write-through from the screen (the person only): the provider re-reads its file and compares the sha;
+   * a changed file is a conflict and nothing is written (the file always wins). Then the scope is synced.
+   */
+  writeEntry(providerId: string, scope: MemoryScope, input: { rel?: string; title?: unknown; description?: unknown; text?: unknown }, expectedSha: string | null): EntryWriteAnswer {
+    const p = this.provider(providerId);
+    if (!p.write || p.capabilities.write === 'none') throw new MemoryError(`${p.label} cannot be written from Dispatch`, 400);
+    const ref = this.providerScope(scope);
+    if (!ref) throw new MemoryError('bad scope', 400);
+    const text = typeof input.text === 'string' ? input.text : '';
+    if (!text.trim()) throw new MemoryError('empty entry');
+    const title = typeof input.title === 'string' && input.title.trim() ? input.title.trim() : text.trim().split('\n')[0].slice(0, 60);
+    const r = p.write(ref, { rel: input.rel, title, description: typeof input.description === 'string' ? input.description : '', text }, expectedSha);
+    if (!r.ok) return r;
+    this.syncProviders({ sessionId: scopeProject(scope) ?? undefined });
+    const row = store.listMirror(this.db, [scope], providerId).find((e) => e.rel === r.rel) ?? null;
+    return { ok: true, entry: row };
+  }
+
+  /** Delete through the provider (the file, and its index line for Claude), when the file is the one the person saw. */
+  removeEntry(id: number, expectedSha: string): EntryWriteAnswer {
+    const e = this.entry(id, null);
+    const p = this.provider(e.provider);
+    if (!p.remove || !p.capabilities.delete) throw new MemoryError(`${p.label} entries cannot be deleted from Dispatch`, 400);
+    const ref = this.providerScope(e.scope);
+    if (!ref) throw new MemoryError('bad scope', 400);
+    const r = p.remove(ref, e.rel, expectedSha);
+    if (!r.ok) return r;
+    this.syncProviders({ sessionId: scopeProject(e.scope) ?? undefined });
+    return { ok: true, entry: null };
   }
 
   /** The prompt parts for a spawn, beside the skills (daemon/build.ts). */

@@ -110,6 +110,7 @@ import { wireRestoredQuestions } from '../sessions/boot-reconcile.js';
 import { EndlessService, limitsFromEnv, startEndless } from '../endless/service.js';
 import { MemoryService, projectsFromDb } from '../memory/service.js';
 import { TurnIndexer } from '../memory/turn-indexer.js';
+import { buildProviders } from '../memory/providers/index.js';
 import { ThreadTranscripts } from '../sessions/thread-transcripts.js';
 import { normalizeBasePath, stripBasePath } from './base-path.js';
 import { NoopPTYManager, type PtyLike } from './noop-pty.js';
@@ -500,6 +501,13 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   const memory = new MemoryService({
     db, projects: () => projectsFromDb(db), broadcast: (e) => broadcaster.broadcast(e),
     business: () => profileRef() === 'business', lastSeq: (id) => journalWiring.journal.lastSeq(id) || null,
+    // The memory providers: Dispatch's own store, and the harnesses' own memory folders (mirrored, spec 4.8).
+    providers: buildProviders({ db, home: os.homedir() }),
+    // Turned on (memory is off by default): the conversation catch-up and the provider mirror, once.
+    onActive: () => {
+      void memoryTurns.catchUp().catch((err) => console.warn('[memory] conversation catch-up failed:', err));
+      setImmediate(() => { try { memory.syncProviders(); } catch (err) { console.warn('[memory] provider sync failed:', err); } });
+    },
   });
   // Layer 1: the words of each thread, for conversation search. Read when a thread settles and once at start.
   const transcriptFiles = new ThreadTranscripts(db);
@@ -544,7 +552,12 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   // Stage 2: a thread Chat started reports when it settles (finished or asking) or fails.
   endless.setKeyRegistry(keys);
   statusService.addThreadSettledListener(({ terminalId, threadStatus }) => endless.onThreadSettled({ terminalId, threadStatus }));
-  statusService.addThreadSettledListener(({ terminalId }) => memoryTurns.schedule(terminalId));
+  statusService.addThreadSettledListener(({ terminalId }) => {
+    memoryTurns.schedule(terminalId);
+    // A settled thread may have written its harness's memory: sync its project's mirror (nothing while memory is off).
+    const sessionId = terminalsDb.getById(db, terminalId)?.session_id;
+    if (sessionId) setImmediate(() => { try { memory.syncProviders({ sessionId }); } catch (err) { console.warn('[memory] provider sync failed:', err); } });
+  });
   onEndlessStatus = (terminalId, status) => endless.onThreadStatus(terminalId, status);
 
   // ── Sign-ins, accounts and limits ───────────────────────────────────────────

@@ -31,12 +31,15 @@ function makeService() {
   initSchema(db);
   for (const id of ['s1', 's2']) sessionsDb.create(db, { id, provider: 'claude-code', name: id, workingDir: tmpDir });
   const memory = new MemoryService({ db, projects: () => projectsFromDb(db) });
-  memory.createPage({ scope: 'project:s1', slug: 'deploy', description: 'How s1 deploys' });
-  memory.createPage({ scope: 'project:s2', slug: 'other', description: 'Only for s2' });
+  updateMemorySettings(db, { enabled: true }); // off by default
+  memory.createPage({ scope: 'project:s1', slug: 'deploy', description: 'How s1 deploys', pinned: true });
+  memory.createPage({ scope: 'project:s2', slug: 'other', description: 'Only for s2', pinned: true });
+  memory.createPage({ scope: 'you', slug: 'how-i-work', description: 'Short replies', pinned: true });
   memory.addUserNote({ scope: 'you', text: 'Replies are short.' });
   const pty = new CapturingPty();
   const svc = new SessionService(db, pty, path.join(tmpDir, 'mcp.json'));
-  svc.setPluginInjection((harness, sessionId) => ({ specs: [], prompts: memory.injection(sessionId, harness), toolNames: [] }));
+  // As daemon/build.ts: the block, and the memory tools only while memory is on.
+  svc.setPluginInjection((harness, sessionId) => ({ specs: [], prompts: memory.injection(sessionId, harness), toolNames: [], memoryTools: memory.available() }));
   return { db, svc, pty, memory };
 }
 
@@ -56,7 +59,8 @@ describe('the memory block at spawn', () => {
     const prompt = claudePrompt(pty.calls.find((c) => c.command === 'claude')!.args);
     expect(prompt).toContain('## Memory');
     expect(prompt).toContain('- deploy: How s1 deploys');
-    expect(prompt).toContain('- Replies are short. (you)');
+    expect(prompt).toContain('- how-i-work: Short replies (you)');
+    expect(prompt).not.toContain('Replies are short.'); // notes are found with memory_search, not injected
     expect(prompt).not.toContain('Only for s2');
   });
 
@@ -68,10 +72,18 @@ describe('the memory block at spawn', () => {
     expect(text).toContain('- deploy: How s1 deploys');
   });
 
-  it('memory off: no block', () => {
+  it('memory off (the default): no block and no memory tools; on: both, for the next spawn', () => {
     const { db, svc, pty } = makeService();
-    updateMemorySettings(db, { enabled: false });
+    updateMemorySettings(db, { enabled: null }); // back to the default
     svc.createTerminal('s1', 'claude-code', 'CC', true, undefined, 'ext-3');
-    expect(claudePrompt(pty.calls.find((c) => c.command === 'claude')!.args)).not.toContain('## Memory');
+    const off = pty.calls.find((c) => c.command === 'claude')!.args;
+    expect(claudePrompt(off)).not.toContain('## Memory');
+    expect(claudePrompt(off)).not.toContain('memory_search');
+    const offCfg = fs.readFileSync(off[off.indexOf('--mcp-config') + 1], 'utf8');
+    expect(offCfg).not.toContain('DISPATCH_MEMORY');
+    updateMemorySettings(db, { enabled: true });
+    svc.createTerminal('s1', 'codex', 'CX', true, undefined, 'ext-4');
+    const on = pty.calls.find((c) => c.command === 'codex')!.args;
+    expect(codexInstructions(on)).toContain('## Memory');
   });
 });

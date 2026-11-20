@@ -13,6 +13,7 @@ import { usePluginViews, usePluginRegistry } from '../../plugins/registry';
 import { can, pluginViewAllowed, type Feature } from '../../lib/profile';
 import { pluginIcon } from '../../plugins/sdk';
 import { fontVar } from '../../lib/fontSize';
+import { useMemoryOn } from '../../stores/memory';
 
 function RailItem({ icon: I, label, active, onClick, title, badge = 0, dot = false }: {
   icon: Icon; label: string; active: boolean; onClick: () => void; title: string; badge?: number;
@@ -63,6 +64,7 @@ const NAV: { view: View; label: string; icon: Icon; feature?: Feature }[] = [
  */
 export function IconRail() {
   const view = useUI((s) => s.view);
+  const memoryOn = useMemoryOn();
   const setView = useUI((s) => s.setView);
   // Plugin screens sit after the built-in ones (docs/superpowers/specs/2026-11-07-plugins-design.md).
   const pluginViews = usePluginViews();
@@ -95,7 +97,7 @@ export function IconRail() {
       padding: '10px 0 8px', gap: 4, background: 'var(--color-pane)', borderRight: '1px solid var(--color-border)',
     }}>
       <div style={{ marginBottom: 10 }}><BrandSwitcher /></div>
-      {NAV.filter((n) => !n.feature || can(n.feature)).map((n) => n.view === 'workspace' ? { ...n, label: projectsView === 'threads' ? 'Threads' : 'Projects', icon: projectsView === 'threads' ? THREADS_ICON : PROJECTS_ICON } : n).map((n) => (
+      {NAV.filter((n) => (!n.feature || can(n.feature)) && (n.view !== 'memory' || memoryOn)).map((n) => n.view === 'workspace' ? { ...n, label: projectsView === 'threads' ? 'Threads' : 'Projects', icon: projectsView === 'threads' ? THREADS_ICON : PROJECTS_ICON } : n).map((n) => (
         <RailItem key={n.view} icon={n.icon} label={n.label} title={n.label}
           active={view === n.view} onClick={() => setView(n.view)} />
       ))}

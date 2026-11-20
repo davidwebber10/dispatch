@@ -18,15 +18,15 @@ beforeEach(() => {
 describe('MemoryInspector', () => {
   it('shows the server-rendered view verbatim with its line count and size', async () => {
     render(<MemoryInspector open onClose={() => {}} />);
-    await waitFor(() => expect(screen.getByTestId('memory-view').textContent).toBe(RENDERED));
+    await waitFor(() => expect(screen.getByTestId('chat-context-view').textContent).toBe(RENDERED));
     expect(screen.getByText(/2 lines · 2\.0 KB/)).toBeInTheDocument();
   });
 
   it('says memory is unavailable when the view fails, without crashing', async () => {
     vi.spyOn(api, 'endlessView').mockRejectedValue(new Error('GET /api/endless/view failed: 503'));
     render(<MemoryInspector open onClose={() => {}} />);
-    expect(await screen.findByText('Memory is unavailable.')).toBeInTheDocument();
-    expect(screen.queryByTestId('memory-view')).toBeNull();
+    expect(await screen.findByText('Chat context is unavailable.')).toBeInTheDocument();
+    expect(screen.queryByTestId('chat-context-view')).toBeNull();
   });
 
   // A phone text box under 16px makes iOS zoom the page on focus. The box had `font: 'inherit'` after
@@ -83,10 +83,10 @@ describe('MemoryInspector', () => {
     const { rerender } = render(<MemoryInspector open onClose={() => {}} />);
     rerender(<MemoryInspector open={false} onClose={() => {}} />);
     rerender(<MemoryInspector open onClose={() => {}} />);
-    await waitFor(() => expect(screen.getByTestId('memory-view').textContent).toBe('NEW'));
+    await waitFor(() => expect(screen.getByTestId('chat-context-view').textContent).toBe('NEW'));
     resolveOld({ bytes: 5, rendered: 'OLD', lines: [] });
     await new Promise((r) => setTimeout(r, 20));
-    expect(screen.getByTestId('memory-view').textContent).toBe('NEW');
+    expect(screen.getByTestId('chat-context-view').textContent).toBe('NEW');
     expect(spy).toHaveBeenCalledTimes(2);
   });
 });

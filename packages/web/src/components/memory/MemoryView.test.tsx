@@ -1,9 +1,11 @@
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { MemoryView } from './MemoryView';
+import { MemoryView, MemorySection } from './MemoryView';
 import { api } from '../../api/client';
 import { useMemory } from '../../stores/memory';
-import type { MemoryNote, MemoryPage, MemoryPageSummary, MemorySettings } from '../../api/types';
+import type { MemoryNote, MemoryPage, MemoryPageSummary, MemorySettings, MemoryProviderInfo, MemoryEntry } from '../../api/types';
+import { ApiError } from '../../api/client';
+import { pickOption } from '../../test/select';
 
 const page: MemoryPage = {
   id: 1, scope: 'project:p1', slug: 'deploy', description: 'How to deploy', body: '# Deploy\n\nUse the workflow.', pinned: true, status: 'active',
@@ -12,6 +14,11 @@ const page: MemoryPage = {
 const summary: MemoryPageSummary = (({ body: _b, ...rest }) => ({ ...rest, bytes: 30 }))(page);
 const note: MemoryNote = { id: 7, scope: 'project:p1', text: 'Tests need FOO=1.', aboutSlug: null, origin: 'thread', terminalId: 't1', harness: 'codex', askedByUser: false, externalContext: false, sourceRef: null, createdAt: '2026-11-19T11:00:00Z', status: 'new' };
 let settings: MemorySettings;
+const prov = (id: MemoryProviderInfo['id'], label: string, state: MemoryProviderInfo['status']['state'], reading = true): MemoryProviderInfo => ({
+  id, label, reading, entries: id === 'claude' ? 1 : 0, status: { native: id !== 'opencode', state, location: null },
+  capabilities: { scopes: id === 'opencode' ? [] : id === 'codex' ? ['you'] : ['project'], write: id === 'opencode' ? 'none' : id === 'codex' ? 'instructions' : 'memory', delete: id === 'claude', loadedByHarness: id !== 'dispatch' },
+});
+const entry: MemoryEntry = { id: 5, provider: 'claude', scope: 'project:p1', rel: 'testing.md', sha: 's1', mtimeMs: 0, title: 'testing', description: 'How to run tests', text: '---\nname: testing\n---\nRun with FOO=1.\n', writable: true, syncedAt: '' };
 
 beforeEach(() => {
   settings = { enabled: true, paused: false, blockChars: 4000, projectsOff: [], available: true };
@@ -29,6 +36,11 @@ beforeEach(() => {
   vi.spyOn(api, 'memoryAddNote').mockResolvedValue({ ...note, id: 8, origin: 'user', text: 'by hand' });
   vi.spyOn(api, 'memoryDeleteNote').mockResolvedValue({ ok: true });
   vi.spyOn(api, 'memoryUpdatePage').mockResolvedValue({ ...page, body: 'new text', sha: 'def' });
+  vi.spyOn(api, 'memoryProviders').mockResolvedValue({ providers: [prov('dispatch', 'Dispatch', 'on'), prov('claude', 'Claude Code', 'on'), prov('codex', 'Codex', 'off'), prov('grok', 'Grok', 'not-installed'), prov('opencode', 'OpenCode', 'not-supported', false)] });
+  vi.spyOn(api, 'memoryEntries').mockResolvedValue({ entries: [entry] });
+  vi.spyOn(api, 'memorySetProviderRead').mockResolvedValue({ providers: [] });
+  vi.spyOn(api, 'memoryAddEntry').mockResolvedValue({ ok: true, entry });
+  vi.spyOn(api, 'memoryUpdateEntry').mockRejectedValue(new ApiError('PUT failed: 409', 409));
 });
 afterEach(() => { vi.restoreAllMocks(); });
 
@@ -55,6 +67,56 @@ describe('the Memory view (spec 2026-11-17, part 5)', () => {
     await waitFor(() => expect(api.memoryUpdateSettings).toHaveBeenCalledWith({ paused: true }));
     fireEvent.click(screen.getByRole('switch', { name: 'Remember this project' }));
     await waitFor(() => expect(api.memoryUpdateSettings).toHaveBeenCalledWith({ projectsOff: ['p1'] }));
+  });
+
+  it('off (the default): one row with its switch and one sentence; the switch turns memory on', async () => {
+    settings = { ...settings, enabled: false, available: false };
+    render(<MemoryView />);
+    expect(await screen.findByText(/When memory is on, threads keep notes between threads/)).toBeTruthy();
+    expect(screen.queryByRole('navigation', { name: 'Memory scopes' })).toBeNull();
+    expect(screen.queryByText(/What threads see/)).toBeNull();
+    fireEvent.click(screen.getByRole('switch', { name: 'Memory' }));
+    await waitFor(() => expect(api.memoryUpdateSettings).toHaveBeenCalledWith({ enabled: true }));
+    expect(await screen.findByRole('navigation', { name: 'Memory scopes' })).toBeTruthy();
+  });
+
+  it('Settings > Memory (the phone) is the same: off shows only the switch', async () => {
+    settings = { ...settings, enabled: false, available: false };
+    render(<MemorySection />);
+    expect(await screen.findByRole('switch', { name: 'Memory' })).toBeTruthy();
+    expect(screen.queryByRole('switch', { name: 'Pause' })).toBeNull();
+  });
+
+  it('providers: a state chip per provider and the "Dispatch reads it" switch; entries grouped with their source', async () => {
+    render(<MemoryView />);
+    expect(await screen.findByTestId('provider-state-claude')).toHaveTextContent('On');
+    expect(screen.getByTestId('provider-state-codex')).toHaveTextContent('Off in Codex');
+    expect(screen.getByTestId('provider-state-grok')).toHaveTextContent('Not installed');
+    expect(screen.getByTestId('provider-state-opencode')).toHaveTextContent('Not supported');
+    expect(screen.getByText(/No own memory; uses Dispatch memory/)).toBeTruthy();
+    expect(screen.getByText('From Claude Code')).toBeTruthy();
+    fireEvent.click(screen.getByRole('switch', { name: 'Dispatch reads Claude Code' }));
+    await waitFor(() => expect(api.memorySetProviderRead).toHaveBeenCalledWith('claude', false));
+  });
+
+  it('Add memory saves to Claude Code (this project) through the provider', async () => {
+    render(<MemoryView />);
+    fireEvent.change(await screen.findByRole('textbox', { name: 'New note' }), { target: { value: 'Deploy to stage first' } });
+    pickOption('Save to', 'Claude Code (this project)');
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(api.memoryAddEntry).toHaveBeenCalledWith('claude', { scope: 'project:p1', title: 'Deploy to stage first', text: 'Deploy to stage first' }));
+    expect(api.memoryAddNote).not.toHaveBeenCalled();
+  });
+
+  it('an entry edit from a stale copy is refused: the screen says the file changed and nothing is overwritten', async () => {
+    render(<MemoryView />);
+    fireEvent.click(await screen.findByRole('button', { name: 'testing: open' }));
+    expect(await screen.findByTestId('memory-entry-text')).toHaveTextContent('Run with FOO=1.');
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Entry text' }), { target: { value: 'mine' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('The file changed since you opened it');
+    expect(api.memoryUpdateEntry).toHaveBeenCalledWith(5, 'mine', 's1');
   });
 
   it('opens a page and saves an edit with the sha it started from', async () => {

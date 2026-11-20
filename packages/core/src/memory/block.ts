@@ -1,42 +1,22 @@
 /**
- * The memory block that every thread gets at its start (spec 2026-11-17-memory-design.md, section 4.3).
- * Pure: the service reads the store and hands the parts in.
- *
- * The text says what memory is for and gives no rule about when to write (section 3, principle 4).
- * It is at most `cap` characters: when it is longer, lines are cut from the last section first, and
- * one line says to search for more. Every line that comes from a page or a note is sanitized.
+ * What a thread gets at its start (spec 2026-11-17-memory-design.md, section 4.3, design review
+ * 2026-11-19): TOOLS FIRST, so the text is small. A short pointer that says what memory is for and
+ * names memory_search, and one line for each page the PERSON pinned (none by default). No index, no
+ * notes, no rule about when to write. Pure: the service hands the pinned pages in.
  */
 
-export const MEMORY_PREAMBLE = [
+export const MEMORY_POINTER = [
   '## Memory',
   '',
-  'You have a memory that lasts between threads. It holds what the person and earlier',
-  'threads learned that the code and the tools do not show. Search it and read it when it',
-  'can help. Save a note when something is worth knowing next time.',
-  'Memory can be out of date. Check a fact that matters before you rely on it.',
+  'You have a memory that lasts between threads: what the person and earlier threads learned that the',
+  'code and the tools do not show, from Dispatch and from the harnesses\' own memories. memory_search finds',
+  'it (with no query it lists what is there); memory_read opens an entry; remember saves a note.',
 ].join('\n');
 
-export const MORE_LINE = '(More is in memory: use memory_search.)';
-/** At most this many lines from each scope's "Where to start". */
-export const START_LINES = 40;
-/** At most this many new notes. */
-export const NOTE_LINES = 10;
-const NOTE_LINE_CHARS = 200;
+export const MORE_LINE = '(More pinned pages: use memory_search.)';
+const LINE_CHARS = 160;
 
-export interface BlockPage { slug: string; description: string; pinned: boolean }
-export interface BlockScope {
-  /** The text of the scope's `index` page, when it has one: its "Where to start" part is used. */
-  indexBody: string | null;
-  /** The other active pages, in the order to show (pinned first). Used when there is no index page. */
-  pages: BlockPage[];
-}
-export interface BlockInput {
-  you: BlockScope | null;
-  project: BlockScope | null;
-  /** New notes of the readable scopes, newest first. */
-  notes: { text: string; scope: 'you' | 'project' }[];
-  cap: number;
-}
+export interface PinnedPage { slug: string; description: string; scope: 'you' | 'project' }
 
 /**
  * Text from memory must not pass for the harness's own markup or a message from someone else:
@@ -61,46 +41,16 @@ const oneLine = (s: string, max: number): string => {
   return t.length > max ? `${t.slice(0, max - 1)}…` : t;
 };
 
-/** The "Where to start" lines of a scope: from its index page, else one line per page. */
-export function startLines(scope: BlockScope): string[] {
-  if (scope.indexBody != null && scope.indexBody.trim()) {
-    const lines = scope.indexBody.split('\n');
-    const at = lines.findIndex((l) => /^#+\s*where to start\b/i.test(l.trim()));
-    let part: string[];
-    if (at >= 0) {
-      const end = lines.findIndex((l, i) => i > at && /^#+\s/.test(l.trim()));
-      part = lines.slice(at + 1, end < 0 ? undefined : end);
-    } else {
-      part = lines.filter((l) => !/^---\s*$/.test(l));
-    }
-    return part.map((l) => neutralize(l).trimEnd()).filter((l) => l.trim()).slice(0, START_LINES);
+/** The pointer, then the pinned pages; never longer than `cap` (pinned lines go from the end first). */
+export function buildBlock(input: { pinned: PinnedPage[]; cap: number }): string {
+  const lines = input.pinned.map((p) => `- ${oneLine(p.slug, 64)}${p.description ? `: ${oneLine(p.description, LINE_CHARS)}` : ''}${p.scope === 'you' ? ' (you)' : ''}`);
+  const render = (shown: string[], cut: boolean) =>
+    [MEMORY_POINTER, ...(shown.length ? [`Pinned by the person:\n${shown.join('\n')}`] : []), ...(cut ? [MORE_LINE] : [])].join('\n\n');
+  let shown = lines;
+  let text = render(shown, false);
+  while (text.length > input.cap && shown.length) {
+    shown = shown.slice(0, -1);
+    text = render(shown, true);
   }
-  return scope.pages.slice(0, START_LINES).map((p) => `- ${p.slug}${p.description ? `: ${oneLine(p.description, 160)}` : ''}`);
-}
-
-/** The block, or '' when there is nothing to say (memory off is decided by the caller). */
-export function buildBlock(input: BlockInput): string {
-  const sections: { title: string; lines: string[] }[] = [];
-  if (input.you) sections.push({ title: '### You', lines: startLines(input.you) });
-  if (input.project) sections.push({ title: '### This project', lines: startLines(input.project) });
-  const notes = input.notes.slice(0, NOTE_LINES).map((n) => `- ${oneLine(n.text, NOTE_LINE_CHARS)}${n.scope === 'you' ? ' (you)' : ''}`);
-  sections.push({ title: '### New notes (not organized yet)', lines: notes });
-
-  const render = (cut: boolean): string => {
-    const parts = [MEMORY_PREAMBLE];
-    for (const s of sections) if (s.lines.length) parts.push(`${s.title}\n${s.lines.join('\n')}`);
-    if (cut) parts.push(MORE_LINE);
-    return parts.join('\n\n');
-  };
-  let text = render(false);
-  let cut = false;
-  while (text.length > input.cap) {
-    const last = [...sections].reverse().find((s) => s.lines.length);
-    if (!last) break;
-    last.lines.pop();
-    cut = true;
-    text = render(true);
-  }
-  // A cap smaller than the preamble itself: the preamble still goes, cut to the cap.
   return text.length > input.cap ? text.slice(0, input.cap) : text;
 }

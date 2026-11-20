@@ -1,7 +1,7 @@
 import type { Request, Response, Router } from 'express';
 import { keyRoute, ownerOnlyStrict, policyRouter, type Rule } from '../auth/route-policy.js';
 import { MemoryError, isScope, type MemoryScope } from '../db/memory.js';
-import type { MemoryService, ThreadCaller } from '../memory/service.js';
+import { ENTRY_REF, type MemoryService, type ThreadCaller } from '../memory/service.js';
 import { clientMessage } from '../http/client-message.js';
 
 /**
@@ -38,6 +38,11 @@ const scopeParam = (v: unknown): MemoryScope => {
 export function createMemoryRouter(svc: MemoryService): Router {
   const router = policyRouter();
 
+  const fail = (res: Response, err: unknown) => {
+    if (err instanceof MemoryError) { res.status(err.status).json({ error: err.message }); return; }
+    console.error('[memory] request failed:', err);
+    res.status(500).json({ error: clientMessage(err) });
+  };
   const handle = (status: number, run: (req: Request, res: Response) => unknown) => (req: Request, res: Response) => {
     try {
       const out = run(req, res);
@@ -89,6 +94,14 @@ export function createMemoryRouter(svc: MemoryService): Router {
   router.get('/read', threadKey, handle(200, (req, res) => {
     const slug = String(req.query.slug ?? '');
     const caller = callerOf(res);
+    // A mirrored entry from another provider: `<provider>:<id>`, as memory_search names it.
+    const ref = ENTRY_REF.exec(slug);
+    if (ref) {
+      threadNeedsMemory(res);
+      const e = svc.entry(Number(ref[2]), caller);
+      if (e.provider !== ref[1]) throw new MemoryError('no such entry', 404);
+      return { entry: e };
+    }
     if (caller) {
       const which = req.query.scope === 'you' || req.query.scope === 'project' ? req.query.scope : undefined;
       return svc.readForThread(caller, slug, which);
@@ -117,6 +130,11 @@ export function createMemoryRouter(svc: MemoryService): Router {
     const q = String(req.query.q ?? '');
     const limit = Number(req.query.limit) || 20;
     const caller = callerOf(res);
+    // No query: the index (pages, the newest notes, the mirrored entries), each with its source.
+    if (!q.trim() && req.query.in !== 'conversations') {
+      const scopes = caller ? svc.readableScopes(caller.sessionId) : req.query.scope === undefined ? svc.allScopes() : [scopeParam(req.query.scope)];
+      return { index: svc.index(scopes) };
+    }
     // `in=conversations`: the words of past threads (layer 1), not pages and notes.
     if (req.query.in === 'conversations') return { results: svc.searchConversations(q, caller, str(req.query.project) || null, limit) };
     if (caller) return { results: svc.search(q, svc.readableScopes(caller.sessionId), limit) };
@@ -130,6 +148,51 @@ export function createMemoryRouter(svc: MemoryService): Router {
     const text = svc.block(project, str(req.query.harness));
     return { text, chars: text.length, cap: svc.settings().blockChars };
   }));
+
+  // Providers (spec 4.8): their state, "Dispatch reads it", and the mirrored entries. Opening the tab syncs.
+  router.get('/providers', handle(200, (req) => {
+    const project = str(req.query.project) || null;
+    svc.syncProviders(project ? { sessionId: project } : {});
+    return { providers: svc.providersInfo(project) };
+  }));
+  router.put('/providers/:id', ownerOnlyStrict, handle(200, (req) => {
+    if (typeof req.body?.reading !== 'boolean') throw new MemoryError('reading is true or false');
+    return { providers: svc.setProviderRead(req.params.id, req.body.reading) };
+  }));
+  router.get('/entries', threadKey, handle(200, (req, res) => {
+    threadNeedsMemory(res);
+    const caller = callerOf(res);
+    const scopes = caller ? svc.readableScopes(caller.sessionId) : [scopeParam(req.query.scope)];
+    return { entries: svc.entries(scopes, str(req.query.provider)) };
+  }));
+  router.get('/entries/:id', threadKey, handle(200, (req, res) => {
+    threadNeedsMemory(res);
+    return { entry: svc.entry(idOf(req.params.id), callerOf(res)) };
+  }));
+  // Write-through (the person only): a new entry, or an edit of the file the person saw (expectedSha).
+  // A changed file answers 409 with its new text; nothing is overwritten.
+  const writeAnswer = (res: Response, r: ReturnType<MemoryService['writeEntry']>) => {
+    if (r.ok) return r;
+    res.status(r.conflict ? 409 : 400);
+    return r.conflict ? { error: 'The file changed since you opened it. Here is its new text.', current: r.current } : { error: r.error };
+  };
+  router.post('/providers/:id/entries', ownerOnlyStrict, (req, res) => {
+    try {
+      const b = req.body ?? {};
+      const out = writeAnswer(res, svc.writeEntry(req.params.id, scopeParam(b.scope), { title: b.title, description: b.description, text: b.text }, null));
+      res.status(res.statusCode === 200 ? 201 : res.statusCode).json(out);
+    } catch (err) { fail(res, err); }
+  });
+  router.put('/entries/:id', ownerOnlyStrict, (req, res) => {
+    try {
+      const e = svc.entry(idOf(req.params.id), null);
+      const b = req.body ?? {};
+      res.json(writeAnswer(res, svc.writeEntry(e.provider, e.scope, { rel: e.rel, title: e.title, text: b.text }, str(b.expectedSha) ?? '')));
+    } catch (err) { fail(res, err); }
+  });
+  router.delete('/entries/:id', ownerOnlyStrict, (req, res) => {
+    try { res.json(writeAnswer(res, svc.removeEntry(idOf(req.params.id), str(req.query.expectedSha) ?? ''))); } catch (err) { fail(res, err); }
+  });
 
   router.get('/settings', handle(200, () => svc.settings()));
   router.put('/settings', ownerOnlyStrict, handle(200, (req) => svc.updateSettings(req.body)));

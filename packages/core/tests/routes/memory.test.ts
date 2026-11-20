@@ -10,6 +10,7 @@ import * as sessionsDb from '../../src/db/sessions.js';
 import { createApp } from '../../src/server.js';
 import { configureRefusalLog } from '../../src/auth/route-policy.js';
 import { addTurns } from '../../src/db/memory.js';
+import { updateMemorySettings } from '../../src/memory/settings.js';
 
 /** /api/memory (spec 2026-11-17-memory-design.md, part 6): the person, thread keys, scopes. */
 describe('memory routes', () => {
@@ -32,6 +33,7 @@ describe('memory routes', () => {
     terminalsDb.create(db, { id: 'cA', sessionId: 'A', type: 'claude-code', label: 'claude in A', config: { transport: 'structured' } });
     terminalsDb.create(db, { id: 'xA', sessionId: 'A', type: 'codex', label: 'codex in A', config: { transport: 'structured' } });
     terminalsDb.create(db, { id: 'cB', sessionId: 'B', type: 'claude-code', label: 'claude in B', config: { transport: 'structured' } });
+    updateMemorySettings(db, { enabled: true }); // memory is off by default; these tests are about memory on
   });
   afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
 
@@ -119,7 +121,7 @@ describe('memory routes', () => {
     expect(scopes.slice(1).map((s: any) => s.label).sort()).toEqual(['proj-A', 'proj-B']);
     expect(scopes.find((s: any) => s.scope === 'project:A')).toMatchObject({ pages: 1, remembered: true });
     const block = (await request(app).get('/api/memory/block').query({ project: 'A', harness: 'codex' })).body;
-    expect(block.text).toContain('### This project\n- deploy: How to deploy');
+    expect(block.text).toContain('Pinned by the person:\n- deploy: How to deploy');
     expect(block.chars).toBeLessThanOrEqual(block.cap);
     expect((await request(app).delete(`/api/memory/pages/${id}`)).status).toBe(200);
     expect((await request(app).get(`/api/memory/pages/${id}`)).status).toBe(404);
@@ -140,8 +142,30 @@ describe('memory routes', () => {
     expect(wide.body.results.map((h: any) => h.terminalId)).toEqual(['cA']);
   });
 
+  it('off by default: no block, a thread key gets nothing; the person can still turn it on', async () => {
+    updateMemorySettings(db, { enabled: null });
+    expect((await request(app).get('/api/memory/settings')).body).toMatchObject({ enabled: false, available: false });
+    expect((await request(app).get('/api/memory/block').query({ project: 'A' })).body.text).toBe('');
+    expect((await request(app).post('/api/memory/notes').set(key('cA')).send({ text: 'x' })).status).toBe(403);
+    expect((await request(app).get('/api/memory/search').query({ q: 'x' }).set(key('cA'))).status).toBe(403);
+    expect((await request(app).put('/api/memory/settings').send({ enabled: true })).body).toMatchObject({ enabled: true, available: true });
+  });
+
+  it('providers: a thread key reads entries and the index, never writes through or changes a switch', async () => {
+    expect((await request(app).post('/api/memory/providers/claude/entries').set(key('cA')).send({ scope: 'project:A', text: 'x' })).status).toBe(403);
+    expect((await request(app).put('/api/memory/entries/1').set(key('cA')).send({ text: 'x', expectedSha: 'y' })).status).toBe(403);
+    expect((await request(app).delete('/api/memory/entries/1').set(key('cA'))).status).toBe(403);
+    expect((await request(app).put('/api/memory/providers/claude').set(key('cA')).send({ reading: false })).status).toBe(403);
+    expect((await request(app).get('/api/memory/entries').set(key('cA'))).body).toEqual({ entries: [] });
+    await request(app).post('/api/memory/pages').send({ scope: 'project:A', slug: 'deploy', description: 'How to deploy' });
+    const ix = (await request(app).get('/api/memory/search').set(key('xA'))).body.index;
+    expect(ix.pages).toEqual([expect.objectContaining({ slug: 'deploy', source: 'dispatch' })]);
+    const providers = (await request(app).get('/api/memory/providers').query({ project: 'A' })).body.providers.map((p: any) => p.id);
+    expect(providers).toEqual(['dispatch', 'claude', 'codex', 'grok', 'opencode']);
+  });
+
   it('settings: defaults, merge, the cap is clamped', async () => {
-    expect((await request(app).get('/api/memory/settings')).body).toMatchObject({ enabled: true, paused: false, blockChars: 4000, available: true });
-    expect((await request(app).put('/api/memory/settings').send({ blockChars: 50000 })).body.blockChars).toBe(8000);
+    expect((await request(app).get('/api/memory/settings')).body).toMatchObject({ enabled: true, paused: false, blockChars: 1000, available: true });
+    expect((await request(app).put('/api/memory/settings').send({ blockChars: 50000 })).body.blockChars).toBe(2000);
   });
 });

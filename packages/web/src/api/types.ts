@@ -776,6 +776,14 @@ export interface MemoryNote {
   createdAt: string; status: 'new' | 'used' | 'deleted';
 }
 export interface MemoryVersion { id: number; pageId: number; body: string; description: string; status: string; op: string; actor: string; at: string }
-export interface MemorySearchHit { kind: 'page' | 'note'; id: number; scope: MemoryScopeKey; slug: string | null; snippet: string }
+export interface MemorySearchHit { kind: 'page' | 'note' | 'entry'; id: number; scope: MemoryScopeKey; slug: string | null; snippet: string; source: string }
 export interface MemoryTurnHit { id: number; terminalId: string; sessionId: string; thread: string; role: string; ref: string | null; at: string | null; snippet: string }
-export interface MemorySettings { enabled: boolean; paused: boolean; blockChars: number; projectsOff: string[]; available: boolean }
+export interface MemorySettings { enabled: boolean; paused: boolean; blockChars: number; projectsOff: string[]; providers?: Record<string, boolean>; available: boolean }
+export type MemoryProviderId = 'dispatch' | 'claude' | 'codex' | 'grok' | 'opencode';
+export interface MemoryProviderInfo {
+  id: MemoryProviderId; label: string; reading: boolean; entries: number;
+  status: { native: boolean; state: 'on' | 'off' | 'not-supported' | 'not-installed'; location: string | null };
+  capabilities: { scopes: ('you' | 'project')[]; write: 'none' | 'memory' | 'instructions'; delete: boolean; loadedByHarness: boolean };
+}
+/** A harness memory entry, mirrored by Dispatch (the harness file is the truth). */
+export interface MemoryEntry { id: number; provider: string; scope: MemoryScopeKey; rel: string; sha: string; mtimeMs: number; title: string; description: string; text: string; writable: boolean; syncedAt: string }
