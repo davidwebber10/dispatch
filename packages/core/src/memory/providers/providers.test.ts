@@ -6,7 +6,14 @@ import { claudeProvider, INDEX, INDEX_LIMIT } from './claude.js';
 import { codexProvider, SECTION_START, SECTION_END, INSTRUCTIONS_REL } from './codex.js';
 import { grokProvider } from './grok.js';
 import { opencodeProvider } from './opencode.js';
-import { readInside, writeInside } from './safe-fs.js';
+import { readInside, writeInside, safeFsTest } from './safe-fs.js';
+import { MemoryService, projectsFromDb } from '../service.js';
+import { buildProviders } from './index.js';
+import { updateMemorySettings } from '../settings.js';
+import { initSchema } from '../../db/schema.js';
+import * as sessionsDb from '../../db/sessions.js';
+import * as store from '../../db/memory.js';
+import Database from 'better-sqlite3';
 import { sharedProjectMemoryDir } from '../../overseer/memory-scope.js';
 import type { ProviderScope } from './types.js';
 
@@ -107,18 +114,18 @@ describe('memory providers', () => {
       fs.symlinkSync(outside, path.join(claudeDir(), 'link.md'));
       expect(claude().list(project).map((e) => e.rel)).toEqual(['testing.md']);
       expect(claude().read(project, 'link.md')).toBeNull();
-      expect(readInside(claudeDir(), 'link.md')).toBeNull();
+      expect(readInside({ dir: claudeDir(), base: home }, 'link.md')).toBeNull();
       // A link swapped in for a file between the check and the write: the rename replaces the link.
       const seen = claude().read(project, 'testing.md')!;
       fs.rmSync(path.join(claudeDir(), 'testing.md'));
       fs.symlinkSync(outside, path.join(claudeDir(), 'testing.md'));
       expect(claude().write!(project, { rel: 'testing.md', title: 't', text: 'x' }, seen.sha)).toMatchObject({ ok: false, conflict: true });
-      writeInside(claudeDir(), 'testing.md', 'written');
+      writeInside({ dir: claudeDir(), base: home }, 'testing.md', 'written');
       expect(fs.readFileSync(outside, 'utf8')).toBe('do not read me');
       expect(fs.lstatSync(path.join(claudeDir(), 'testing.md')).isSymbolicLink()).toBe(false);
       // A path out of the root is refused.
-      expect(readInside(claudeDir(), '../../secret.txt')).toBeNull();
-      expect(() => writeInside(claudeDir(), '../x.md', 'x')).toThrow(/not inside/);
+      expect(readInside({ dir: claudeDir(), base: home }, '../../secret.txt')).toBeNull();
+      expect(() => writeInside({ dir: claudeDir(), base: home }, '../x.md', 'x')).toThrow(/not inside/);
     });
   });
 
@@ -155,6 +162,68 @@ describe('memory providers', () => {
       const grok = grokProvider({ home, env: { GROK_MEMORY: '1' } });
       expect(grok.write!({ scope: 'you' }, { title: 'Tea', text: 'Green' }, null)).toEqual({ ok: true, rel: 'global/topics/tea.md' });
       expect(grok.list({ scope: 'you' }).map((e) => e.rel)).toEqual(['global/topics/tea.md']);
+    });
+  });
+
+  // Security review F9: a link at a FOLDER on the path (the memory folder itself, or a parent) must not
+  // lead the daemon (root on a box) to read a place outside the provider root.
+  describe('a link at a folder on the path', () => {
+    let outside: string;
+    beforeEach(() => {
+      outside = fs.mkdtempSync(path.join(os.tmpdir(), 'mem-outside-')); // stands for the root-only state folder
+      fs.writeFileSync(path.join(outside, 'state.md'), '---\nname: state\n---\nROOT ONLY\n');
+      fs.writeFileSync(path.join(outside, MEMORY_INDEX()), '');
+    });
+    afterEach(() => { fs.rmSync(outside, { recursive: true, force: true }); safeFsTest.mode = undefined; safeFsTest.beforeOpen = null; });
+    const MEMORY_INDEX = () => INDEX;
+
+    it('the memory folder itself is a link: refused', () => {
+      fs.mkdirSync(path.dirname(claudeDir()), { recursive: true });
+      fs.symlinkSync(outside, claudeDir());
+      expect(claude().list(project)).toEqual([]);
+      expect(claude().read(project, 'state.md')).toBeNull();
+      expect(claude().write!(project, { title: 'x', text: 'y' }, null)).toMatchObject({ ok: false });
+      expect(fs.readdirSync(outside).sort()).toEqual([INDEX, 'state.md']);
+    });
+
+    it('a parent folder is a link: refused', () => {
+      fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+      fs.mkdirSync(path.join(outside, 'deep', path.basename(path.dirname(claudeDir())), 'memory'), { recursive: true });
+      fs.writeFileSync(path.join(outside, 'deep', path.basename(path.dirname(claudeDir())), 'memory', 'state.md'), 'ROOT ONLY');
+      fs.symlinkSync(path.join(outside, 'deep'), path.join(home, '.claude', 'projects'));
+      expect(claude().list(project)).toEqual([]);
+      expect(claude().read(project, 'state.md')).toBeNull();
+    });
+
+    it('a folder swapped for a link during a read: refused', () => {
+      fs.mkdirSync(claudeDir(), { recursive: true });
+      fs.writeFileSync(path.join(claudeDir(), 'note.md'), 'mine');
+      expect(claude().read(project, 'note.md')?.text).toBe('mine');
+      fs.writeFileSync(path.join(outside, 'note.md'), 'ROOT ONLY');
+      safeFsTest.beforeOpen = () => {
+        fs.renameSync(claudeDir(), `${claudeDir()}.real`);
+        fs.symlinkSync(outside, claudeDir());
+        safeFsTest.beforeOpen = null;
+      };
+      expect(claude().read(project, 'note.md')).toBeNull();
+    });
+
+    it('as the agent (the box path): a file the agent cannot read is never mirrored', () => {
+      safeFsTest.mode = { agentUid: process.getuid?.() ?? 0 } as never; // the agent-side read and list (privsep/agent-fs.ts)
+      fs.mkdirSync(claudeDir(), { recursive: true });
+      fs.writeFileSync(path.join(claudeDir(), 'open.md'), 'readable');
+      fs.writeFileSync(path.join(claudeDir(), 'locked.md'), 'ROOT ONLY');
+      fs.chmodSync(path.join(claudeDir(), 'locked.md'), 0o000);
+      const db = new Database(':memory:');
+      initSchema(db);
+      sessionsDb.create(db, { id: 'A', provider: 'claude-code', name: 'a', workingDir: '/work/app' });
+      const memory = new MemoryService({ db, projects: () => projectsFromDb(db), providers: buildProviders({ db, home, env: {}, projectDir: (w) => w }) });
+      updateMemorySettings(db, { enabled: true });
+      memory.syncProviders();
+      const rows = store.listMirror(db, ['project:A']);
+      expect(rows.map((r) => r.text)).toEqual(['readable']);
+      expect(rows.some((r) => r.text.includes('ROOT ONLY'))).toBe(false);
+      fs.chmodSync(path.join(claudeDir(), 'locked.md'), 0o600);
     });
   });
 });

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { privsep } from '../../privsep/config.js';
-import { ensureDirInside, listInside, readInside, removeInside, sha, writeInside } from './safe-fs.js';
+import { ensureDirInside, listInside, readInside, removeInside, sha, writeInside, type Root } from './safe-fs.js';
 import { fileSlug, frontmatter, oneLine, type MemoryProvider, type ProviderEntry, type ProviderScope } from './types.js';
 
 /**
@@ -15,9 +15,10 @@ export function grokProvider(deps: { home: string; env?: NodeJS.ProcessEnv }): M
   const env = deps.env ?? process.env;
   const grokDir = path.join(deps.home, '.grok');
   const base = path.join(grokDir, 'memory-v2');
+  const root: Root = { dir: base, base: deps.home };
   const enabled = (): boolean => {
     if (env.GROK_MEMORY === '1') return true;
-    const cfg = readInside(grokDir, 'config.toml')?.text ?? '';
+    const cfg = readInside({ dir: grokDir, base: deps.home }, 'config.toml')?.text ?? '';
     const m = /^\s*\[memory\]\s*$([\s\S]*?)(?=^\s*\[|(?![\s\S]))/m.exec(cfg);
     return !!m && /^\s*enabled\s*=\s*true\b/m.test(m[1]);
   };
@@ -30,7 +31,7 @@ export function grokProvider(deps: { home: string; env?: NodeJS.ProcessEnv }): M
     return hits.length === 1 ? `workspaces/${hits[0]}` : null;
   };
   const entryOf = (rel: string): ProviderEntry | null => {
-    const f = readInside(base, rel);
+    const f = readInside(root, rel);
     if (!f) return null;
     const { fields, body } = frontmatter(f.text);
     const first = body.split('\n').find((l) => l.trim()) ?? '';
@@ -47,7 +48,7 @@ export function grokProvider(deps: { home: string; env?: NodeJS.ProcessEnv }): M
     },
     list(scope) {
       const folder = folderOf(scope);
-      return folder ? listInside(base, `${folder}/topics`, (n) => n.endsWith('.md')).map(entryOf).filter((e): e is ProviderEntry => !!e) : [];
+      return folder ? listInside(root, `${folder}/topics`, (n) => n.endsWith('.md')).map(entryOf).filter((e): e is ProviderEntry => !!e) : [];
     },
     read(scope, rel) {
       const folder = folderOf(scope);
@@ -61,20 +62,20 @@ export function grokProvider(deps: { home: string; env?: NodeJS.ProcessEnv }): M
       if (entry.rel) {
         const current = this.read(scope, entry.rel);
         if (!current || current.sha !== expectedSha) return { ok: false, conflict: true, current };
-        writeInside(base, entry.rel, entry.text);
+        writeInside(root, entry.rel, entry.text);
         return { ok: true, rel: entry.rel };
       }
       if (!ensureDirInside(grokDir, path.join(base, folder, 'topics'))) return refuse('The Grok memory folder is not usable.');
       let rel = `${folder}/topics/${fileSlug(entry.title)}.md`;
-      for (let n = 2; readInside(base, rel); n++) rel = `${folder}/topics/${fileSlug(entry.title)}-${n}.md`;
-      writeInside(base, rel, `# ${oneLine(entry.title, 80)}\n\n${entry.text.trim()}\n`);
+      for (let n = 2; readInside(root, rel); n++) rel = `${folder}/topics/${fileSlug(entry.title)}-${n}.md`;
+      writeInside(root, rel, `# ${oneLine(entry.title, 80)}\n\n${entry.text.trim()}\n`);
       return { ok: true, rel };
     },
     remove(scope, rel, expectedSha) {
       if (privsep()) return refuse('Dispatch does not write harness memory on a hosted box.');
       const current = this.read(scope, rel);
       if (!current || current.sha !== expectedSha) return { ok: false, conflict: true, current };
-      removeInside(base, rel);
+      removeInside(root, rel);
       return { ok: true, rel };
     },
   };

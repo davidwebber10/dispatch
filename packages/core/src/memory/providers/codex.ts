@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { codexHome } from '../../platform/codex-home.js';
 import { privsep } from '../../privsep/config.js';
-import { listInside, readInside, sha, writeInside } from './safe-fs.js';
+import { listInside, readInside, sha, writeInside, type Root } from './safe-fs.js';
 import { oneLine, type MemoryProvider, type ProviderEntry, type WriteResult } from './types.js';
 
 /**
@@ -33,7 +33,10 @@ const joinSection = (before: string, body: string, after: string): string => {
 };
 
 export function codexProvider(deps: { home: string; env?: NodeJS.ProcessEnv }): MemoryProvider {
-  const root = () => codexHome(deps.env ?? process.env, deps.home);
+  const env = deps.env ?? process.env;
+  const home = () => codexHome(env, deps.home);
+  // CODEX_HOME comes from the daemon's own environment: then it is the trusted folder; else the home.
+  const root = (): Root => ({ dir: home(), base: env.CODEX_HOME ? home() : deps.home });
   const memoryFiles = (): string[] => MEMORY_DIRS.flatMap((d) => [
     ...listInside(root(), d, (n) => MEMORY_FILES.includes(n)),
     ...listInside(root(), `${d}/rollout_summaries`, (n) => n.endsWith('.md')),
@@ -56,8 +59,8 @@ export function codexProvider(deps: { home: string; env?: NodeJS.ProcessEnv }): 
     label: 'Codex',
     capabilities: { scopes: ['you'], write: 'instructions', delete: false, loadedByHarness: true },
     status() {
-      if (!fs.existsSync(root())) return { native: true, state: 'not-installed', location: null };
-      return { native: true, state: memoryFiles().length ? 'on' : 'off', location: root() };
+      if (!fs.existsSync(home())) return { native: true, state: 'not-installed', location: null };
+      return { native: true, state: memoryFiles().length ? 'on' : 'off', location: home() };
     },
     list(scope) {
       if (scope.scope !== 'you') return [];
@@ -74,7 +77,7 @@ export function codexProvider(deps: { home: string; env?: NodeJS.ProcessEnv }): 
       if (privsep()) return { ok: false, conflict: false, error: 'Dispatch does not write harness memory on a hosted box.' };
       if (scope.scope !== 'you') return { ok: false, conflict: false, error: 'Codex instructions are for every project ("you").' };
       if (entry.rel && entry.rel !== INSTRUCTIONS_REL) return { ok: false, conflict: false, error: 'Codex memory files are Codex\'s own: Dispatch only reads them.' };
-      if (!fs.existsSync(root())) return { ok: false, conflict: false, error: 'Codex is not installed.' };
+      if (!fs.existsSync(home())) return { ok: false, conflict: false, error: 'Codex is not installed.' };
       const file = readInside(root(), 'AGENTS.md')?.text ?? '';
       const { before, body, after } = splitSection(file);
       const current = body ?? '';

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { claudeMemoryProjectDir, sharedProjectMemoryDir } from '../../overseer/memory-scope.js';
 import { privsep } from '../../privsep/config.js';
-import { ensureDirInside, listInside, readInside, removeInside, sha, writeInside } from './safe-fs.js';
+import { ensureDirInside, listInside, readInside, removeInside, sha, writeInside, type Root } from './safe-fs.js';
 import { fileSlug, frontmatter, oneLine, type EntryWrite, type MemoryProvider, type ProviderEntry, type ProviderScope, type WriteResult } from './types.js';
 
 /**
@@ -28,13 +28,13 @@ export function claudeProvider(deps: ClaudeDeps): MemoryProvider {
   const env = deps.env ?? process.env;
   const projectDir = deps.projectDir ?? ((w: string) => claudeMemoryProjectDir(w).dir);
   const projectsRoot = path.join(deps.home, '.claude', 'projects');
-  const rootOf = (scope: ProviderScope): string | null => {
+  const rootOf = (scope: ProviderScope): Root | null => {
     if (scope.scope === 'you') return null;
     let dir: string | null = null;
     try { dir = projectDir(scope.workingDir); } catch { /* git failed: no folder this time */ }
-    return dir ? sharedProjectMemoryDir(deps.home, dir) : null;
+    return dir ? { dir: sharedProjectMemoryDir(deps.home, dir), base: deps.home } : null;
   };
-  const entryOf = (root: string, rel: string): ProviderEntry | null => {
+  const entryOf = (root: Root, rel: string): ProviderEntry | null => {
     const f = readInside(root, rel);
     if (!f) return null;
     const { fields } = frontmatter(f.text);
@@ -42,7 +42,7 @@ export function claudeProvider(deps: ClaudeDeps): MemoryProvider {
   };
   const autoMemoryOn = (): boolean => {
     if (env.CLAUDE_CODE_DISABLE_AUTO_MEMORY === '1') return false;
-    const s = readInside(path.join(deps.home, '.claude'), 'settings.json');
+    const s = readInside({ dir: path.join(deps.home, '.claude'), base: deps.home }, 'settings.json');
     try { return !(s && JSON.parse(s.text)?.autoMemoryEnabled === false); } catch { return true; }
   };
   const refuseHosted = (): WriteResult | null =>
@@ -54,7 +54,7 @@ export function claudeProvider(deps: ClaudeDeps): MemoryProvider {
     capabilities: { scopes: ['project'], write: 'memory', delete: true, loadedByHarness: true },
     status(scope) {
       if (!fs.existsSync(path.join(deps.home, '.claude'))) return { native: true, state: 'not-installed', location: null };
-      return { native: true, state: autoMemoryOn() ? 'on' : 'off', location: scope ? rootOf(scope) : projectsRoot };
+      return { native: true, state: autoMemoryOn() ? 'on' : 'off', location: (scope && rootOf(scope)?.dir) || projectsRoot };
     },
     list(scope) {
       const root = rootOf(scope);
@@ -77,7 +77,7 @@ export function claudeProvider(deps: ClaudeDeps): MemoryProvider {
         writeInside(root, entry.rel, entry.text);
         return { ok: true, rel: entry.rel };
       }
-      if (!ensureDirInside(projectsRoot, root)) return { ok: false, conflict: false, error: 'The Claude Code memory folder is not usable.' };
+      if (!ensureDirInside(projectsRoot, root.dir)) return { ok: false, conflict: false, error: 'The Claude Code memory folder is not usable.' };
       const index = readInside(root, INDEX)?.text ?? '';
       const lines = index.split('\n').filter((l, i, a) => !(i === a.length - 1 && l === '')).length;
       if (lines >= INDEX_LIMIT) return { ok: false, conflict: false, error: `Claude Code loads only the first 200 lines of its memory index, and it has ${lines}. Remove an entry first.` };
