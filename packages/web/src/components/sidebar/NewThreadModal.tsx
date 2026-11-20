@@ -15,6 +15,7 @@ import type { CcRecentSession, CodexRecentSession, HarnessSettingsResponse, Prov
 import { HARNESSES, INSTALL_COMMAND, LOGIN_COMMAND, defaultModeFor, type Harness as Harnesses } from '../../lib/harnesses';
 import type { AccountsView, AccountProvider } from '../../api/types';
 import { Select } from '../common/Select';
+import { useProjects } from '../../stores/projects';
 import { startCliSignIn } from '../../lib/cliSignIn';
 import { fontVar } from '../../lib/fontSize';
 import { can } from '../../lib/profile';
@@ -68,16 +69,24 @@ function Row({ mobile, last, children }: { mobile: boolean; last?: boolean; chil
   );
 }
 
-export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
+export function NewThreadModal({ sessionId: initialSession, prompts, onClose, onCreated, pickProject = false }: {
   sessionId: string;
+  /**
+   * A Project picker at the top (owner, 2026-11-20: the Threads list's +). `sessionId` is the project it
+   * starts on; the thread is created in the project picked, which `onCreated` names.
+   */
+  pickProject?: boolean;
   /**
    * A plugin's "Split into N threads" (coach spec section 4.1): one thread per prompt, each sent
    * its prompt once the person presses Start. The dialog lists them first; nothing starts before.
    */
   prompts?: string[];
   onClose: () => void;
-  onCreated: (id: string) => void;
+  onCreated: (id: string, sessionId: string) => void;
 }) {
+  const [chosen, setChosen] = useState(initialSession);
+  const sessionId = pickProject ? chosen : initialSession;
+  const projects = useProjects((s) => s.sessions);
   const batch = prompts && prompts.length > 0 ? prompts : null;
   const [capabilitiesLoading, setCapabilitiesLoading] = useState(!!api.getHarnessCapabilities);
   // Profile (lib/profile.ts): without the CLI a person gets chat (Pretty) threads only, so the plain
@@ -295,7 +304,7 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
     setSigningIn(true);
     try {
       const id = await startCliSignIn(sessionId, name, spec.label);
-      onCreated(id);
+      onCreated(id, sessionId);
       onClose();
     } catch { setSigningIn(false); }
   }
@@ -377,7 +386,7 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
         }
         await useTabs.getState().loadTabs(sessionId);
         for (const id of ids) useTabs.getState().markLoading(id);
-        onCreated(ids[0]);
+        onCreated(ids[0], sessionId);
         onClose();
         return;
       }
@@ -389,7 +398,7 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
       });
       await useTabs.getState().loadTabs(sessionId);
       useTabs.getState().markLoading(t.id);
-      onCreated(t.id);
+      onCreated(t.id, sessionId);
       onClose();
     } catch { setBusy(false); }
   }
@@ -448,6 +457,11 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
     <Modal open onClose={onClose} sheet={isMobile} anchor="top">
       <div style={{ display: 'flex', flexDirection: 'column', gap: m ? 14 : 16 }}>
       <div ref={mainRef} style={{ display: 'flex', flexDirection: 'column', gap: m ? 14 : 16, minHeight: m && floor ? floor : undefined }}>
+        {pickProject && (
+          <Select ariaLabel="Project" searchable={projects.length > 8} size={m ? 'lg' : 'md'} value={sessionId}
+            options={projects.filter((p) => !p.archivedAt || p.id === sessionId).map((p) => ({ value: p.id, label: p.name }))}
+            onChange={setChosen} />
+        )}
         {/* HARNESS. Desktop: one segmented strip, every harness a column. Phone: a row of
             pills that scrolls sideways, bleeding to the sheet edge. A harness whose CLI is
             missing is dimmed and tagged "Install", but stays SELECTABLE: picking it swaps

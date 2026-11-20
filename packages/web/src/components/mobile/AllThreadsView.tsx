@@ -1,9 +1,9 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CaretDown, CaretRight, ChatsCircle } from '@phosphor-icons/react';
+import { CaretDown, CaretRight, ChatsCircle, Plus } from '@phosphor-icons/react';
 import type { AccountProvider, Terminal } from '../../api/types';
 import { api } from '../../api/client';
 import { useProjects } from '../../stores/projects';
-import { useTabs } from '../../stores/tabs';
+import { useTabs, findTerminal } from '../../stores/tabs';
 import { useAccounts, threadAccount, shortAccountLabel } from '../../stores/accounts';
 import { HARNESSES } from '../../lib/harnesses';
 import { FilterBar, type FilterFacet } from '../common/FilterBar';
@@ -13,6 +13,7 @@ import { SectionHeader } from '../sidebar/sectionParts';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { ThreadRow } from '../sidebar/ProjectCard';
 import { ThreadMenu, type ThreadMenuAt } from '../sidebar/ThreadMenu';
+import { NewThreadModal } from '../sidebar/NewThreadModal';
 import { ConfirmModal } from '../common/ConfirmModal';
 import { ArchivedThreadsList } from './ArchivedThreadsList';
 import { isAgentStarted, startedByOf, startedByText } from '../../lib/startedBy';
@@ -130,6 +131,20 @@ const ListThreadRow = memo(function ListThreadRow({ tab, active, subtitle, swipe
  * empty list. The sheet scrolls, so a few dozen projects are fine (a wrapped row of pills was not).
  */
 /**
+ * The project a new thread from the Threads list starts on (owner, 2026-11-20): the open thread's
+ * project when a thread is open, else the project with the most recent activity.
+ */
+export function defaultNewThreadProject(): string | null {
+  const tabs = useTabs.getState();
+  const sessions = useProjects.getState().sessions.filter((p) => !p.archivedAt);
+  const active = tabs.activeTabId;
+  const fromOpen = active ? (findTerminal(tabs.byProject, active)?.sessionId ?? tabs.tabSession?.[active] ?? null) : null;
+  if (fromOpen && sessions.some((p) => p.id === fromOpen)) return fromOpen;
+  const recent = [...sessions].sort((a, b) => Date.parse(b.lastActivityAt ?? '') - Date.parse(a.lastActivityAt ?? '') || 0);
+  return recent[0]?.id ?? null;
+}
+
+/**
  * `onQueryChange` (the desktop's left panel, 2026-11-07): the view owns the search row, the shared
  * FilterBar with Filters right of the search, which opens a popover instead of a bottom sheet; there
  * are no ACTIVE / ARCHIVED tabs, and the archived threads are a folded ARCHIVED section at the end,
@@ -150,6 +165,8 @@ export function AllThreadsView({ onOpenThread, query = '', onQueryChange }: { on
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<'active' | 'archived'>('active');
   const [menu, setMenu] = useState<ThreadMenuAt | null>(null);
+  /** The project the new-thread dialog starts on, while it is open. */
+  const [newThreadIn, setNewThreadIn] = useState<string | null>(null);
   const [facets, setFacets] = useState<Facets>(readFacets);
   const [chosenStarter, setStarter] = useState<Starter>(readStarter);
   const [within, setWithin] = useState<Within | null>(readWithin);
@@ -322,11 +339,19 @@ export function AllThreadsView({ onOpenThread, query = '', onQueryChange }: { on
   ];
   const onFacets = shownFacets.filter((id) => active[id]);
   const doneLabel = tab === 'active' ? `Show ${threads.length} thread${threads.length === 1 ? '' : 's'}` : 'Done';
+  // A new thread from the Threads list (owner, 2026-11-20): the green + right of Filters, as on Projects.
+  // The dialog picks the project, starting on the open thread's project, else the most recent one.
+  const plus = (
+    <button type="button" aria-label="New thread" title="New thread" onClick={() => setNewThreadIn(defaultNewThreadProject())}
+      style={{ width: desktop ? 32 : 36, height: desktop ? 32 : 36, padding: 0, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', border: 'none', borderRadius: desktop ? 'var(--radius-sm)' : 'var(--radius-md)', color: 'var(--color-on-accent)', cursor: 'pointer' }}>
+      <Plus size={desktop ? 16 : 18} weight="bold" />
+    </button>
+  );
   const filterBar = desktop ? (
-    <FilterBar variant="popover" size="md" facets={filterFacets} doneLabel={doneLabel} query={query} onQueryChange={onQueryChange} placeholder="Search threads" rowTestId="sidebar-search-row"
+    <FilterBar variant="popover" size="md" facets={filterFacets} doneLabel={doneLabel} query={query} onQueryChange={onQueryChange} placeholder="Search threads" rowTestId="sidebar-search-row" trailing={plus}
       style={{ padding: '8px 8px 10px', gap: 8, background: 'color-mix(in srgb, var(--color-pane) 62%, transparent)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderBottom: '1px solid color-mix(in srgb, var(--color-text-emphasis) 6%, transparent)' }} />
   ) : (
-    <FilterBar variant="sheet" size="md" facets={filterFacets} doneLabel={doneLabel} style={{ gap: 0 }}
+    <FilterBar variant="sheet" size="md" facets={filterFacets} doneLabel={doneLabel} style={{ gap: 0 }} trailing={plus}
       rowStyle={{ padding: '2px 14px 0', borderBottom: '1px solid var(--color-border)' }} pillsStyle={{ padding: '8px 12px 2px' }}
       leading={(
         <div role="tablist" aria-label="Thread list" style={{ flex: 1, display: 'flex', gap: 18, alignSelf: 'stretch', alignItems: 'flex-end' }}>
@@ -378,6 +403,10 @@ export function AllThreadsView({ onOpenThread, query = '', onQueryChange }: { on
         </>}
       </div>
       <ThreadMenu at={menu} onClose={() => setMenu(null)} onBranched={(b) => onOpenThread(b.sessionId, b.id)} />
+      {newThreadIn && (
+        <NewThreadModal sessionId={newThreadIn} pickProject onClose={() => setNewThreadIn(null)}
+          onCreated={(id, sid) => { setNewThreadIn(null); onOpenThread(sid, id); }} />
+      )}
       <ConfirmModal
         open={!!archiveTarget}
         title="Archive thread?"

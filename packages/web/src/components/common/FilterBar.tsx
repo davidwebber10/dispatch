@@ -40,6 +40,8 @@ export interface FilterBarProps {
   placeholder?: string;
   /** Takes the search's place left of the button (the phone's ACTIVE / ARCHIVED tabs). */
   leading?: ReactNode;
+  /** Right of the Filters button (the Threads list's green + for a new thread, 2026-11-20). */
+  trailing?: ReactNode;
   /** Called by Clear after every facet is reset (to reset state the facets don't hold). */
   onClear?(): void;
   /** The panel footer's close button. Default "Done"; "Show 12 threads" says what a pick leaves. */
@@ -61,7 +63,7 @@ export interface FilterBarProps {
  * show as pills under the row, each with ×, and Clear. Derived from the Threads list's filters;
  * the Threads list (desktop and phone) and the Previews plugin (`d.ui.FilterBar`) use it.
  */
-export function FilterBar({ facets, query = '', onQueryChange, placeholder = 'Search', leading, onClear, doneLabel = 'Done', variant, size, style, rowStyle, pillsStyle, rowTestId }: FilterBarProps) {
+export function FilterBar({ facets, query = '', onQueryChange, placeholder = 'Search', leading, trailing, onClear, doneLabel = 'Done', variant, size, style, rowStyle, pillsStyle, rowTestId }: FilterBarProps) {
   const isMobile = useIsMobile();
   const sheet = (variant ?? (isMobile ? 'sheet' : 'popover')) === 'sheet';
   const lg = (size ?? (isMobile ? 'lg' : 'md')) === 'lg';
@@ -121,6 +123,7 @@ export function FilterBar({ facets, query = '', onQueryChange, placeholder = 'Se
         )}
         {!onQueryChange && leading}
         <span style={{ display: 'flex', flexShrink: 0, marginLeft: onQueryChange || leading ? undefined : 'auto' }}>{button}</span>
+        {trailing}
         {/* Anchored to the row, not the button, so a narrow row (the desktop's left panel) keeps the
             whole panel inside it: right-aligned, never wider than the row. */}
         {open && !sheet && <>

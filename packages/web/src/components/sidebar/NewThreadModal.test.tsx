@@ -725,3 +725,27 @@ describe('NewThreadModal worktree option (W3-G)', () => {
     expect(lastInput().externalId).toBe('cc-1');
   });
 });
+
+// Owner, 2026-11-20: "+ on the thread list ... the normal thread add modal but also pick project".
+describe('NewThreadModal with a project picker', () => {
+  beforeEach(async () => {
+    const { useProjects } = await import('../../stores/projects');
+    useProjects.setState({ sessions: [{ id: 's1', name: 'Alpha' }, { id: 's2', name: 'Beta' }] as never });
+  });
+
+  it('shows a Project picker on the chosen project, and creates the thread in the project picked', async () => {
+    const created = vi.fn();
+    render(<NewThreadModal sessionId="s1" pickProject onClose={() => {}} onCreated={created} />);
+    expect(selectedText('Project')).toContain('Alpha');
+    pickOption('Project', 'Beta');
+    start();
+    await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
+    expect((api.createTerminal as any).mock.calls.at(-1)[0]).toBe('s2');
+    await waitFor(() => expect(created).toHaveBeenCalledWith('t-new', 's2'));
+  });
+
+  it('has no Project picker without the option', () => {
+    render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+    expect(screen.queryByRole('combobox', { name: 'Project' })).toBeNull();
+  });
+});
