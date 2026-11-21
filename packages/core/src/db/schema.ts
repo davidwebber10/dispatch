@@ -660,4 +660,92 @@ function initializeSchema(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS inbox_secrets_session ON inbox_secrets(session_id, created_at);
   `));
+  // Memory (docs/superpowers/specs/2026-11-17-memory-design.md, section 4.2). The daemon is the
+  // only writer. A scope is 'you' or 'project:<session id>'. Pages are never changed without a
+  // version row; a deleted page keeps its row (status 'deleted') so a later dream does not make it
+  // again. One FTS5 index holds the active pages (rowid = page id) and the live notes (rowid =
+  // minus the note id); triggers keep it in step. A version row is never updated. `source_ref` on
+  // a note makes an import idempotent. `memory_cursors.off_record` keeps one thread out of memory.
+  migrate(db, 'memory-1', () => db.exec(`
+    CREATE TABLE IF NOT EXISTS memory_pages (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      scope       TEXT NOT NULL,
+      slug        TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      body        TEXT NOT NULL DEFAULT '',
+      pinned      INTEGER NOT NULL DEFAULT 0,
+      status      TEXT NOT NULL DEFAULT 'active',
+      created_at  TEXT NOT NULL,
+      updated_at  TEXT NOT NULL,
+      updated_by  TEXT NOT NULL,
+      verified_at TEXT,
+      read_count  INTEGER NOT NULL DEFAULT 0,
+      last_read_at TEXT,
+      sha         TEXT NOT NULL,
+      UNIQUE (scope, slug)
+    );
+    CREATE TABLE IF NOT EXISTS memory_versions (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      page_id     INTEGER NOT NULL,
+      body        TEXT NOT NULL,
+      description TEXT NOT NULL,
+      status      TEXT NOT NULL,
+      op          TEXT NOT NULL,
+      actor       TEXT NOT NULL,
+      dream_id    TEXT,
+      at          TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_memory_versions_page ON memory_versions(page_id, id);
+    CREATE TRIGGER IF NOT EXISTS memory_versions_no_update BEFORE UPDATE ON memory_versions
+      BEGIN SELECT RAISE(ABORT, 'memory versions are never changed'); END;
+    CREATE TABLE IF NOT EXISTS memory_notes (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      scope       TEXT NOT NULL,
+      text        TEXT NOT NULL,
+      about_slug  TEXT,
+      origin      TEXT NOT NULL,
+      terminal_id TEXT,
+      seq_from    INTEGER,
+      seq_to      INTEGER,
+      harness     TEXT,
+      asked_by_user INTEGER NOT NULL DEFAULT 0,
+      external_context INTEGER NOT NULL DEFAULT 0,
+      source_ref  TEXT,
+      created_at  TEXT NOT NULL,
+      dream_id    TEXT,
+      status      TEXT NOT NULL DEFAULT 'new'
+    );
+    CREATE INDEX IF NOT EXISTS idx_memory_notes_scope ON memory_notes(scope, status, id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_notes_source ON memory_notes(scope, source_ref) WHERE source_ref IS NOT NULL;
+    CREATE TABLE IF NOT EXISTS memory_cursors (
+      terminal_id TEXT PRIMARY KEY,
+      last_seq    INTEGER NOT NULL DEFAULT 0,
+      last_at     TEXT,
+      analyzed_at TEXT,
+      off_record  INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TRIGGER IF NOT EXISTS memory_cursors_thread_deleted AFTER DELETE ON terminals
+    BEGIN
+      DELETE FROM memory_cursors WHERE terminal_id = OLD.id;
+    END;
+    CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(slug, text, scope UNINDEXED, kind UNINDEXED);
+    CREATE TRIGGER IF NOT EXISTS memory_pages_fts_insert AFTER INSERT ON memory_pages WHEN new.status = 'active'
+      BEGIN INSERT INTO memory_fts(rowid, slug, text, scope, kind) VALUES (new.id, new.slug, new.description || char(10) || new.body, new.scope, 'page'); END;
+    CREATE TRIGGER IF NOT EXISTS memory_pages_fts_update AFTER UPDATE OF scope, slug, description, body, status ON memory_pages
+      BEGIN
+        DELETE FROM memory_fts WHERE rowid = old.id;
+        INSERT INTO memory_fts(rowid, slug, text, scope, kind) SELECT new.id, new.slug, new.description || char(10) || new.body, new.scope, 'page' WHERE new.status = 'active';
+      END;
+    CREATE TRIGGER IF NOT EXISTS memory_pages_fts_delete AFTER DELETE ON memory_pages
+      BEGIN DELETE FROM memory_fts WHERE rowid = old.id; END;
+    CREATE TRIGGER IF NOT EXISTS memory_notes_fts_insert AFTER INSERT ON memory_notes WHEN new.status != 'deleted'
+      BEGIN INSERT INTO memory_fts(rowid, slug, text, scope, kind) VALUES (-new.id, COALESCE(new.about_slug, ''), new.text, new.scope, 'note'); END;
+    CREATE TRIGGER IF NOT EXISTS memory_notes_fts_update AFTER UPDATE OF scope, text, about_slug, status ON memory_notes
+      BEGIN
+        DELETE FROM memory_fts WHERE rowid = -old.id;
+        INSERT INTO memory_fts(rowid, slug, text, scope, kind) SELECT -new.id, COALESCE(new.about_slug, ''), new.text, new.scope, 'note' WHERE new.status != 'deleted';
+      END;
+    CREATE TRIGGER IF NOT EXISTS memory_notes_fts_delete AFTER DELETE ON memory_notes
+      BEGIN DELETE FROM memory_fts WHERE rowid = -old.id; END;
+  `));
 }
