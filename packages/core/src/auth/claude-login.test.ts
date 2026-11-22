@@ -273,6 +273,16 @@ describe('a rejected code is recoverable, not terminal', () => {
     return done
   }
 
+  /** Like `rejected`, with the state the first link carries. */
+  async function rejectedWith(svc: ClaudeLoginService, f: ReturnType<typeof fakePty>, state: string) {
+    const p = svc.start()
+    setTimeout(() => f.emit(`https://claude.com/cai/oauth/authorize?state=${state}\r\n`), 20)
+    await p
+    const done = svc.submitCode('g'.repeat(60) + '#' + 's'.repeat(40))
+    setTimeout(() => f.emit(REAL_REJECTION), 20)
+    return done
+  }
+
   test('a token printed together with the new link during the retry wait is saved, not skipped', async () => {
     const f = fakePty()
     const svc = new ClaudeLoginService(dir, f.spawn as any, 1_500)
@@ -313,6 +323,15 @@ describe('a rejected code is recoverable, not terminal', () => {
     f.emit('https://claude.com/cai/oauth/authorize?state=REAL\r\n')
     await new Promise((r) => setTimeout(r, 600))
     expect(svc.status()?.url).toContain('state=REAL')
+  })
+
+  test('a new link of the same length as the old one is still found when the old one is printed first', async () => {
+    const f = fakePty()
+    const svc = new ClaudeLoginService(dir, f.spawn as any, 400)
+    const wait = setInterval(() => { if (f.written.length >= 3) { clearInterval(wait); f.emit('https://claude.com/cai/oauth/authorize?state=AAAA\r\nhttps://claude.com/cai/oauth/authorize?state=BBBB\r\n') } }, 20)
+    const done = rejectedWith(svc, f, 'AAAA')
+    const s = await done
+    expect(s.url).toContain('state=BBBB')
   })
 
   test('a word that merely contains "Error:" in a longer line is not taken for the CLI error', () => {

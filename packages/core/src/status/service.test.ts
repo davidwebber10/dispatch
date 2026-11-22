@@ -134,6 +134,15 @@ describe('the exit of a process stopped after a login failure', () => {
     status.markWorking('t1');
     status.markExited('t1', 1);
     expect(terminalsDb.getById(db, 't1')!.status).toBe('error');
+    // The exit that the stop caused is handled LATER (the status queue, when the send came from a status effect):
+    // it still finds its ticket, and only the first exit does.
+    status.markFailed('t1');
+    stopQuietly('t1', () => {});
+    status.markExited('t1', 0);
+    expect(terminalsDb.getById(db, 't1')!.status).toBe('error');
+    status.markWorking('t1');
+    status.markExited('t1', 0); // a second exit has no ticket
+    expect(terminalsDb.getById(db, 't1')!.status).not.toBe('error');
     status.markWorking('t1');
     stopQuietly('t2', () => {}); // another thread's quiet stop changes nothing here
     status.markExited('t1', 0);

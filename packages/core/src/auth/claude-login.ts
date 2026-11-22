@@ -82,11 +82,12 @@ export function extractUrl(raw: string): string | null {
 
 /**
  * Like extractUrl, but only a link that has something after it (a line break, a space, an escape): a link
- * at the very end of the output can be half of a split chunk.
+ * at the very end of the output can be half of a split chunk. `not`: a link that is already known (the dead
+ * one), left out BEFORE the longest is chosen, so it cannot hide a new link of the same length or shorter.
  */
-function completeUrl(raw: string): string | null {
-  const matches = raw.match(new RegExp(URL_RE.source + '(?=[\\s"\'\\x07\\x1b])', 'g'));
-  if (!matches?.length) return null;
+function completeUrl(raw: string, not?: string | null): string | null {
+  const matches = (raw.match(new RegExp(URL_RE.source + '(?=[\\s"\'\\x07\\x1b])', 'g')) ?? []).filter((m) => m !== not);
+  if (!matches.length) return null;
   return matches.reduce((longest, m) => (m.length > longest.length ? m : longest));
 }
 
@@ -461,9 +462,9 @@ export class ClaudeLoginService {
     while (Date.now() < deadline && this.live === live && live.session.status === 'exchanging') {
       const token = extractToken(live.buf.slice(mark));
       if (token && !stripAnsi(live.buf.slice(mark)).endsWith(token)) { await this.finish(live, token); return; }
-      const url = completeUrl(live.buf.slice(mark));
       // The old link printed again is not the new one: keep looking.
-      if (url && url !== live.session.url) { live.session.url = url; live.retryFrom = undefined; break; }
+      const url = completeUrl(live.buf.slice(mark), live.session.url);
+      if (url) { live.session.url = url; live.retryFrom = undefined; break; }
       await sleep(100);
     }
     if (live.session.status === 'exchanging' && !live.saving) live.session.status = 'awaiting_code';
@@ -493,8 +494,8 @@ export class ClaudeLoginService {
   private adoptPrintedToken(live: Live): void {
     if (this.live !== live || live.session.status !== 'awaiting_code') return;
     if (live.retryFrom !== undefined) {
-      const url = completeUrl(live.buf.slice(live.retryFrom));
-      if (url && url !== live.session.url) { live.session.url = url; live.retryFrom = undefined; }
+      const url = completeUrl(live.buf.slice(live.retryFrom), live.session.url);
+      if (url) { live.session.url = url; live.retryFrom = undefined; }
     }
     const token = this.printedToken(live);
     if (token) void this.finish(live, token);

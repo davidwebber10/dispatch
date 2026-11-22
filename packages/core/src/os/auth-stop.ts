@@ -15,22 +15,41 @@ import type { IStructuredManager } from '../structured/manager.js';
 
 /** Threads whose process is being stopped on purpose RIGHT NOW (only while the stop call runs). */
 const stopping = new Set<string>();
+/** One ticket per on-purpose stop, for the exit it causes: when it runs out (ms). */
+const quietExits = new Map<string, number[]>();
+const TICKET_MS = 2_000;
 
 /**
  * Run a stop that is on purpose after a login failure. Claude's kill() reports its exit before it returns,
- * so the exit is quiet only during this call: a crash of the NEW process afterwards is news as usual.
+ * so a listener that runs at once sees `isAuthStop`. The status service can handle that exit LATER (its
+ * queue, when the send came from inside a status effect), so the stop also leaves one ticket for it
+ * (consumeQuietExit). A crash of the NEW process afterwards has no ticket: it is news as usual.
  */
 export function stopQuietly(terminalId: string, stop: () => void): void {
   stopping.add(terminalId);
+  const list = quietExits.get(terminalId) ?? [];
+  list.push(Date.now() + TICKET_MS);
+  quietExits.set(terminalId, list);
   try { stop(); } finally { stopping.delete(terminalId); }
 }
 
 /**
- * True while stopQuietly runs for this thread. The exit of that process is not news: the thread keeps the
- * status the failed turn gave it (error, not done), and an open chat gets no "Process exited" line after the
- * sign-in card (status/service.ts markExited, ws/structured.ts).
+ * True while stopQuietly runs for this thread. The exit of that process is not news: an open chat gets no
+ * "Process exited" line after the sign-in card (ws/structured.ts).
  */
 export function isAuthStop(terminalId: string): boolean { return stopping.has(terminalId); }
+
+/**
+ * True once per on-purpose stop, for its exit: the thread keeps the status the failed turn gave it (error,
+ * not done) (status/service.ts markExited).
+ */
+export function consumeQuietExit(terminalId: string): boolean {
+  const list = (quietExits.get(terminalId) ?? []).filter((t) => t > Date.now());
+  const had = list.length > 0;
+  if (had) list.shift();
+  if (list.length) quietExits.set(terminalId, list); else quietExits.delete(terminalId);
+  return had;
+}
 
 export interface AuthStopDeps {
   managers: Iterable<IStructuredManager>;
