@@ -71,6 +71,8 @@ export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to
         if (stopped) return;
         const mine = session && (!attemptId.current || session.id === attemptId.current);
         if (mine && session.status === 'complete') { stopped = true; setPhase('sending'); onDone(); return; }
+        // After a refused code the CLI's new link can come late: show the one the daemon holds now.
+        if (mine && session.status === 'awaiting_code' && session.url) setUrl((u) => (session.url && session.url !== u ? session.url : u));
         if (!mine || session.status === 'error') {
           stopped = true;
           // Claude's own reason when the daemon has one (a timeout, a refused code), in plain words.

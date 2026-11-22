@@ -218,6 +218,7 @@ export class SessionService {
         isStructuredTerminal: (row) => this.isStructuredTerminal(row),
         sendStructuredMessage: (id, content, source, logAs) => this.sendStructuredMessage(id, content, source, logAs),
         noteThreadTouched: (id, source, logAs) => this.noteThreadTouched(id, source, logAs),
+        stopTerminal: (id) => this.stopTerminal(id),
       },
     });
     this.bootRecovery = new BootRecovery({

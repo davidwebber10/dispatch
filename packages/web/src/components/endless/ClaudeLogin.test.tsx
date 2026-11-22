@@ -101,6 +101,13 @@ describe('ClaudeLogin notices how the login ended', () => {
     expect(onDone).not.toHaveBeenCalled();
   });
 
+  it('takes a new link from the daemon while it waits (the CLI printed it late after a refused code)', async () => {
+    vi.spyOn(api, 'claudeAuthStatus').mockResolvedValue({ authenticated: false, session: session({ url: 'https://claude.com/cai/oauth/authorize?x=9' }) });
+    await open();
+    await tick();
+    expect(screen.getByRole('link', { name: /Open the Claude login page/ })).toHaveAttribute('href', 'https://claude.com/cai/oauth/authorize?x=9');
+  });
+
   it('says so and offers a new start when the login has ended', async () => {
     vi.spyOn(api, 'claudeAuthStatus').mockResolvedValue({ authenticated: false, session: null });
     const onDone = await open();

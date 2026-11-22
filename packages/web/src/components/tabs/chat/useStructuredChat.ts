@@ -40,6 +40,8 @@ export interface AuthRequired {
   accountId?: string;
   reason: string;
   detail?: string;
+  /** When the daemon saw the failure (epoch ms); a sign-in made after it already answers the card. */
+  at?: number;
 }
 
 export interface StructuredChat {

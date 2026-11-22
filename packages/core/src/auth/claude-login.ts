@@ -81,6 +81,16 @@ export function extractUrl(raw: string): string | null {
 }
 
 /**
+ * Like extractUrl, but only a link that has something after it (a line break, a space, an escape): a link
+ * at the very end of the output can be half of a split chunk.
+ */
+function completeUrl(raw: string): string | null {
+  const matches = raw.match(new RegExp(URL_RE.source + '(?=[\\s"\'\\x07\\x1b])', 'g'));
+  if (!matches?.length) return null;
+  return matches.reduce((longest, m) => (m.length > longest.length ? m : longest));
+}
+
+/**
  * Pull the minted OAuth token out of raw terminal output, or null.
  *
  * Defensively de-wraps first: even with a wide PTY, any line break the terminal
@@ -139,6 +149,8 @@ interface Live {
   watch: ReturnType<typeof setInterval>;
   /** Set once a token is being kept, so that only one path can keep it. */
   saving: Promise<void> | null;
+  /** After a refused code: where the CLI's retry output starts, until its new link has been taken. */
+  retryFrom?: number;
 }
 
 export class ClaudeLoginService {
@@ -327,7 +339,7 @@ export class ClaudeLoginService {
       // The token and the exit can arrive together, before anything has looked.
       const token = status === 'awaiting_code' || status === 'exchanging' ? extractToken(live.buf.slice(live.scanFrom)) : null;
       if (token) void this.finish(live, token);
-      else this.fail(live, 'claude setup-token exited before completing');
+      else this.fail(live, live.session.error ?? 'claude setup-token exited before completing'); // after a refused code: the CLI's own words
     });
 
     const deadline = Date.now() + START_TIMEOUT_MS;
@@ -377,6 +389,7 @@ export class ClaudeLoginService {
     }
 
     live.session.status = 'exchanging';
+    live.retryFrom = undefined; // a code is going in: the link on screen is the one it was made on
     // Mark where the transcript is now, so the token regex can't match anything
     // echoed before this point (the pasted code itself is echoed back).
     const from = live.buf.length;
@@ -434,21 +447,25 @@ export class ClaudeLoginService {
   /**
    * The CLI refused the code and waits at "Press Enter to retry". Press Enter, wait a moment for the
    * new link it prints, and leave the session waiting for a code with the CLI's own words as the error.
-   * With no new link in time the old one stays (the person can start again); the error is shown either way.
+   * A link that comes later still replaces the old one (adoptPrintedToken looks for it while the session
+   * waits). The CLI's output during the wait is kept for token capture, and a login that ended meanwhile
+   * (a token saved, an exit) keeps its end state.
    */
   private async retryAfterRejection(live: Live, cliError: string): Promise<void> {
     live.session.error = cliError;
     const mark = live.buf.length;
+    live.scanFrom = mark; // a token printed from here on is found by every path
+    live.retryFrom = mark;
     try { live.proc.write('\r'); } catch { /* the CLI is gone: onExit ends the attempt */ }
     const deadline = Date.now() + this.retryLinkWaitMs;
-    while (Date.now() < deadline && this.live === live) {
-      const url = extractUrl(live.buf.slice(mark));
-      if (url) { live.session.url = url; break; }
+    while (Date.now() < deadline && this.live === live && live.session.status === 'exchanging') {
+      const token = extractToken(live.buf.slice(mark));
+      if (token && !stripAnsi(live.buf.slice(mark)).endsWith(token)) { await this.finish(live, token); return; }
+      const url = completeUrl(live.buf.slice(mark));
+      if (url) { live.session.url = url; live.retryFrom = undefined; break; }
       await sleep(100);
     }
-    // Only what the CLI prints from now on can hold a token or a new error.
-    live.scanFrom = live.buf.length;
-    if ((live.session.status as LoginStatus) !== 'error') live.session.status = 'awaiting_code';
+    if (live.session.status === 'exchanging') live.session.status = 'awaiting_code';
   }
 
   /** Abandon any in-flight attempt. Safe to call when nothing is running. */
@@ -474,6 +491,10 @@ export class ClaudeLoginService {
 
   private adoptPrintedToken(live: Live): void {
     if (this.live !== live || live.session.status !== 'awaiting_code') return;
+    if (live.retryFrom !== undefined) {
+      const url = completeUrl(live.buf.slice(live.retryFrom));
+      if (url) { live.session.url = url; live.retryFrom = undefined; }
+    }
     const token = this.printedToken(live);
     if (token) void this.finish(live, token);
   }

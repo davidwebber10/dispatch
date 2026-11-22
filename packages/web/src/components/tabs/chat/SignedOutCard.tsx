@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ArrowClockwise, SignIn, UserSwitch, WarningCircle } from '@phosphor-icons/react';
 import type { Terminal, ProviderName } from '../../../api/types';
 import { api } from '../../../api/client';
@@ -51,11 +51,13 @@ export function SignedOutCard({ tab, auth, onRetry }: { tab: Terminal; auth: Aut
   const [phase, setPhase] = useState<Phase>('idle');
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // A sign-in of this account finished after this card appeared (here, in another thread, or in Settings).
-  const shownAt = useMemo(() => useSignInRecovered.getState().seq, [auth]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A sign-in of this account finished after the failure the card shows (here, in another thread, or in
+  // Settings, also while this card was not on screen). A frame without a failure time (an older daemon)
+  // counts from the moment this card appeared.
+  const mountedAt = useRef(Date.now());
   const key = signInKey(auth.provider, auth.accountId);
   const recoveredAt = useSignInRecovered((s) => s.at[key]);
-  const recovered = recoveredAt !== undefined && recoveredAt > shownAt;
+  const recovered = recoveredAt !== undefined && recoveredAt > (auth.at ?? mountedAt.current);
 
   const isCliLogin = !signedOut || signedOut.isCli;
   // A hosted box (served under a base path) has no terminal: its Codex CLI login uses the device code

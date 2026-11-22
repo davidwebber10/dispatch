@@ -259,6 +259,51 @@ describe('a rejected code is recoverable, not terminal', () => {
     expect(f.written[2]).toBe('\r')
   })
 
+  // Made-up tokens, put together here so that no token-shaped value sits in the source.
+  const FAKE_A = ['sk', 'ant', 'oat01', 'RETRYFAKE123'].join('-')
+  const FAKE_B = ['sk', 'ant', 'oat01', 'EXITFAKE456'].join('-')
+
+  /** A rejected code on a login, up to the point where the retry Enter has been written. */
+  async function rejected(svc: ClaudeLoginService, f: ReturnType<typeof fakePty>) {
+    const p = svc.start()
+    setTimeout(() => f.emit('https://claude.com/cai/oauth/authorize?state=OLD\r\n'), 20)
+    await p
+    const done = svc.submitCode('g'.repeat(60) + '#' + 's'.repeat(40))
+    setTimeout(() => f.emit(REAL_REJECTION), 20)
+    return done
+  }
+
+  test('a token printed together with the new link during the retry wait is saved, not skipped', async () => {
+    const f = fakePty()
+    const svc = new ClaudeLoginService(dir, f.spawn as any, 1_500)
+    const wait = setInterval(() => { if (f.written.length >= 3) { clearInterval(wait); f.emit(`https://claude.com/cai/oauth/authorize?state=NEW\r\n${FAKE_A}\r\nmore\r\n`) } }, 20)
+    const s = await rejected(svc, f)
+    expect(s.status).toBe('complete')
+    expect(svc.getToken()).toBe(FAKE_A)
+  })
+
+  test('a CLI that prints a token and exits during the retry wait stays complete', async () => {
+    const f = fakePty()
+    const svc = new ClaudeLoginService(dir, f.spawn as any, 1_500)
+    const wait = setInterval(() => { if (f.written.length >= 3) { clearInterval(wait); f.emit(FAKE_B); f.exit() } }, 20)
+    const s = await rejected(svc, f)
+    expect(s.status).toBe('complete')
+    expect(svc.status()?.status).toBe('complete')
+    expect(svc.getToken()).toBe(FAKE_B)
+  })
+
+  test('a new link that arrives after the wait still replaces the dead one', async () => {
+    const f = fakePty()
+    const svc = new ClaudeLoginService(dir, f.spawn as any, 200)
+    const s = await rejected(svc, f)
+    expect(s.status).toBe('awaiting_code')
+    expect(s.url).toContain('state=OLD')           // nothing new yet
+    f.emit('\x1b[2m✶Retrying sign-in…\r\nhttps://claude.com/cai/oauth/authorize?state=LATE\r\n')
+    await new Promise((r) => setTimeout(r, 600))   // the watch looks every 250 ms
+    expect(svc.status()?.url).toContain('state=LATE')
+    expect((await svc.start()).url).toContain('state=LATE') // a reload reuses the same attempt, now with the live link
+  })
+
   test('a word that merely contains "Error:" in a longer line is not taken for the CLI error', () => {
     expect(extractCliError('Fetching TypeError: not a CLI line\r\n')).toBeNull()
   })

@@ -36,7 +36,7 @@ beforeEach(() => {
   (api.getAccounts as any).mockResolvedValue(view);
   useAccounts.setState({ view, loading: false } as any);
   useThreadStatus.setState({ byTerminal: {} } as any);
-  useSignInRecovered.setState({ seq: 0, at: {} });
+  useSignInRecovered.setState({ at: {} });
   useTabs.setState({ byProject: { s1: [tab()] } } as any);
   vi.spyOn(useTabs.getState(), 'loadTabs').mockResolvedValue(undefined as any);
 });
@@ -50,9 +50,11 @@ describe('SignedOutCard', () => {
     expect(buttons.slice(0, 2)).toEqual(['Sign in', 'Switch account']);
   });
 
-  it('a sign-in of the same account finished elsewhere: the card says Signed in and offers Retry', async () => {
+  const W = { provider: 'claude' as const, accountId: 'work', reason: 'The login expired' };
+
+  it('a sign-in of the same account finished after the failure: the card says Signed in and offers Retry', async () => {
     const onRetry = vi.fn();
-    render(<SignedOutCard tab={tab()} auth={{ provider: 'claude', accountId: 'work', reason: 'The login expired' }} onRetry={onRetry} />);
+    render(<SignedOutCard tab={tab()} auth={{ ...W, at: Date.now() - 60_000 }} onRetry={onRetry} />);
     expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
     act(() => useSignInRecovered.getState().mark('claude', 'work'));
     expect(await screen.findByText(/Signed in\. Retry sends your last message again/)).toBeInTheDocument();
@@ -61,15 +63,22 @@ describe('SignedOutCard', () => {
     expect(onRetry).toHaveBeenCalled();
   });
 
-  it('a sign-in of ANOTHER account does not change the card', () => {
-    render(<SignedOutCard tab={tab()} auth={{ provider: 'claude', accountId: 'work', reason: 'The login expired' }} onRetry={() => {}} />);
-    act(() => useSignInRecovered.getState().mark('claude', 'other'));
+  it('a sign-in made while the card was NOT on screen (Settings) still answers it when it comes back', () => {
+    const failedAt = Date.now() - 60_000;
+    useSignInRecovered.getState().mark('claude', 'work'); // after the failure, before the card mounts
+    render(<SignedOutCard tab={tab()} auth={{ ...W, at: failedAt }} onRetry={() => {}} />);
+    expect(screen.getByText(/Signed in\. Retry sends your last message again/)).toBeInTheDocument();
+  });
+
+  it('a sign-in older than the failure does not hide the card', () => {
+    useSignInRecovered.setState({ at: { 'claude:work': 1000 } });
+    render(<SignedOutCard tab={tab()} auth={{ ...W, at: 2000 }} onRetry={() => {}} />);
     expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
   });
 
-  it('a sign-in that finished BEFORE the card appeared does not hide it', () => {
-    useSignInRecovered.getState().mark('claude', 'work');
-    render(<SignedOutCard tab={tab()} auth={{ provider: 'claude', accountId: 'work', reason: 'The login expired' }} onRetry={() => {}} />);
+  it('a sign-in of ANOTHER account does not change the card', () => {
+    render(<SignedOutCard tab={tab()} auth={{ ...W, at: Date.now() - 60_000 }} onRetry={() => {}} />);
+    act(() => useSignInRecovered.getState().mark('claude', 'other'));
     expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
   });
 

@@ -12,6 +12,7 @@ import { aggregateSessionStatus } from './aggregate.js';
 import { resolveTranscriptPath } from '../sessions/transcript-path.js';
 import { threadStatusOf, toParkInfo, type LifecycleEventRow } from './explain.js';
 import { isDormantStop } from '../os/process-reaper.js';
+import { isAuthStop } from '../os/auth-stop.js';
 
 // Normalized thread status -> the persisted terminal-status enum. `terminals.status` is a
 // free-form TEXT column (no CHECK constraint) — 'scheduled' rides the same convention as
@@ -517,6 +518,8 @@ export class StatusService {
     if (!terminal) return;
     // The host stopped an idle process (os/process-reaper.ts): the thread keeps its status, and nothing is announced.
     if (isDormantStop(terminalId)) { terminalsDb.updatePid(this.db, terminalId, null); return; }
+    // A signed-out thread's process was stopped after its failed turn: the thread keeps that error status.
+    if (isAuthStop(terminalId)) { terminalsDb.updatePid(this.db, terminalId, null); return; }
     this.turnBoundary({ terminalId, sessionId: terminal.session_id, threadStatus: exitCode === 0 ? 'done' : 'error', phase: 'end' });
     terminalsDb.updatePid(this.db, terminalId, null);
     // An idle process ending (a daemon restart, an idle unload) is not activity: counting it

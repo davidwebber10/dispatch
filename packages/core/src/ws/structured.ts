@@ -5,6 +5,7 @@ import type { IStructuredManager } from '../structured/manager.js';
 import { sendOrDrop, waitForRoom, hasRoom, HARD_CEILING_FACTOR } from './backpressure.js';
 import { wsMaxBufferedBytes } from '../caps.js';
 import { isDormantStop } from '../os/process-reaper.js';
+import { isAuthStop } from '../os/auth-stop.js';
 import type { StatusSnapshot } from '../status/events.js';
 
 /**
@@ -255,7 +256,7 @@ export function handleStructuredConnection(
   // `detail` is the CLI's stderr tail, when it wrote one: often the only place it says why (#76).
   const onExit = (eid: string, code: number, detail?: string) => {
     // A dormant stop (os/process-reaper.ts) is not an end the person should see: the next message resumes it.
-    if (eid === id && !isDormantStop(id)) {
+    if (eid === id && !isDormantStop(id) && !isAuthStop(id)) {
       emit(JSON.stringify({ type: 'result', is_error: true, subtype: 'process_exit', result: `Process exited (${code})${detail ? `: ${detail}` : ''}` }));
     }
   };

@@ -301,7 +301,7 @@ export function useChatSocket(args: {
         if (reported) { setModel(reported); useActiveModel.getState().set(terminalId, reported); }
         if (type === 'system' && event.subtype === 'init') return;
         if (type === 'system' && event.subtype === 'auth_required') {
-          setAuthRequired({ provider: event.provider, ...(event.accountId ? { accountId: event.accountId } : {}), reason: event.reason, ...(event.detail ? { detail: event.detail } : {}) });
+          setAuthRequired({ provider: event.provider, ...(event.accountId ? { accountId: event.accountId } : {}), reason: event.reason, ...(event.detail ? { detail: event.detail } : {}), ...(typeof event.at === 'number' ? { at: event.at } : {}) });
           return;
         }
         if (type === 'system' && event.subtype === 'model') {
