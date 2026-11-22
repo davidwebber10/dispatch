@@ -8,13 +8,15 @@ const next = () => new Promise((r) => setImmediate(r));
 
 describe('wireStopOnAuthFailure (hosted)', () => {
   test('stops the thread when its failed turn ends: Claude says `failed`, not `idle`', async () => {
-    const m = mgr(); const stop = vi.fn();
+    const m = mgr(); let quietDuringStop = false;
+    const stop = vi.fn(() => { quietDuringStop = isAuthStop('t1'); });
     const off = wireStopOnAuthFailure({ managers: [m], stop });
     m.emit('auth-required', 't1', {});
     m.emit('failed', 't1');
     await next();
     expect(stop).toHaveBeenCalledWith('t1');
-    expect(isAuthStop('t1')).toBe(true); // its exit is quiet
+    expect(quietDuringStop).toBe(true);  // its exit is quiet while the stop runs
+    expect(isAuthStop('t1')).toBe(false); // and not after
     off();
   });
 

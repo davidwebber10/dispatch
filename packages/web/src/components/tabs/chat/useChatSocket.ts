@@ -116,6 +116,7 @@ export function useChatSocket(args: {
 
   // Streaming bookkeeping (refs so rapid deltas don't churn renders for tracking).
   const streamingRef = useRef(false);                 // sticky once any stream_event seen
+  const clockSkewRef = useRef(0);                      // daemon clock minus this browser's clock (ms), from the status frame
   const turnRef = useRef(0);                           // monotonic turn id → unique block keys
   const blockMapRef = useRef<Map<number, BlockRec>>(new Map()); // content-block index → record
   // The message that streams now: its id, and how many of its whole `assistant` frames came already.
@@ -289,6 +290,7 @@ export function useChatSocket(args: {
       onEvent: (event: any) => {
         // W3-C: the daemon's status frame says whether a turn is in flight. It is not part of the
         // timeline. Every other frame goes on to the fold, which no longer decides "busy".
+        if (event?.type === 'system' && event.subtype === 'status' && typeof event.now === 'number') clockSkewRef.current = event.now - Date.now();
         if (busy.frame(event)) return;
         const type = event?.type;
         // W2-I: the first frame that can render (not a `system` line, not a permission) is the replay
@@ -301,7 +303,7 @@ export function useChatSocket(args: {
         if (reported) { setModel(reported); useActiveModel.getState().set(terminalId, reported); }
         if (type === 'system' && event.subtype === 'init') return;
         if (type === 'system' && event.subtype === 'auth_required') {
-          setAuthRequired({ provider: event.provider, ...(event.accountId ? { accountId: event.accountId } : {}), reason: event.reason, ...(event.detail ? { detail: event.detail } : {}), ...(typeof event.at === 'number' ? { at: event.at } : {}) });
+          setAuthRequired({ provider: event.provider, ...(event.accountId ? { accountId: event.accountId } : {}), reason: event.reason, ...(event.detail ? { detail: event.detail } : {}), ...(typeof event.at === 'number' ? { at: event.at - clockSkewRef.current } : {}) }); // on THIS browser's clock
           return;
         }
         if (type === 'system' && event.subtype === 'model') {

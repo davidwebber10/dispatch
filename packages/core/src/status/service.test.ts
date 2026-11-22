@@ -9,6 +9,7 @@ import { initSchema } from '../db/schema.js';
 import * as sessionsDb from '../db/sessions.js';
 import * as terminalsDb from '../db/terminals.js';
 import { StatusService } from './service.js';
+import { stopQuietly } from '../os/auth-stop.js';
 import type { StatusSnapshot } from './events.js';
 
 let db: Database.Database;
@@ -116,6 +117,27 @@ describe('StatusService.snapshot', () => {
     expect(broadcaster.broadcast).not.toHaveBeenCalled();
     // The next daemon reads it as an open turn (the boot kickstart continues it, or the reconcile settles it).
     expect(new StatusService(db, { broadcast: vi.fn() }).snapshot('t1')).toMatchObject({ status: 'working', turnOpen: true });
+  });
+});
+
+describe('the exit of a process stopped after a login failure', () => {
+  it('keeps the error status while the stop runs; the same exit counts as usual otherwise', () => {
+    status.markFailed('t1');
+    // Control: an ordinary exit with code 0 replaces the failure.
+    status.markExited('t1', 0);
+    expect(terminalsDb.getById(db, 't1')!.status).not.toBe('error');
+    // The exit that the on-purpose stop reports (code 0) must leave the failure as it is.
+    status.markFailed('t1');
+    stopQuietly('t1', () => status.markExited('t1', 0));
+    expect(terminalsDb.getById(db, 't1')!.status).toBe('error');
+    // The NEW process starts, then dies at once (code 1): that exit is news, as usual.
+    status.markWorking('t1');
+    status.markExited('t1', 1);
+    expect(terminalsDb.getById(db, 't1')!.status).toBe('error');
+    status.markWorking('t1');
+    stopQuietly('t2', () => {}); // another thread's quiet stop changes nothing here
+    status.markExited('t1', 0);
+    expect(terminalsDb.getById(db, 't1')!.status).not.toBe('error');
   });
 });
 

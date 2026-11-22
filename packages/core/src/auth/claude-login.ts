@@ -462,10 +462,11 @@ export class ClaudeLoginService {
       const token = extractToken(live.buf.slice(mark));
       if (token && !stripAnsi(live.buf.slice(mark)).endsWith(token)) { await this.finish(live, token); return; }
       const url = completeUrl(live.buf.slice(mark));
-      if (url) { live.session.url = url; live.retryFrom = undefined; break; }
+      // The old link printed again is not the new one: keep looking.
+      if (url && url !== live.session.url) { live.session.url = url; live.retryFrom = undefined; break; }
       await sleep(100);
     }
-    if (live.session.status === 'exchanging') live.session.status = 'awaiting_code';
+    if (live.session.status === 'exchanging' && !live.saving) live.session.status = 'awaiting_code';
   }
 
   /** Abandon any in-flight attempt. Safe to call when nothing is running. */
@@ -493,7 +494,7 @@ export class ClaudeLoginService {
     if (this.live !== live || live.session.status !== 'awaiting_code') return;
     if (live.retryFrom !== undefined) {
       const url = completeUrl(live.buf.slice(live.retryFrom));
-      if (url) { live.session.url = url; live.retryFrom = undefined; }
+      if (url && url !== live.session.url) { live.session.url = url; live.retryFrom = undefined; }
     }
     const token = this.printedToken(live);
     if (token) void this.finish(live, token);

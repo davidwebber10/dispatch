@@ -6,6 +6,7 @@ import request from 'supertest';
 import * as sessionsDb from '../db/sessions.js';
 import * as terminalsDb from '../db/terminals.js';
 import { closeKits, kit } from '../../tests/daemon/kit.js';
+import { isAuthStop } from '../os/auth-stop.js';
 
 afterEach(() => { vi.useRealTimers(); closeKits(); });
 
@@ -31,6 +32,7 @@ describe('a signed-out Claude thread on a local install', () => {
     const sent = await request(server).post('/api/terminals/t1/message').send({ text: 'hello again' });
     expect(sent.status).toBeLessThan(300);
     expect(k.manager.killed).toEqual(['t1']);
+    expect(isAuthStop('t1')).toBe(false);           // the quiet stop is over: a crash of the new process is news
     expect(k.manager.spawned).toHaveLength(2);
     expect(k.manager.sent.map((m) => m.id)).toEqual(['t1', 't1']);
   });

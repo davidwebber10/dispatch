@@ -88,7 +88,7 @@ describe('SignedOutCard', () => {
     const onRetry = vi.fn();
     render(<SignedOutCard tab={tab()} auth={{ provider: 'claude', accountId: 'work', reason: 'The login expired' }} onRetry={onRetry} />);
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
-    await waitFor(() => expect(api.accountsClaudeLogin).toHaveBeenCalledWith('Work'));
+    await waitFor(() => expect(api.accountsClaudeLogin).toHaveBeenCalledWith('Work', 'work'));
     fireEvent.change(await screen.findByLabelText('Login code'), { target: { value: 'abc' } });
     fireEvent.click(screen.getByRole('button', { name: 'Submit code' }));
     const retry = await screen.findByRole('button', { name: 'Retry' });

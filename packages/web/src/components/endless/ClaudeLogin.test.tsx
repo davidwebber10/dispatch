@@ -104,8 +104,10 @@ describe('ClaudeLogin notices how the login ended', () => {
   it('takes a new link from the daemon while it waits (the CLI printed it late after a refused code)', async () => {
     vi.spyOn(api, 'claudeAuthStatus').mockResolvedValue({ authenticated: false, session: session({ url: 'https://claude.com/cai/oauth/authorize?x=9' }) });
     await open();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Login code' }), { target: { value: 'dead#code' } });
     await tick();
     expect(screen.getByRole('link', { name: /Open the Claude login page/ })).toHaveAttribute('href', 'https://claude.com/cai/oauth/authorize?x=9');
+    expect(screen.getByRole('textbox', { name: 'Login code' })).toHaveValue(''); // the code of the dead link is gone
   });
 
   it('says so and offers a new start when the login has ended', async () => {

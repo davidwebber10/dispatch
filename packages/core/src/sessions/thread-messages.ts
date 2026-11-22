@@ -1,4 +1,4 @@
-import { takeAuthRestart } from '../os/auth-stop.js';
+import { takeAuthRestart, stopQuietly } from '../os/auth-stop.js';
 import type Database from 'better-sqlite3';
 import * as terminalsDb from '../db/terminals.js';
 import * as coordinatorMessagesDb from '../db/coordinator-messages.js';
@@ -62,7 +62,7 @@ export class ThreadMessages {
     // The thread's last turn failed on its login and its process is still the one that failed: a running
     // CLI keeps the login it started with, so replace it. The new process resumes the same conversation
     // and reads the login as it is now (os/auth-stop.ts).
-    if (manager?.isAlive(terminalId) && takeAuthRestart(terminalId)) this.deps.threads.stopTerminal(terminalId);
+    if (manager?.isAlive(terminalId) && takeAuthRestart(terminalId)) stopQuietly(terminalId, () => this.deps.threads.stopTerminal(terminalId));
     if (!manager?.isAlive(terminalId)) this.ensureStructuredAlive(terminalId);
     if (!manager?.isAlive(terminalId)) {
       const cause = this.spawner.lastSpawnError.get(terminalId);

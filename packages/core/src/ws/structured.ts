@@ -19,8 +19,10 @@ export interface StatusSource {
 }
 
 /** The frame that carries a status snapshot: the first frame of a connection, then one per transition. */
-function statusFrame(snapshot: StatusSnapshot): { type: 'system'; subtype: 'status' } & StatusSnapshot {
-  return { type: 'system', subtype: 'status', ...snapshot };
+function statusFrame(snapshot: StatusSnapshot): { type: 'system'; subtype: 'status'; now: number } & StatusSnapshot {
+  // `now`: the daemon's clock, so a browser on another machine can place the daemon's times (the time of a
+  // sign-in failure, system/auth_required `at`) on its own clock. The first frame of every connection.
+  return { type: 'system', subtype: 'status', ...snapshot, now: Date.now() };
 }
 
 /**

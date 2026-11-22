@@ -37,6 +37,7 @@ export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const attemptId = useRef<string | undefined>(undefined);
+  const urlRef = useRef<string | null>(null); // the link on screen, for the poll below
 
   const start = async () => {
     setError(null);
@@ -45,7 +46,7 @@ export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to
       const s = await (startFlow ?? api.claudeLoginStart)();
       if (!s.url) throw new Error(s.error ?? 'Claude did not give a login link');
       attemptId.current = s.id;
-      setUrl(s.url);
+      setUrl(s.url); urlRef.current = s.url;
       setPhase('code');
     } catch (err) {
       setError(plainLoginError(err));
@@ -72,7 +73,7 @@ export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to
         const mine = session && (!attemptId.current || session.id === attemptId.current);
         if (mine && session.status === 'complete') { stopped = true; setPhase('sending'); onDone(); return; }
         // After a refused code the CLI's new link can come late: show the one the daemon holds now.
-        if (mine && session.status === 'awaiting_code' && session.url) setUrl((u) => (session.url && session.url !== u ? session.url : u));
+        if (mine && session.status === 'awaiting_code' && session.url && session.url !== urlRef.current) { urlRef.current = session.url; setUrl(session.url); setCode(''); }
         if (!mine || session.status === 'error') {
           stopped = true;
           // Claude's own reason when the daemon has one (a timeout, a refused code), in plain words.
@@ -96,7 +97,7 @@ export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to
       if (s.status === 'complete') { onDone(); return; }
       setError(s.error ?? 'The login did not finish. Try the code again.');
       // A refused code makes the CLI start a new sign-in: the link is new, the old code is dead.
-      if (s.url && s.url !== url) { setUrl(s.url); setCode(''); }
+      if (s.url && s.url !== urlRef.current) { setUrl(s.url); urlRef.current = s.url; setCode(''); }
       setPhase('code');
     } catch (err) {
       // The login may have finished just before this code arrived.

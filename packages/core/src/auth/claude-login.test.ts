@@ -304,6 +304,17 @@ describe('a rejected code is recoverable, not terminal', () => {
     expect((await svc.start()).url).toContain('state=LATE') // a reload reuses the same attempt, now with the live link
   })
 
+  test('the old link printed again is not taken for the new one', async () => {
+    const f = fakePty()
+    const svc = new ClaudeLoginService(dir, f.spawn as any, 400)
+    const wait = setInterval(() => { if (f.written.length >= 3) { clearInterval(wait); f.emit('https://claude.com/cai/oauth/authorize?state=OLD\r\n') } }, 20)
+    const s = await rejected(svc, f)
+    expect(s.url).toContain('state=OLD')
+    f.emit('https://claude.com/cai/oauth/authorize?state=REAL\r\n')
+    await new Promise((r) => setTimeout(r, 600))
+    expect(svc.status()?.url).toContain('state=REAL')
+  })
+
   test('a word that merely contains "Error:" in a longer line is not taken for the CLI error', () => {
     expect(extractCliError('Fetching TypeError: not a CLI line\r\n')).toBeNull()
   })
@@ -398,7 +409,7 @@ describe('one link: the code link', () => {
 
   test('a token cut in two by the terminal waits for the rest, however long', async () => {
     const f = fakePty();
-    const svc = new ClaudeLoginService(dir, f.spawn as any);
+    const svc = new ClaudeLoginService(dir, f.spawn as any, 300);
     await ready(svc, f);
     f.emit('\r\nsk-ant-oat01-FIRSTHALF');
     await sleep(700); // longer than two watches

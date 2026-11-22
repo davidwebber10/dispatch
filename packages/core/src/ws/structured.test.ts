@@ -531,18 +531,18 @@ describe('the status header', () => {
   it('the status frame is the first frame', () => {
     const { ws, sent } = fakeWs();
     connect(ws, REQ, [REAL_TURN], source(snap({ status: 'working', turnOpen: true, activity: 'Working…' })));
-    expect(sent).toEqual([{ type: 'system', subtype: 'status', ...snap({ status: 'working', turnOpen: true, activity: 'Working…' }) }, REAL_TURN]);
+    expect(sent).toEqual([{ type: 'system', subtype: 'status', ...snap({ status: 'working', turnOpen: true, activity: 'Working…' }), now: expect.any(Number) }, REAL_TURN]);
 
     // Before the inactive sentinel too.
     const empty = fakeWs();
     connect(empty.ws, REQ, [], source(snap()));
-    expect(empty.sent).toEqual([{ type: 'system', subtype: 'status', ...snap() }, { type: 'system', subtype: 'inactive' }]);
+    expect(empty.sent).toEqual([{ type: 'system', subtype: 'status', ...snap(), now: expect.any(Number) }, { type: 'system', subtype: 'inactive' }]);
   });
 
   it('a replay that ends mid-turn on a settled thread has turnOpen false in the header', () => {
     const { ws, sent } = fakeWs();
     connect(ws, REQ, MID_TURN_RING, source(snap()), () => true);
-    expect(sent[0]).toEqual({ type: 'system', subtype: 'status', ...snap() });
+    expect(sent[0]).toEqual({ type: 'system', subtype: 'status', ...snap(), now: expect.any(Number) });
     expect(sent[0].turnOpen).toBe(false);
     expect(sent.slice(1, 1 + MID_TURN_RING.length)).toEqual(MID_TURN_RING);
   });
@@ -559,7 +559,7 @@ describe('the status header', () => {
     connect(ws, REQ, [REAL_TURN], status);
     sent.length = 0;
     status.fire('t1', snap({ status: 'working', turnOpen: true, sequence: 4 }));
-    expect(sent).toEqual([{ type: 'system', subtype: 'status', ...snap({ status: 'working', turnOpen: true, sequence: 4 }) }]);
+    expect(sent).toEqual([{ type: 'system', subtype: 'status', ...snap({ status: 'working', turnOpen: true, sequence: 4 }), now: expect.any(Number) }]);
     status.fire('t1', snap({ sequence: 5 }));
     expect(sent.map((f) => f.sequence)).toEqual([4, 5]);
   });
@@ -579,7 +579,7 @@ describe('the status header', () => {
   it('batch=1: the status frame is the first event of the replay frame', () => {
     const { ws, sent } = fakeWs();
     connect(ws, { url: '/api/terminals/t1/structured-ws?tail=200&batch=1' }, [REAL_TURN], source(snap()));
-    expect(sent).toEqual([{ type: 'replay', done: true, events: [{ type: 'system', subtype: 'status', ...snap() }, REAL_TURN] }]);
+    expect(sent).toEqual([{ type: 'replay', done: true, events: [{ type: 'system', subtype: 'status', ...snap(), now: expect.any(Number) }, REAL_TURN] }]);
   });
 
   it('with no status source, an unknown thread or a source that throws, the frames are the old ones', () => {

@@ -119,7 +119,7 @@ export function SignedOutCard({ tab, auth, onRetry }: { tab: Terminal; auth: Aut
     body = flow === 'codex-account'
       ? <CodexLogin accountId={signedOut && !signedOut.isCli ? signedOut.id : 'cli'} onDone={done} onCancel={() => setPhase('idle')} />
       : flow === 'claude-account'
-        ? <ClaudeLogin autoStart start={() => api.accountsClaudeLogin(signedOut!.label)} onDone={done} buttonLabel="Sign in" />
+        ? <ClaudeLogin autoStart start={() => api.accountsClaudeLogin(signedOut!.label, signedOut!.id)} onDone={done} buttonLabel="Sign in" />
         : <ClaudeLogin autoStart onDone={done} buttonLabel="Sign in" />;
   } else {
     body = (

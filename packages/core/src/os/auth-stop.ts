@@ -13,24 +13,24 @@
 // process, resumed on the same conversation, sees the login the person has just made.
 import type { IStructuredManager } from '../structured/manager.js';
 
-/** Threads stopped here, until this time (ms). A short window: the exit of a stop arrives at once. */
-const quietStops = new Map<string, number>();
-const QUIET_MS = 2_000;
-
-/** The caller is about to stop this thread's process on purpose (see isAuthStop). */
-export function markAuthStop(terminalId: string): void { quietStops.set(terminalId, Date.now() + QUIET_MS); }
+/** Threads whose process is being stopped on purpose RIGHT NOW (only while the stop call runs). */
+const stopping = new Set<string>();
 
 /**
- * True while a process that was stopped on purpose after a login failure is exiting. Its exit is not news:
- * the thread keeps the status the failed turn gave it (error, not done), and an open chat gets no
- * "Process exited" line after the sign-in card (status/service.ts markExited, ws/structured.ts).
+ * Run a stop that is on purpose after a login failure. Claude's kill() reports its exit before it returns,
+ * so the exit is quiet only during this call: a crash of the NEW process afterwards is news as usual.
  */
-export function isAuthStop(terminalId: string): boolean {
-  const until = quietStops.get(terminalId);
-  if (until === undefined) return false;
-  if (Date.now() > until) { quietStops.delete(terminalId); return false; }
-  return true;
+export function stopQuietly(terminalId: string, stop: () => void): void {
+  stopping.add(terminalId);
+  try { stop(); } finally { stopping.delete(terminalId); }
 }
+
+/**
+ * True while stopQuietly runs for this thread. The exit of that process is not news: the thread keeps the
+ * status the failed turn gave it (error, not done), and an open chat gets no "Process exited" line after the
+ * sign-in card (status/service.ts markExited, ws/structured.ts).
+ */
+export function isAuthStop(terminalId: string): boolean { return stopping.has(terminalId); }
 
 export interface AuthStopDeps {
   managers: Iterable<IStructuredManager>;
@@ -53,8 +53,7 @@ export function wireStopOnAuthFailure(deps: AuthStopDeps): () => void {
   };
   const stopNow = (id: string) => {
     if (!forget(id)) return;
-    markAuthStop(id);
-    try { deps.stop(id); } catch { quietStops.delete(id); /* the thread may be gone */ }
+    try { stopQuietly(id, () => deps.stop(id)); } catch { /* the thread may be gone */ }
   };
   for (const m of deps.managers) {
     const onAuth = (id: string) => {
@@ -84,26 +83,23 @@ const needsFreshProcess = new Set<string>();
 
 /**
  * True once for a thread that failed on its login since its process started: the caller then replaces the
- * process before it delivers the message. The stop is marked quiet (the thread keeps its status, the chat
- * gets no "Process exited" line).
+ * process before it delivers the message (stopping it with stopQuietly).
  */
-export function takeAuthRestart(terminalId: string): boolean {
-  if (!needsFreshProcess.delete(terminalId)) return false;
-  markAuthStop(terminalId);
-  return true;
-}
+export function takeAuthRestart(terminalId: string): boolean { return needsFreshProcess.delete(terminalId); }
 
 /** Remember which threads failed on their login. Only the Claude manager is given: the others share a process or hold no env login. */
 export function wireRestartOnAuthFailure(managers: Iterable<IStructuredManager>): () => void {
   const offs: Array<() => void> = [];
+  const mine = new Set<string>();
   for (const m of managers) {
-    const onAuth = (id: string) => { needsFreshProcess.add(id); };
-    // A turn that worked proves the login works again; a process that ended takes its login with it.
+    const onAuth = (id: string) => { needsFreshProcess.add(id); mine.add(id); };
+    // A turn that worked proves the login works again (it ended idle, scheduled or asking for help); a
+    // process that ended takes its login with it.
     const onClear = (id: string) => { needsFreshProcess.delete(id); };
+    const events = ['idle', 'scheduled', 'needs-help', 'exit'];
     m.on('auth-required', onAuth);
-    m.on('idle', onClear);
-    m.on('exit', onClear);
-    offs.push(() => { m.off('auth-required', onAuth); m.off('idle', onClear); m.off('exit', onClear); });
+    for (const e of events) m.on(e, onClear);
+    offs.push(() => { m.off('auth-required', onAuth); for (const e of events) m.off(e, onClear); });
   }
-  return () => { for (const o of offs) o(); needsFreshProcess.clear(); };
+  return () => { for (const o of offs) o(); for (const id of mine) needsFreshProcess.delete(id); };
 }

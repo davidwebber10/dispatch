@@ -37,6 +37,7 @@ describe('a Claude thread whose login fails, on a local install', () => {
     const a = createApp({ db, skipPty: true, structuredCommand: { command: process.execPath, args: [fake] } }) as any;
     apps.push(a);
     const mgr = a._structuredManager;
+    mgr.setDefaultEnv({ DISPATCH_TEST_ENV: 'login-old' }); // stands for the login the first process starts with
     const s = await request(a).post('/api/sessions').send({ provider: 'claude-code', workingDir: dir, name: 'p' });
     const t = await request(a).post(`/api/sessions/${s.body.id}/terminals`).send({ type: 'claude-code', config: { transport: 'structured' } });
     const id = t.body.id as string;
@@ -57,13 +58,17 @@ describe('a Claude thread whose login fails, on a local install', () => {
     expect(frames.some((f) => f.subtype === 'process_exit')).toBe(false);
     const pidBefore = terminalsDb.getById(db, id)!.pid;
     const initsBefore = (mgr.getEvents(id) as any[]).filter((e) => e.type === 'system' && e.subtype === 'init').length;
+    const oldInit = (mgr.getEvents(id) as any[]).find((e) => e.type === 'system' && Array.isArray(e.argv));
+    expect(oldInit.testEnv).toBe('login-old');
 
-    // The person signs in again and writes to the same thread.
+    mgr.setDefaultEnv({ DISPATCH_TEST_ENV: 'login-new' }); // the person signs in again: the environment of a new start changes
+    // The person writes to the same thread.
     await request(a).post(`/api/terminals/${id}/message`).send({ text: 'second', source: 'user' }).expect(204);
     expect(mgr.isAlive(id)).toBe(true);
     expect(terminalsDb.getById(db, id)!.pid).not.toBe(pidBefore); // a NEW process
     const init = await until(() => (mgr.getEvents(id) as any[]).filter((e) => e.type === 'system' && Array.isArray(e.argv)).pop());
     expect(init.argv).toEqual(expect.arrayContaining(['-r', 'sess-fake']));
+    expect(init.testEnv).toBe('login-new');   // the new process got the new login (the old one had the old, checked above)
     expect(initsBefore).toBeGreaterThan(0);
     expect(frames.some((f) => f.subtype === 'process_exit')).toBe(false); // the replaced process left no row
     await until(() => frames.find((f) => f.type === 'assistant' && JSON.stringify(f).includes('echo:second')));
