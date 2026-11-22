@@ -108,8 +108,11 @@ export function extractToken(raw: string): string | null {
  * 45-second "timed out".
  */
 export function extractCliError(raw: string): string | null {
-  const m = stripAnsi(raw).match(/^\s*(OAuth error:.*|Error:.*)$/m);
-  return m ? m[1].trim().slice(0, 200) : null;
+  // The CLI puts a mark (a cross or a spinner glyph) and a bare carriage return in front of the
+  // words ("\r✘OAuth error: ..."), so the line cannot be required to START with them. Anything that
+  // is not a letter or a digit may come first; a longer word ("TypeError:") may not.
+  const m = stripAnsi(raw).match(/^[^A-Za-z0-9\n]*(OAuth error:[^\r\n]*|Error:[^\r\n]*)/m);
+  return m ? m[1].trim().slice(0, 300) : null;
 }
 
 /** Last non-empty line of CLI output — the real reason when something fails. */
@@ -119,7 +122,7 @@ export function lastMeaningfulLine(raw: string): string | null {
     .map((l) => l.trim())
     // Drop pure decoration AND the masked echo of the code the user just pasted,
     // which is a long run of asterisks and is never the reason for a failure.
-    .filter((l) => l && !/^[\s\u2500-\u257F\u2800-\u28FF*·✢✻✽]+$/.test(l) && !/^\**$/.test(l.replace(/[^\x20-\x7e]/g, '')));
+    .filter((l) => l && !/^[\s\u2500-\u257F\u2800-\u28FF*·✢✻✽]+$/.test(l) && !/^\**$/.test(l.replace(/[^\x20-\x7e]/g, '')) && !/^press\s*enter/i.test(l));
   return lines.length ? lines[lines.length - 1].slice(0, 200) : null;
 }
 
@@ -148,6 +151,8 @@ export class ClaudeLoginService {
   constructor(
     private readonly dataDir: string,
     private readonly spawnPty: typeof pty.spawn = pty.spawn,
+    /** How long a rejected code waits for the CLI's new link (a test shortens it). */
+    private readonly retryLinkWaitMs: number = 8_000,
   ) {
     this.tokenPath = path.join(dataDir, 'claude-oauth-token');
   }
@@ -398,11 +403,11 @@ export class ClaudeLoginService {
       // and reporting that beats making the user wait out the timeout.
       const cliError = extractCliError(live.buf.slice(from));
       if (cliError) {
-        // The CLI stays at its prompt ("Press Enter to retry"), so the session is
-        // still usable: report the error but leave the attempt alive so the user can
-        // paste a corrected code without starting over.
-        live.session.status = 'awaiting_code';
-        live.session.error = cliError;
+        // The CLI stays at its prompt ("Press Enter to retry"), so the session is still usable:
+        // report its words and leave the attempt alive. Enter makes it start a fresh sign-in with a
+        // fresh link (measured against the real CLI, 2026-11-21); a code from the old link can never
+        // work, so the new link goes to the person with the error.
+        await this.retryAfterRejection(live, cliError);
         return { ...live.session };
       }
       const token = extractToken(live.buf.slice(from));
@@ -424,6 +429,26 @@ export class ClaudeLoginService {
       JSON.stringify(stripAnsi(tail).slice(-600)));
     this.fail(live, detail ? `Claude said: ${detail}` : 'timed out exchanging the code for a token');
     return { ...live.session };
+  }
+
+  /**
+   * The CLI refused the code and waits at "Press Enter to retry". Press Enter, wait a moment for the
+   * new link it prints, and leave the session waiting for a code with the CLI's own words as the error.
+   * With no new link in time the old one stays (the person can start again); the error is shown either way.
+   */
+  private async retryAfterRejection(live: Live, cliError: string): Promise<void> {
+    live.session.error = cliError;
+    const mark = live.buf.length;
+    try { live.proc.write('\r'); } catch { /* the CLI is gone: onExit ends the attempt */ }
+    const deadline = Date.now() + this.retryLinkWaitMs;
+    while (Date.now() < deadline && this.live === live) {
+      const url = extractUrl(live.buf.slice(mark));
+      if (url) { live.session.url = url; break; }
+      await sleep(100);
+    }
+    // Only what the CLI prints from now on can hold a token or a new error.
+    live.scanFrom = live.buf.length;
+    if ((live.session.status as LoginStatus) !== 'error') live.session.status = 'awaiting_code';
   }
 
   /** Abandon any in-flight attempt. Safe to call when nothing is running. */

@@ -93,6 +93,8 @@ export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to
       const s = await api.claudeLoginCode(c);
       if (s.status === 'complete') { onDone(); return; }
       setError(s.error ?? 'The login did not finish. Try the code again.');
+      // A refused code makes the CLI start a new sign-in: the link is new, the old code is dead.
+      if (s.url && s.url !== url) { setUrl(s.url); setCode(''); }
       setPhase('code');
     } catch (err) {
       // The login may have finished just before this code arrived.

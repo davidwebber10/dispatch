@@ -193,7 +193,7 @@ describe('a rejected code is recoverable, not terminal', () => {
     // Waiting out the 45s timeout turned an instant, actionable message into a
     // useless "timed out", and killing the session forced a full restart.
     const f = fakePty()
-    const svc = new ClaudeLoginService(dir, f.spawn as any)
+    const svc = new ClaudeLoginService(dir, f.spawn as any, 1_500)
     const p = svc.start()
     setTimeout(() => f.emit('https://claude.com/cai/oauth/authorize?x=1\r\n'), 20)
     await p
@@ -206,6 +206,61 @@ describe('a rejected code is recoverable, not terminal', () => {
     expect(s.error).toMatch(/Invalid code/)
     expect(f.killed).toBe(false)
     expect(svc.isAuthenticated()).toBe(false)
+  })
+
+  // Captured from the daemon log on 2026-11-21 (iPhone sign-in): the CLI put a mark and a bare
+  // carriage return before "OAuth error", and the old matcher needed the line to start with it.
+  const REAL_REJECTION = '\x0f\r**************************************************************************************DfFDkg\r\r\n\r\n\r\x1b[38;5;174m✢\x1b[39m Finishing sign-i…\r\r\r\r\r\r\r\r\r\r\r\r·\r\r\n\r\x1b[31m✘\x1b[39mOAuth error: That code wasn\'t accepted. It may be incomplete, expired, already used, or from an earlier sign-in attempt. Sign in again to get a new code.\r\r\n\r\r\nPressEnter toretry\r\r\n'
+
+  test('extractCliError finds the rejection the real CLI printed, behind a mark and a carriage return', () => {
+    expect(extractCliError(REAL_REJECTION)).toBe("OAuth error: That code wasn't accepted. It may be incomplete, expired, already used, or from an earlier sign-in attempt. Sign in again to get a new code.")
+    // The same line with the mark already stripped by the terminal.
+    expect(extractCliError("\r✘OAuth error: That code wasn't accepted.\r\r\n")).toBe("OAuth error: That code wasn't accepted.")
+  })
+
+  test('submitCode shows the real rejection at once, not after the exchange timeout', async () => {
+    const f = fakePty()
+    const svc = new ClaudeLoginService(dir, f.spawn as any, 1_500)
+    const p = svc.start()
+    setTimeout(() => f.emit('https://claude.com/cai/oauth/authorize?x=1\r\n'), 20)
+    await p
+
+    const started = Date.now()
+    const done = svc.submitCode('g'.repeat(60) + '#' + 's'.repeat(40))
+    setTimeout(() => f.emit(REAL_REJECTION), 20)
+    const s = await done
+
+    expect(Date.now() - started).toBeLessThan(5_000) // the exchange timeout is 45 s
+    expect(s.status).toBe('awaiting_code')            // the retry prompt stays
+    expect(s.error).toMatch(/^OAuth error: That code wasn't accepted/)
+    expect(f.killed).toBe(false)
+  })
+
+  test('after a rejection the CLI is told to retry, and the NEW link it prints replaces the dead one', async () => {
+    // The real CLI waits at "Press Enter to retry"; Enter starts a fresh sign-in with a fresh link.
+    // A code from the old link can never work, so the new link must reach the person.
+    const f = fakePty()
+    const svc = new ClaudeLoginService(dir, f.spawn as any, 1_500)
+    const p = svc.start()
+    setTimeout(() => f.emit('https://claude.com/cai/oauth/authorize?state=OLD\r\n'), 20)
+    const first = await p
+    expect(first.url).toContain('state=OLD')
+
+    const done = svc.submitCode('g'.repeat(60) + '#' + 's'.repeat(40))
+    setTimeout(() => f.emit(REAL_REJECTION), 20)
+    // The CLI prints the new link only once it has been told to retry.
+    const wait = setInterval(() => { if (f.written.length >= 3) { clearInterval(wait); f.emit('\x1b[2m✶Retrying sign-in…\r\nhttps://claude.com/cai/oauth/authorize?state=NEW\r\n') } }, 20)
+    const s = await done
+
+    expect(s.status).toBe('awaiting_code')
+    expect(s.error).toMatch(/^OAuth error: That code wasn't accepted/)
+    expect(s.url).toContain('state=NEW')
+    expect(f.written.length).toBe(3)              // the code, its Enter, then the retry Enter
+    expect(f.written[2]).toBe('\r')
+  })
+
+  test('a word that merely contains "Error:" in a longer line is not taken for the CLI error', () => {
+    expect(extractCliError('Fetching TypeError: not a CLI line\r\n')).toBeNull()
   })
 
   test('the masked echo of the pasted code is not mistaken for an error', () => {

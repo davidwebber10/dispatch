@@ -552,10 +552,11 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     accounts, claudeLogin, pushService, broadcaster, spawnEnv: () => spawnEnv.current(), network, clock: opts.clock,
   });
   const { usageLimits, limitSnapshots, usageGauge } = limits;
-  // A hosted box: a chat thread whose CLI is signed out gives its process back (os/auth-stop.ts).
-  const stopAuthWatch = isHostedBox(env) || useCleanClaudeLogin(env)
-    ? wireStopOnAuthFailure({ managers: harnesses.managers.values(), stop: (id) => sessionService.stopTerminal(id), onAuthFailure: () => claudeLogin.noteAuthFailure() })
-    : () => {};
+  // A chat thread whose CLI is signed out gives its process back (os/auth-stop.ts), on every install.
+  // Hosted: ~185 MB each. Local: a running `claude` keeps the token it started with in its env, and
+  // "Sign in again" on an added account saves a NEW token that only a new process receives. Stopping it
+  // makes the next message start a fresh process that resumes the same conversation.
+  const stopAuthWatch = wireStopOnAuthFailure({ managers: harnesses.managers.values(), stop: (id) => sessionService.stopTerminal(id), onAuthFailure: () => claudeLogin.noteAuthFailure() });
   // Fleet totals are a read-only projection of the canonical analytics ledger.
   const usage = new UsageRecorder(db);
   wireThreadSettledPush(db, statusService, pushService);

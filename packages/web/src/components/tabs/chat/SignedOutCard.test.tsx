@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { SignedOutCard } from './SignedOutCard';
 import { api } from '../../../api/client';
 import { useAccounts } from '../../../stores/accounts';
 import { useTabs } from '../../../stores/tabs';
 import { useUI } from '../../../stores/ui';
 import { useThreadStatus } from '../../../stores/threadStatus';
+import { useSignInRecovered } from '../../../stores/signInRecovered';
 import type { Terminal } from '../../../api/types';
 
 vi.mock('../../../api/client', () => ({
@@ -35,6 +36,7 @@ beforeEach(() => {
   (api.getAccounts as any).mockResolvedValue(view);
   useAccounts.setState({ view, loading: false } as any);
   useThreadStatus.setState({ byTerminal: {} } as any);
+  useSignInRecovered.setState({ seq: 0, at: {} });
   useTabs.setState({ byProject: { s1: [tab()] } } as any);
   vi.spyOn(useTabs.getState(), 'loadTabs').mockResolvedValue(undefined as any);
 });
@@ -46,6 +48,29 @@ describe('SignedOutCard', () => {
     expect(screen.getByText('The login expired')).toBeInTheDocument();
     const buttons = screen.getAllByRole('button').map((b) => b.textContent);
     expect(buttons.slice(0, 2)).toEqual(['Sign in', 'Switch account']);
+  });
+
+  it('a sign-in of the same account finished elsewhere: the card says Signed in and offers Retry', async () => {
+    const onRetry = vi.fn();
+    render(<SignedOutCard tab={tab()} auth={{ provider: 'claude', accountId: 'work', reason: 'The login expired' }} onRetry={onRetry} />);
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
+    act(() => useSignInRecovered.getState().mark('claude', 'work'));
+    expect(await screen.findByText(/Signed in\. Retry sends your last message again/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sign in' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(onRetry).toHaveBeenCalled();
+  });
+
+  it('a sign-in of ANOTHER account does not change the card', () => {
+    render(<SignedOutCard tab={tab()} auth={{ provider: 'claude', accountId: 'work', reason: 'The login expired' }} onRetry={() => {}} />);
+    act(() => useSignInRecovered.getState().mark('claude', 'other'));
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
+  });
+
+  it('a sign-in that finished BEFORE the card appeared does not hide it', () => {
+    useSignInRecovered.getState().mark('claude', 'work');
+    render(<SignedOutCard tab={tab()} auth={{ provider: 'claude', accountId: 'work', reason: 'The login expired' }} onRetry={() => {}} />);
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
   });
 
   it('Claude added account: Sign in runs the headless setup-token flow for that account, then offers Retry', async () => {

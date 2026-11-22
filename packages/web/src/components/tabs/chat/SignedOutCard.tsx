@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ArrowClockwise, SignIn, UserSwitch, WarningCircle } from '@phosphor-icons/react';
 import type { Terminal, ProviderName } from '../../../api/types';
 import { api } from '../../../api/client';
@@ -16,6 +16,7 @@ import { fontVar } from '../../../lib/fontSize';
 import { can } from '../../../lib/profile';
 import { usesPlainWording } from '../../../lib/hostContext';
 import { useNavigation } from '../../../stores/navigation';
+import { signInKey, useSignInRecovered } from '../../../stores/signInRecovered';
 
 type Phase = 'idle' | 'signing-in' | 'cli-thread' | 'signed-in';
 
@@ -50,6 +51,11 @@ export function SignedOutCard({ tab, auth, onRetry }: { tab: Terminal; auth: Aut
   const [phase, setPhase] = useState<Phase>('idle');
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A sign-in of this account finished after this card appeared (here, in another thread, or in Settings).
+  const shownAt = useMemo(() => useSignInRecovered.getState().seq, [auth]); // eslint-disable-line react-hooks/exhaustive-deps
+  const key = signInKey(auth.provider, auth.accountId);
+  const recoveredAt = useSignInRecovered((s) => s.at[key]);
+  const recovered = recoveredAt !== undefined && recoveredAt > shownAt;
 
   const isCliLogin = !signedOut || signedOut.isCli;
   // A hosted box (served under a base path) has no terminal: its Codex CLI login uses the device code
@@ -90,7 +96,7 @@ export function SignedOutCard({ tab, auth, onRetry }: { tab: Terminal; auth: Aut
         <div>{retryBtn}</div>
       </>
     );
-  } else if (phase === 'signed-in') {
+  } else if (phase === 'signed-in' || (recovered && phase === 'idle')) {
     body = (
       <>
         <span style={{ fontSize: fontVar(13), color: 'var(--color-text-secondary)' }}>Signed in. Retry sends your last message again.</span>
@@ -107,7 +113,7 @@ export function SignedOutCard({ tab, auth, onRetry }: { tab: Terminal; auth: Aut
       </>
     );
   } else if (phase === 'signing-in') {
-    const done = () => { void useAccounts.getState().load(); setPhase('signed-in'); };
+    const done = () => { void useAccounts.getState().load(); useSignInRecovered.getState().mark(auth.provider, auth.accountId); setPhase('signed-in'); };
     body = flow === 'codex-account'
       ? <CodexLogin accountId={signedOut && !signedOut.isCli ? signedOut.id : 'cli'} onDone={done} onCancel={() => setPhase('idle')} />
       : flow === 'claude-account'
