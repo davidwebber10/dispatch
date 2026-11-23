@@ -252,6 +252,19 @@ export class ClaudeLoginService {
     return Promise.resolve();
   }
 
+  /**
+   * Forget the single saved login of earlier versions: its account (`saved`) was removed. Without
+   * this the token file stays, and the next start makes the account again (issue 185). The clean
+   * login has no saved token. Throws when the file cannot be deleted.
+   */
+  forgetSavedToken(): void {
+    if (this.clean) return;
+    // `force`: a file that is already gone is fine. Any other failure reaches the caller: a token
+    // that stays on disk would still reach processes and bring the account back at the next start.
+    fs.rmSync(this.tokenPath, { force: true });
+    this.onChangeCb?.();
+  }
+
   // --- login flow ---------------------------------------------------------
   status(): LoginSession | null {
     if (this.clean) return this.clean.login.status();

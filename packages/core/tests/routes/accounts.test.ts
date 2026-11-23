@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import fs from 'node:fs';
@@ -9,6 +9,7 @@ import { initSchema } from '../../src/db/schema.js';
 import * as terminalsDb from '../../src/db/terminals.js';
 import * as sessionsDb from '../../src/db/sessions.js';
 import { AccountsStore } from '../../src/auth/accounts.js';
+import { ClaudeLoginService } from '../../src/auth/claude-login.js';
 import { createAccountsRouter, type PinnedThread } from '../../src/routes/accounts.js';
 import type { CodexLoginSession } from '../../src/auth/codex-login.js';
 
@@ -22,8 +23,10 @@ describe('accounts routes', () => {
   let profileCalls: string[];
   let clock: number | null;
   let logins: { label: string; accountId?: string }[];
+  let forgot: number;
 
   beforeEach(() => {
+    forgot = 0;
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'accounts-routes-'));
     store = new AccountsStore(dir);
     pinned = {};
@@ -33,7 +36,7 @@ describe('accounts routes', () => {
     logins = [];
     app = express();
     app.use(express.json());
-    app.use('/api/accounts', createAccountsRouter(store, { startForAccount: async (label: string, accountId?: string) => { logins.push({ label, ...(accountId ? { accountId } : {}) }); return { status: 'awaiting_code', url: 'https://claude.ai/x', error: null }; } } as any, {
+    app.use('/api/accounts', createAccountsRouter(store, { forgetSavedToken: () => { forgot += 1; }, startForAccount: async (label: string, accountId?: string) => { logins.push({ label, ...(accountId ? { accountId } : {}) }); return { status: 'awaiting_code', url: 'https://claude.ai/x', error: null }; } } as any, {
       now: () => clock ?? Date.now(),
       claudeProfile: async (id) => { profileCalls.push(id); return id === 'cli' ? { email: 'cli@x.y', plan: 'Max' } : null; },
       threads: {
@@ -70,6 +73,56 @@ describe('accounts routes', () => {
     expect(del.body).toEqual({ unpinned: 2 });
     expect(unpinned).toEqual([`claude:${w.id}`]);
     expect(store.has('claude', w.id)).toBe(false);
+  });
+
+  // Issue #185: the saved login is an account made from the old single-login file. Removing the
+  // account must forget that file too, or the next start makes the account again.
+  it('removing the saved login forgets its token file; removing another account does not', async () => {
+    const w = store.addClaude({ token: 'tok-w', label: 'Work' });
+    await request(app).delete(`/api/accounts/claude/${w.id}`).expect(200);
+    expect(forgot).toBe(0);
+    store.migrateSavedClaudeToken('tok-saved');
+    expect(store.has('claude', 'saved')).toBe(true);
+    await request(app).delete('/api/accounts/claude/saved').expect(200);
+    expect(store.has('claude', 'saved')).toBe(false);
+    expect(forgot).toBe(1);
+  });
+
+  // The same with the real sign-in service and a real token file (review of #186): a mock of the
+  // service cannot show that the file is gone, or what a failed delete does.
+  it('a saved login whose token file cannot be deleted stays, with an error; once deleted it does not return at the next start', async () => {
+    const file = path.join(dir, 'claude-oauth-token');
+    fs.writeFileSync(file, 'sk-ant-oat01-SAVED', { mode: 0o600 });
+    const login = new ClaudeLoginService(dir, (() => { throw new Error('no pty in this test'); }) as any);
+    store.migrateSavedClaudeToken(login.getToken());
+    const real = express();
+    real.use(express.json());
+    real.use('/api/accounts', createAccountsRouter(store, login, { threads: { pinnedTo: () => [], unpin: () => 0 } }));
+
+    const rm = fs.rmSync.bind(fs);
+    const spy = vi.spyOn(fs, 'rmSync').mockImplementation((target, options) => {
+      if (String(target) === file) throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+      return rm(target, options);
+    });
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const refused = await request(real).delete('/api/accounts/claude/saved').expect(500);
+      expect(refused.body.error).toMatch(/token file could not be deleted/);
+      expect(JSON.stringify(refused.body)).not.toContain('sk-ant');
+      expect(quiet.mock.calls.flat().join(' ')).not.toContain('sk-ant');
+      expect(store.has('claude', 'saved')).toBe(true); // nothing half done: the account is still there
+      expect(fs.existsSync(file)).toBe(true);
+    } finally { spy.mockRestore(); quiet.mockRestore(); }
+
+    await request(real).delete('/api/accounts/claude/saved').expect(200);
+    expect(fs.existsSync(file)).toBe(false);
+    expect(store.has('claude', 'saved')).toBe(false);
+    // The next start: the same folder, a new store and a new service.
+    const again = new AccountsStore(dir);
+    again.migrateSavedClaudeToken(new ClaudeLoginService(dir, (() => { throw new Error('no pty in this test'); }) as any).getToken());
+    expect(again.has('claude', 'saved')).toBe(false);
+    expect(again.defaultId('claude')).toBe('cli');
+    await request(real).delete('/api/accounts/claude/saved').expect(404); // already gone
   });
 
   // W1-H (2026-11-09): a `claude setup-token` token is refused by the profile endpoint (403), every time.

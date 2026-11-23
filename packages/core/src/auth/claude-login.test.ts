@@ -1,4 +1,4 @@
-import { describe, expect, test, beforeEach, afterEach } from 'vitest';
+import { describe, expect, test, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -118,6 +118,38 @@ describe('ClaudeLoginService', () => {
     const s = await p;
     expect(s.status).toBe('error');
     expect(s.error).toMatch(/exited before completing/);
+  });
+
+  // Issue 185: the account made from the saved token was removed; the file must go with it.
+  test('forgetSavedToken() removes the saved token file and tells the listener', () => {
+    fs.writeFileSync(path.join(dir, 'claude-oauth-token'), 'sk-ant-oat01-OLD', { mode: 0o600 });
+    const svc = new ClaudeLoginService(dir, (() => fakePty().spawn()) as any);
+    let changed = 0;
+    svc.onChange(() => { changed += 1; });
+    expect(svc.getToken()).toBe('sk-ant-oat01-OLD');
+    svc.forgetSavedToken();
+    expect(svc.getToken()).toBeNull();
+    expect(fs.existsSync(path.join(dir, 'claude-oauth-token'))).toBe(false);
+    expect(changed).toBe(1);
+    svc.forgetSavedToken(); // no file: no error
+  });
+
+  test('forgetSavedToken() does not hide a file that could not be deleted', () => {
+    const file = path.join(dir, 'claude-oauth-token');
+    fs.writeFileSync(file, 'sk-ant-oat01-OLD', { mode: 0o600 });
+    const svc = new ClaudeLoginService(dir, (() => fakePty().spawn()) as any);
+    let changed = 0;
+    svc.onChange(() => { changed += 1; });
+    const real = fs.rmSync.bind(fs);
+    const spy = vi.spyOn(fs, 'rmSync').mockImplementation((target, options) => {
+      if (String(target) === file) throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+      return real(target, options);
+    });
+    try {
+      expect(() => svc.forgetSavedToken()).toThrow(/EACCES/);
+      expect(svc.getToken()).toBe('sk-ant-oat01-OLD');
+      expect(changed).toBe(0);
+    } finally { spy.mockRestore(); }
   });
 
   test('signOut() forgets the token', async () => {
