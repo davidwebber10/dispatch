@@ -9,6 +9,7 @@ import { InputActionsMenu } from '../dictation/InputActionsMenu';
 import { RecordingsSheet } from '../dictation/RecordingsSheet';
 import { useUI } from '../../stores/ui';
 import { useSettings } from '../../stores/settings';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import { fontVar, fontVarInput } from '../../lib/fontSize';
 
 /**
@@ -148,6 +149,28 @@ export function PillComposer({
   const recording = dictation.state === 'recording' || dictation.state === 'uploading' || dictation.state === 'transcribing';
   const expandable = mobile && long && !recording;
   const failed = dictation.state === 'error';
+  // When a dictation ends, the text box comes back as a new element with no focus, so the focus was lost
+  // (owner, 2026-11-23: "I have to click again into the box"). Give it back, with the caret at the end of
+  // the returned text, ready to type on. Desktop only: a focus on a phone opens the keyboard. A failure
+  // leaves the focus alone: its line above the box has the Retry. The way back from a failure (a Retry
+  // that works, a transcript inserted from Recordings, Dismiss) gives it back too. Never taken from a
+  // field the user moved to while the text was on its way (the command palette, another thread's box).
+  const isPhone = useIsMobile();
+  const busy = recording || failed;
+  const wasBusy = useRef(busy);
+  useEffect(() => {
+    const was = wasBusy.current;
+    wasBusy.current = busy;
+    if (!was || busy || mobile || isPhone) return;
+    const el = own.current;
+    if (!el) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && !boxRef.current?.contains(active)) return;
+    el.focus({ preventScroll: true });
+    const end = el.value.length;
+    el.setSelectionRange(end, end);
+    el.scrollTop = el.scrollHeight;
+  }, [busy, mobile, isPhone]);
   const [recordingsOpen, setRecordingsOpen] = useState(false);
   const circle = { flex: 'none', width: key, height: key, padding: 0, borderRadius: ask ? 'var(--radius-md)' : '50%', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' } as const;
   // Once there is text, it gets its own full-width line above the + / mic / send row (2026-11-05:

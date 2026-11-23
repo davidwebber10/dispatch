@@ -54,3 +54,75 @@ describe('PillComposer focusSignal', () => {
     expect(screen.getByTestId('pill-composer').getAttribute('data-flash')).toBeNull();
   });
 });
+
+// Owner, 2026-11-23: after a dictation the text comes back and the focus is lost; the owner wants to keep
+// typing at the end of the returned text without a click. The text box is unmounted while the mic records
+// (the recording bar takes its place), so the new box must take the focus back itself.
+describe('PillComposer after a dictation', () => {
+  const rec = (state: string) => ({ ...(dictation() as object), state }) as never;
+
+  it('the text box takes the focus back, with the caret at the end of the text', async () => {
+    phone(false);
+    const { rerender } = render(<PillComposer {...base} dictation={rec('transcribing')} />);
+    expect(screen.queryByRole('textbox')).toBeNull();
+    rerender(<PillComposer {...base} value="typed before and the spoken words" dictation={rec('idle')} />);
+    await frames();
+    const box = screen.getByRole('textbox') as HTMLTextAreaElement;
+    expect(document.activeElement).toBe(box);
+    expect(box.selectionStart).toBe(box.value.length);
+    expect(box.selectionEnd).toBe(box.value.length);
+  });
+
+  it('a cancelled recording also gives the focus back to the text box', async () => {
+    phone(false);
+    const { rerender } = render(<PillComposer {...base} dictation={rec('recording')} />);
+    rerender(<PillComposer {...base} dictation={rec('idle')} />);
+    await frames();
+    expect(document.activeElement).toBe(screen.getByRole('textbox'));
+  });
+
+  it('a failed transcription leaves the focus alone (the error line has the Retry)', async () => {
+    phone(false);
+    const { rerender } = render(<PillComposer {...base} dictation={rec('transcribing')} />);
+    rerender(<PillComposer {...base} dictation={rec('error')} />);
+    await frames();
+    expect(document.activeElement).not.toBe(screen.getByRole('textbox'));
+  });
+
+  it('a field the user moved to keeps the focus (the command palette opened while the text was on its way)', async () => {
+    phone(false);
+    const other = document.createElement('input');
+    document.body.appendChild(other);
+    const { rerender } = render(<PillComposer {...base} dictation={rec('transcribing')} />);
+    other.focus();
+    rerender(<PillComposer {...base} value="spoken" dictation={rec('idle')} />);
+    await frames();
+    expect(document.activeElement).toBe(other);
+    other.remove();
+  });
+
+  it('the way back from a failure (a transcript inserted from Recordings, a working Retry) gives the focus back', async () => {
+    phone(false);
+    const { rerender } = render(<PillComposer {...base} dictation={rec('error')} />);
+    rerender(<PillComposer {...base} value="from a saved recording" dictation={rec('idle')} />);
+    await frames();
+    const box = screen.getByRole('textbox') as HTMLTextAreaElement;
+    expect(document.activeElement).toBe(box);
+    expect(box.selectionStart).toBe(box.value.length);
+  });
+
+  it('a first render does not take the focus', async () => {
+    phone(false);
+    render(<PillComposer {...base} value="draft" dictation={rec('idle')} />);
+    await frames();
+    expect(document.activeElement).not.toBe(screen.getByRole('textbox'));
+  });
+
+  it('on a phone it does nothing (a focus there opens the keyboard)', async () => {
+    phone(true);
+    const { rerender } = render(<PillComposer {...base} dictation={rec('transcribing')} />);
+    rerender(<PillComposer {...base} value="spoken" dictation={rec('idle')} />);
+    await frames();
+    expect(document.activeElement).not.toBe(screen.getByRole('textbox'));
+  });
+});
