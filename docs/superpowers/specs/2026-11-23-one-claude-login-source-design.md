@@ -1,7 +1,7 @@
 # One source for the Claude login
 
-Date: 2026-11-23. Status: design, waits for the owner's approval. Follows issues 185 and 188
-and pull request 186. Earlier design: `2026-11-06-multi-account-design.md`.
+Date: 2026-11-23. Status: approved by the owner on 2026-11-23, with the four decisions of
+section 9 as recommended. Follows issues 185 and 188 and pull request 186 (released in 4.12.2). Earlier design: `2026-11-06-multi-account-design.md`.
 
 ## Intent
 
@@ -173,15 +173,13 @@ A revert of the release. `accounts.json` gains no new field that older code cann
 file is deleted by the update. A token account that the new card made stays as an account; older
 code lists it and can use it.
 
-## 9. Decisions for the owner
+## 9. Owner decisions (2026-11-23)
 
-1. **Chat's account.** The default account (recommended: one rule), or a setting of its own.
-2. **Titles.** The account of the thread (recommended: the thread pays for its own title), or
-   the default.
-3. **The generic card when the default is the CLI login.** Offer both ways and ask before the
-   default changes (recommended), or only tell the person to sign in with `claude` and make no
-   Dispatch login from that card.
-4. **One release for units 2 to 5** (recommended), or the base environment first.
+1. **Chat's account** is the default account. Chat has no account setting of its own.
+2. **A thread's title** is made on the account of that thread.
+3. **The generic card when the default is the CLI login** offers both ways, and asks before the
+   default changes.
+4. **Units 2 to 5 ship in one release.**
 
 ## 10. Left to the builder
 
