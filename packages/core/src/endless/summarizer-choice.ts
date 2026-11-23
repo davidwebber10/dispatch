@@ -19,8 +19,10 @@ export function createSummarizer(d: {
   openRouterKey: () => Promise<string | null>;
   onUsage?: (u: Usage) => void;
   keys?: () => KeyRegistry | undefined;
+  /** The login of the default Claude account, as environment variables. */
+  loginEnv?: () => Record<string, string>;
 }): Summarizer {
   return SUMMARY_ENGINE === 'openrouter'
     ? new OpenRouterSummarizer({ apiKey: d.openRouterKey })
-    : new ClaudeSummarizer({ manager: d.manager, chatDir: d.chatDir, mcpConfigPath: d.mcpConfigPath, onUsage: d.onUsage, keys: d.keys });
+    : new ClaudeSummarizer({ manager: d.manager, chatDir: d.chatDir, mcpConfigPath: d.mcpConfigPath, onUsage: d.onUsage, keys: d.keys, loginEnv: d.loginEnv });
 }

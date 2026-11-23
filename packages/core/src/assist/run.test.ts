@@ -44,6 +44,20 @@ describe('assist chooses harness and model (coach plan, Task 1)', () => {
   const cli = (over: Record<string, unknown> = {}) => ({ env: () => ({ BASE: '1' }), bin: async (n: string) => `/usr/local/bin/${n}`, signedIn: async () => true as const, ...over });
   const claudeOut = JSON.stringify({ type: 'result', result: 'ok', usage: { input_tokens: 10, cache_read_input_tokens: 300, cache_creation_input_tokens: 40, output_tokens: 5 }, total_cost_usd: 0.0123, model: 'claude-opus-5' });
 
+  // Spec 2026-11-23: "usable" is asked for the account the call runs on, not for whichever login works.
+  it('a claude call asks whether ITS account is signed in, and makes no call when it is not', async () => {
+    const asked: (string | undefined)[] = [];
+    const calls: string[] = [];
+    const run = async (bin: string) => { calls.push(bin); return { code: 0, stdout: claudeOut }; };
+    const signedIn = async (_n: string, accountId?: string) => { asked.push(accountId); return accountId !== 'expired'; };
+    const r = createAssistRunner({ cli: cli({ signedIn }), run, accountEnv: () => ({}), defaultAccount: () => 'cli' });
+    expect(await r.run({ messages: [{ role: 'user', content: 'x' }], maxTokens: 10, harness: 'claude', accountId: 'work' })).toMatchObject({ accountId: 'work' });
+    expect(await r.run({ messages: [{ role: 'user', content: 'x' }], maxTokens: 10, harness: 'claude', accountId: 'expired' })).toBeNull();
+    expect(await r.run({ messages: [{ role: 'user', content: 'x' }], maxTokens: 10, harness: 'claude' })).toMatchObject({ accountId: 'cli' });
+    expect(asked).toEqual(['work', 'expired', 'cli']);
+    expect(calls).toHaveLength(2);
+  });
+
   it('claude harness passes --model <model> and keeps cache tokens and total_cost_usd', async () => {
     const calls: { bin: string; args: string[]; env: Record<string, string> }[] = [];
     const run = async (bin: string, args: string[], o: { env: Record<string, string> }) => { calls.push({ bin, args, env: o.env }); return { code: 0, stdout: claudeOut }; };

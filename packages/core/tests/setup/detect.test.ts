@@ -95,20 +95,26 @@ describe('detectProvider', () => {
     expect(statusCalls).toBe(2); // fresh bypasses it — the Re-check button's job
   });
 
-  it("asks the CLI under the thread spawn env, so Dispatch's saved Claude token counts", async () => {
-    // The CLI's own keychain login has expired, but threads are spawned with Dispatch's
-    // saved token as CLAUDE_CODE_OAUTH_TOKEN. The check must see what a thread sees.
+  // Spec 2026-11-23 (one source for the Claude login): this check answers for the login of the
+  // machine only. A token in the probe env, or in the daemon's own, must not answer for it: an
+  // added account is checked by its own token (auth/claude-login-sources.ts, claudeSignedIn).
+  it("asks the CLI for the login of the machine: a Claude token in the env never counts", async () => {
+    const seen: (string | undefined)[] = [];
     whenExec((cmd, args, opts) => {
       if (cmd === 'which') return { stdout: '/usr/local/bin/claude\n' };
       if (args.includes('--version')) return { stdout: 'claude 1.2.3\n' };
-      return { stdout: JSON.stringify({ loggedIn: Boolean(opts?.env?.CLAUDE_CODE_OAUTH_TOKEN) }) };
+      seen.push(opts?.env?.CLAUDE_CODE_OAUTH_TOKEN);
+      // A real CLI says "logged in" for a token in its env; the machine's own login is the marker here.
+      return { stdout: JSON.stringify({ loggedIn: Boolean(opts?.env?.CLAUDE_CODE_OAUTH_TOKEN) || opts?.env?.MACHINE_LOGIN === 'yes' }) };
     });
-    expect((await detectProvider('claude')).signedIn).toBe(false);
-
-    // Setting the spawn env drops the cached "no", so the next check re-asks at once.
     setProviderProbeEnv({ PATH: '/usr/bin', CLAUDE_CODE_OAUTH_TOKEN: 'test-token' });
     try {
+      expect((await detectProvider('claude')).signedIn).toBe(false);
+      expect(seen).toEqual(['']);
+      // Setting the spawn env drops the cached "no", so the next check re-asks at once.
+      setProviderProbeEnv({ PATH: '/usr/bin', CLAUDE_CODE_OAUTH_TOKEN: 'test-token', MACHINE_LOGIN: 'yes' });
       expect((await detectProvider('claude')).signedIn).toBe(true);
+      expect(seen).toEqual(['', '']);
     } finally {
       setProviderProbeEnv({ ...process.env } as Record<string, string>);
     }

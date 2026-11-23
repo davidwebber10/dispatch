@@ -92,7 +92,9 @@ export function wireLimits(i: LimitInputs): LimitServices {
       const dir = accounts.codexHome(accountId);
       return (dir && codexAccountId({ ...i.env, CODEX_HOME: dir })) || `acct:${accountId}`;
     }
-    return (provider === 'claude-code' && tokenAccountId(claudeLogin.getToken())) || accountIdFor(provider);
+    // The identity of the CLI login is the CLI's own credential, never a saved token (spec 2026-11-23):
+    // with the old token here, the figures of this login were filed under another account.
+    return accountIdFor(provider);
   };
   for (const m of [i.claudeManager, endlessManager] as EventEmitter[]) {
     m.on('rate-limit', (id: string, info: unknown) => {
@@ -123,7 +125,8 @@ export function wireLimits(i: LimitInputs): LimitServices {
   // An added account runs it with its own token: its `setup-token` token cannot read the usage endpoint (2026-11-07).
   const probeClaude = createClaudeProbe({
     snapshots: limitSnapshots, accountFor: limitAccount,
-    env: (accountId = 'cli') => childEnv(i.spawnEnv(), accountId === 'cli' ? {} : accounts.spawnEnv('claude-code', { accountId })),
+    // `cli` too gets its overlay (an empty token): a probe of the CLI login must not run on another login (spec 2026-11-23).
+    env: (accountId = 'cli') => childEnv(i.spawnEnv(), accounts.spawnEnv('claude-code', { accountId })),
   });
   // Claude's usage as claude.ai shows it (claude-usage.ts): every window, Fable included, and the extra-usage
   // spend. `cli` reads with the CLI's own login (file or keychain); an added account with its saved token.
@@ -142,7 +145,8 @@ export function wireLimits(i: LimitInputs): LimitServices {
   const tokenless = usageWithoutToken(i.env);
   const getUsage = createClaudeGetUsageProbe({
     snapshots: limitSnapshots, accountFor: limitAccount,
-    env: (accountId = 'cli') => childEnv(i.spawnEnv(), accountId === 'cli' ? {} : accounts.spawnEnv('claude-code', { accountId })),
+    // `cli` too gets its overlay (an empty token): a probe of the CLI login must not run on another login (spec 2026-11-23).
+    env: (accountId = 'cli') => childEnv(i.spawnEnv(), accounts.spawnEnv('claude-code', { accountId })),
   });
   const remote = !i.network ? {}
     : tokenless

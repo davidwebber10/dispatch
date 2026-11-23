@@ -76,6 +76,8 @@ export interface TurnDeps {
   commandArgs?: string[];
   /** The daemon's key registry, read at each turn (it can be set after construction). */
   keys?: () => KeyRegistry | undefined;
+  /** The login of the default Claude account, as environment variables (spec 2026-11-23). None in a test: the process inherits. */
+  loginEnv?: () => Record<string, string>;
   /** The owner's Chat-wide model and effort (slash menu), read at each turn: every turn is a new process. */
   settings?: () => { model?: string; effort?: string };
 }
@@ -278,7 +280,8 @@ export class TurnRunner {
         command: d.command ?? 'claude',
         args: [...(d.commandArgs ?? []), ...endlessClaudeArgs({ model: d.settings?.().model ?? TURN_MODEL, effort: d.settings?.().effort, systemPrompt: d.systemPrompt(), mcpConfigPath: this.turnReduced ? d.mcpConfigPath : (d.toolsMcpConfigPath?.() ?? d.mcpConfigPath), userTools: true, reportTurn: this.turnReduced })],
         workDir: d.chatDir,
-        env: minted ? { ...FIXED_CONTEXT_ENV, DISPATCH_AUTH: minted.key } : FIXED_CONTEXT_ENV,
+        // The login of the default Claude account, read at each turn (spec 2026-11-23).
+        env: { ...FIXED_CONTEXT_ENV, ...(d.loginEnv?.() ?? {}), ...(minted ? { DISPATCH_AUTH: minted.key } : {}) },
       });
       this.state = 'running';
       d.emit({ type: 'endless:turn', status: 'running' });

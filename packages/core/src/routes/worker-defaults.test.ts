@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import Database from 'better-sqlite3';
@@ -9,6 +9,7 @@ import { updateOverseerWorkers } from '../settings/overseer-workers.js';
 import { SessionService } from '../sessions/service.js';
 import { createSessionsRouter } from './sessions.js';
 import { detectProvider } from '../setup/detect.js';
+import { setClaudeSignedInSource } from '../auth/claude-login-sources.js';
 
 // Detection hits the real filesystem/PATH otherwise — stub it for deterministic shapes,
 // same seam routes/setup.test.ts stubs (`../setup/detect.js`). Defaults to "installed and
@@ -43,6 +44,40 @@ describe('worker-defaults under a Codex coordinator (M3 fixed)', () => {
     expect(res.status).toBe(200);
     expect(res.body.harness).toBe('codex');
     expect(res.body.available).toBe(true);
+  });
+});
+
+// Spec 2026-11-23 (one source for the Claude login): the gate answers for the account a Claude
+// worker will run on (the default Claude account), not for whichever login happens to work.
+describe('the Claude gate of worker-defaults', () => {
+  afterEach(() => setClaudeSignedInSource(null));
+  const ask = async (app: express.Express) => (await request(app).get('/api/sessions/s1/overseer/worker-defaults?agentType=implementer&harness=claude-code')).body;
+
+  it('is closed when the default account is signed out, also when the CLI itself is signed in', async () => {
+    const { db, app } = setup();
+    sessionsDb.create(db, { id: 's1', provider: 'claude-code', name: 'p', workingDir: '/tmp/p' });
+    const asked: unknown[] = [];
+    setClaudeSignedInSource(async (id) => { asked.push(id); return false; });
+    const body = await ask(app);
+    expect(body.harness).toBe('claude-code');
+    expect(body.available).toBe(false);
+    expect(body.reason).toMatch(/not signed in/);
+    expect(asked).toEqual([undefined]); // no id: the default account
+  });
+
+  it('is open when the default is a signed-in token account and the CLI login is signed out', async () => {
+    const { db, app } = setup();
+    sessionsDb.create(db, { id: 's1', provider: 'claude-code', name: 'p', workingDir: '/tmp/p' });
+    (detectProvider as unknown as Mock).mockResolvedValue({ installed: true, signedIn: false });
+    setClaudeSignedInSource(async () => true);
+    expect((await ask(app)).available).toBe(true);
+  });
+
+  it('a check that could not answer never closes the gate', async () => {
+    const { db, app } = setup();
+    sessionsDb.create(db, { id: 's1', provider: 'claude-code', name: 'p', workingDir: '/tmp/p' });
+    setClaudeSignedInSource(async () => { throw new Error('probe failed'); });
+    expect((await ask(app)).available).toBe(true);
   });
 });
 

@@ -64,6 +64,16 @@ describe('ClaudeSummarizer keys', () => {
     s.close();
     expect(keys.resolve(key)).toBeNull();
   });
+  // Spec 2026-11-23: a compaction runs on the same login as a Chat turn, the default Claude account.
+  it('spawns on the login of the default Claude account', () => {
+    const m = new FakeManager();
+    const s = new ClaudeSummarizer({ manager: m.asManager(), chatDir: here, mcpConfigPath: '/nowhere.json', loginEnv: () => ({ CLAUDE_CODE_OAUTH_TOKEN: 'tok-team' }) })
+      .open({ systemPrompt: 'S', onFirstToken: () => {} });
+    expect(m.spawned[0].opts.env!.CLAUDE_CODE_OAUTH_TOKEN).toBe('tok-team');
+    expect(m.spawned[0].opts.env!.CLAUDE_CODE_DISABLE_BUNDLED_SKILLS).toBe('1');
+    s.close();
+  });
+
   it('revokes when the process exits', () => {
     const keys = new KeyRegistry();
     const m = new FakeManager();

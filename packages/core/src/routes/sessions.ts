@@ -12,6 +12,7 @@ import { PERSONA_TYPES, type PersonaType, readOverseerWorkers } from '../setting
 import { resolveWorker } from '../overseer/worker-matrix.js';
 import { harnessCapabilities } from '../providers/capabilities.js';
 import { detectProvider } from '../setup/detect.js';
+import { claudeSignedIn } from '../auth/claude-login-sources.js';
 import { clientMessage } from '../http/client-message.js';
 import os from 'node:os';
 import { PATH_REFUSALS, type PathPolicy } from '../files/path-policy.js';
@@ -173,7 +174,10 @@ export function createSessionsRouter(sessionService: SessionService, broadcaster
     // `opencode auth list` legitimately reports 0 credentials while workers run fine.
     // NewThreadModal exempts opencode from its login gate for the same reason — mirror
     // that here so this route doesn't false-block it.
-    const signedInOk = resolved.harness === 'opencode' || status.signedIn !== false;
+    // For Claude the question is the account a worker will run on (the default Claude account), not
+    // whichever login happens to work (spec 2026-11-23, "One source for the Claude login").
+    const signedIn = resolved.harness === 'claude-code' ? await claudeSignedIn().catch(() => 'unknown' as const) : status.signedIn;
+    const signedInOk = resolved.harness === 'opencode' || signedIn !== false;
     const available = status.installed && signedInOk;
     let reason: string | undefined;
     if (!status.installed) reason = `${resolved.harness} CLI is not installed on this server`;

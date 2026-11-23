@@ -218,13 +218,6 @@ export class ClaudeLoginService {
     } catch { return null; }
   }
 
-  /** Env injected into spawned CLIs. Empty when the box isn't authenticated yet. */
-  getSpawnEnv(): Record<string, string> {
-    if (this.clean) return {};
-    const token = this.getToken();
-    return token ? { CLAUDE_CODE_OAUTH_TOKEN: token } : {};
-  }
-
   isAuthenticated(): boolean {
     if (this.clean) {
       // Sync callers get the cached `claude auth status`; a stale cache is refreshed behind them.

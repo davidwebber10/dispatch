@@ -435,6 +435,16 @@ describe('ThreadAutoNamer', () => {
     expect(terminalsDb.getById(db, 't1')!.label).toBe('Original request'); next.dispose();
   });
 
+  // Spec 2026-11-23: the title generator needs the thread, so it can use the thread's Claude account.
+  it('the CLI title is asked with the id of the thread that is named', async () => {
+    makeThread();
+    const cliTitle = vi.fn().mockResolvedValue('From Haiku');
+    const namer = new ThreadAutoNamer(db, undefined, { cliTitle });
+    namer.notifyPrompt('t1', 'Fix login'); await vi.advanceTimersByTimeAsync(1);
+    expect(cliTitle).toHaveBeenCalledWith(expect.any(String), 't1');
+    namer.dispose();
+  });
+
   it('a CLI title wins and OpenRouter is never asked; a CLI miss falls through to OpenRouter', async () => {
     makeThread();
     const generateModelName = vi.fn().mockResolvedValue('From OpenRouter');

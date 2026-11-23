@@ -56,10 +56,17 @@ describe('output parsing', () => {
 });
 
 describe('ClaudeLoginService', () => {
-  test('unauthenticated by default; token drives spawn env', async () => {
+  test('unauthenticated by default', async () => {
     const svc = new ClaudeLoginService(dir, (() => fakePty().spawn()) as any);
     expect(svc.isAuthenticated()).toBe(false);
-    expect(svc.getSpawnEnv()).toEqual({});
+    expect(svc.getToken()).toBeNull();
+  });
+
+  // Spec 2026-11-23: a Claude process gets its login from the account overlay. The service hands
+  // no environment to a spawn any more, so a saved token cannot reach a process past the account.
+  test('the service gives no environment to a spawn', () => {
+    const svc = new ClaudeLoginService(dir, (() => fakePty().spawn()) as any);
+    expect((svc as unknown as Record<string, unknown>).getSpawnEnv).toBeUndefined();
   });
 
   test('start() resolves with the URL once the CLI prints it', async () => {
@@ -86,7 +93,6 @@ describe('ClaudeLoginService', () => {
     expect(s.status).toBe('complete');
     expect(f.written).toEqual(['my-code', '\r']);       // trimmed; Enter sent separately
     expect(svc.getToken()).toBe('sk-ant-oat01-TOKENVALUE_123');
-    expect(svc.getSpawnEnv()).toEqual({ CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-TOKENVALUE_123' });
     expect(fs.statSync(path.join(dir, 'claude-oauth-token')).mode & 0o777).toBe(0o600);
     expect(f.killed).toBe(true);                        // temp PTY cleaned up
   });
@@ -164,7 +170,7 @@ describe('ClaudeLoginService', () => {
     expect(svc.isAuthenticated()).toBe(true);
     svc.signOut();
     expect(svc.isAuthenticated()).toBe(false);
-    expect(svc.getSpawnEnv()).toEqual({});
+    expect(svc.getToken()).toBeNull();
   });
 });
 
