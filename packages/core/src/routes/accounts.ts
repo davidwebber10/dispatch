@@ -189,6 +189,8 @@ export function createAccountsRouter(accounts: AccountsStore, claudeLogin: Claud
     }
     try {
       if (!accounts.remove(provider, id)) return void res.status(404).json({ error: 'unknown account' });
+      // The saved login came from the old single-login file: forget the file too, or the next start brings the account back.
+      if (provider === 'claude' && id === 'saved') claudeLogin.forgetSavedToken();
       // Its threads lose the pin and run on the default from their next start (what the notice said).
       const unpinned = extras.threads?.unpin(provider, id) ?? 0;
       res.json({ unpinned });

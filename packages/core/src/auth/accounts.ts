@@ -72,8 +72,12 @@ export class AccountsStore {
   private usageAccessOf: ((accountId: string) => UsageAccess | null) | null = null;
   private checkListeners: ((accountId: string) => void)[] = [];
 
+  /** True when `accounts.json` was there at start: this install has run with accounts before. */
+  private readonly hadStore: boolean;
+
   constructor(private readonly dataDir: string) {
     this.file = path.join(dataDir, 'accounts.json');
+    this.hadStore = fs.existsSync(this.file);
     this.data = this.load();
   }
 
@@ -112,13 +116,22 @@ export class AccountsStore {
 
   /**
    * The single saved login of earlier versions (`<dataDir>/claude-oauth-token`) becomes the
-   * account `saved` and the Claude default, once. The file stays: older code paths read it.
+   * account `saved`, once. The file stays: older code paths read it.
+   *
+   * It becomes the Claude default only on the first start with accounts (no `accounts.json`
+   * yet): in the single-login era the saved token was the login of every thread, so that upgrade
+   * keeps what the install did. On an install that already has an account store, a token file
+   * that appears later (a sign-in in the app wrote it) must not move new threads and scheduled
+   * runs to another login: there the effective default was the CLI login, and it stays (issue 185).
+   * A setup-token login also has no claude.ai connectors, so the move took tools away.
    */
   migrateSavedClaudeToken(token: string | null): void {
     if (!token || this.data.claude.some((a) => a.token === token)) return;
     if (this.data.claude.some((a) => a.id === 'saved')) return;
     this.data.claude.push({ id: 'saved', label: 'Dispatch login', token, addedAt: new Date().toISOString() });
-    if (!this.data.defaults.claude) this.data.defaults.claude = 'saved';
+    const takesDefault = !this.hadStore && !this.data.defaults.claude;
+    if (takesDefault) this.data.defaults.claude = 'saved';
+    else console.log('[accounts] a saved Claude login became the account "Dispatch login"; the default account did not change');
     this.save();
   }
 

@@ -120,6 +120,20 @@ describe('ClaudeLoginService', () => {
     expect(s.error).toMatch(/exited before completing/);
   });
 
+  // Issue 185: the account made from the saved token was removed; the file must go with it.
+  test('forgetSavedToken() removes the saved token file and tells the listener', () => {
+    fs.writeFileSync(path.join(dir, 'claude-oauth-token'), 'sk-ant-oat01-OLD', { mode: 0o600 });
+    const svc = new ClaudeLoginService(dir, (() => fakePty().spawn()) as any);
+    let changed = 0;
+    svc.onChange(() => { changed += 1; });
+    expect(svc.getToken()).toBe('sk-ant-oat01-OLD');
+    svc.forgetSavedToken();
+    expect(svc.getToken()).toBeNull();
+    expect(fs.existsSync(path.join(dir, 'claude-oauth-token'))).toBe(false);
+    expect(changed).toBe(1);
+    svc.forgetSavedToken(); // no file: no error
+  });
+
   test('signOut() forgets the token', async () => {
     const f = fakePty();
     const svc = new ClaudeLoginService(dir, f.spawn as any);

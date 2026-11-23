@@ -20,6 +20,40 @@ describe('AccountsStore', () => {
     expect(a.spawnEnv('shell', {})).toEqual({});
   });
 
+  // Issue #185: on an install that already has an account store, a saved token that appears later
+  // (a sign-in in the app wrote the old single-login file) must not move new threads to it.
+  it('a saved Claude login that appears on an install with an account store becomes an account, never the default', () => {
+    new AccountsStore(dir).addClaude({ token: 'tok-team', label: 'Team' }); // the store exists; no default was ever chosen
+    const a = new AccountsStore(dir);
+    expect(a.defaultId('claude')).toBe('cli');
+    a.migrateSavedClaudeToken('tok-late');
+    expect(a.view().claude.map((x) => x.id)).toContain('saved');
+    expect(a.defaultId('claude')).toBe('cli');
+    expect(a.spawnEnv('claude-code', {})).toEqual({ CLAUDE_CODE_OAUTH_TOKEN: '' });
+    // The same after a restart: the entry is there, the default is still the CLI login.
+    const again = new AccountsStore(dir);
+    again.migrateSavedClaudeToken('tok-late');
+    expect(again.defaultId('claude')).toBe('cli');
+  });
+
+  it('a default the owner chose is never replaced by the saved login', () => {
+    const first = new AccountsStore(dir);
+    const team = first.addClaude({ token: 'tok-team', label: 'Team' });
+    first.setDefault('claude', team.id);
+    const a = new AccountsStore(dir);
+    a.migrateSavedClaudeToken('tok-late');
+    expect(a.defaultId('claude')).toBe(team.id);
+  });
+
+  it('an account store with no account in it still counts as an install with a store', () => {
+    const first = new AccountsStore(dir);
+    first.setDefault('claude', 'cli'); // writes accounts.json
+    const a = new AccountsStore(dir);
+    a.migrateSavedClaudeToken('tok-late');
+    expect(a.defaultId('claude')).toBe('cli');
+  });
+
+  // The upgrade from the single-login era: there the saved token was the login of every thread.
   it('migrates the single saved Claude login once, as the default; the token never appears in the view', () => {
     const a = new AccountsStore(dir);
     a.migrateSavedClaudeToken('tok-1');

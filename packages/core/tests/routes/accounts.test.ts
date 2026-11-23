@@ -22,8 +22,10 @@ describe('accounts routes', () => {
   let profileCalls: string[];
   let clock: number | null;
   let logins: { label: string; accountId?: string }[];
+  let forgot: number;
 
   beforeEach(() => {
+    forgot = 0;
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'accounts-routes-'));
     store = new AccountsStore(dir);
     pinned = {};
@@ -33,7 +35,7 @@ describe('accounts routes', () => {
     logins = [];
     app = express();
     app.use(express.json());
-    app.use('/api/accounts', createAccountsRouter(store, { startForAccount: async (label: string, accountId?: string) => { logins.push({ label, ...(accountId ? { accountId } : {}) }); return { status: 'awaiting_code', url: 'https://claude.ai/x', error: null }; } } as any, {
+    app.use('/api/accounts', createAccountsRouter(store, { forgetSavedToken: () => { forgot += 1; }, startForAccount: async (label: string, accountId?: string) => { logins.push({ label, ...(accountId ? { accountId } : {}) }); return { status: 'awaiting_code', url: 'https://claude.ai/x', error: null }; } } as any, {
       now: () => clock ?? Date.now(),
       claudeProfile: async (id) => { profileCalls.push(id); return id === 'cli' ? { email: 'cli@x.y', plan: 'Max' } : null; },
       threads: {
@@ -70,6 +72,19 @@ describe('accounts routes', () => {
     expect(del.body).toEqual({ unpinned: 2 });
     expect(unpinned).toEqual([`claude:${w.id}`]);
     expect(store.has('claude', w.id)).toBe(false);
+  });
+
+  // Issue #185: the saved login is an account made from the old single-login file. Removing the
+  // account must forget that file too, or the next start makes the account again.
+  it('removing the saved login forgets its token file; removing another account does not', async () => {
+    const w = store.addClaude({ token: 'tok-w', label: 'Work' });
+    await request(app).delete(`/api/accounts/claude/${w.id}`).expect(200);
+    expect(forgot).toBe(0);
+    store.migrateSavedClaudeToken('tok-saved');
+    expect(store.has('claude', 'saved')).toBe(true);
+    await request(app).delete('/api/accounts/claude/saved').expect(200);
+    expect(store.has('claude', 'saved')).toBe(false);
+    expect(forgot).toBe(1);
   });
 
   // W1-H (2026-11-09): a `claude setup-token` token is refused by the profile endpoint (403), every time.
