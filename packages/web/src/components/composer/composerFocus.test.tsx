@@ -89,6 +89,28 @@ describe('PillComposer after a dictation', () => {
     expect(document.activeElement).not.toBe(screen.getByRole('textbox'));
   });
 
+  it('a field the user moved to keeps the focus (the command palette opened while the text was on its way)', async () => {
+    phone(false);
+    const other = document.createElement('input');
+    document.body.appendChild(other);
+    const { rerender } = render(<PillComposer {...base} dictation={rec('transcribing')} />);
+    other.focus();
+    rerender(<PillComposer {...base} value="spoken" dictation={rec('idle')} />);
+    await frames();
+    expect(document.activeElement).toBe(other);
+    other.remove();
+  });
+
+  it('the way back from a failure (a transcript inserted from Recordings, a working Retry) gives the focus back', async () => {
+    phone(false);
+    const { rerender } = render(<PillComposer {...base} dictation={rec('error')} />);
+    rerender(<PillComposer {...base} value="from a saved recording" dictation={rec('idle')} />);
+    await frames();
+    const box = screen.getByRole('textbox') as HTMLTextAreaElement;
+    expect(document.activeElement).toBe(box);
+    expect(box.selectionStart).toBe(box.value.length);
+  });
+
   it('a first render does not take the focus', async () => {
     phone(false);
     render(<PillComposer {...base} value="draft" dictation={rec('idle')} />);
