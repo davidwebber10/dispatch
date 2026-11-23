@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -110,5 +110,37 @@ describe('MarketplaceService', () => {
     svc.remove(row.slug);
     await expect(pull).resolves.toBeTruthy();
     expect(svc.list()).toEqual([]);
+  });
+
+  // git writes into the clone while it pulls (FETCH_HEAD, lock files). A recursive delete of the
+  // folder at that moment can fail with ENOTEMPTY: an entry appears between the listing and the
+  // rmdir. So remove() leaves the folder of a pull in flight to that pull, which deletes it once
+  // git has ended. The spy stands for git writing: while the pull runs, a delete of the clone fails.
+  it('a marketplace removed while its pull runs leaves the folder to the pull, which then deletes it', async () => {
+    const row = await svc.add(m.url);
+    const clone = path.join(tmp, 'marketplaces', row.slug);
+    let pulling = true;
+    const real = fs.rmSync.bind(fs);
+    const spy = vi.spyOn(fs, 'rmSync').mockImplementation((target, options) => {
+      if (pulling && String(target) === clone) throw Object.assign(new Error(`ENOTEMPTY: directory not empty, rmdir '${clone}/.git'`), { code: 'ENOTEMPTY' });
+      return real(target, options);
+    });
+    try {
+      const pull = svc.pull(row.slug);
+      expect(() => svc.remove(row.slug)).not.toThrow();
+      expect(svc.list()).toEqual([]);
+      expect(fs.existsSync(clone)).toBe(true); // left to the pull
+      pulling = false; // git has ended by the time the pull looks at the list again: its delete works
+      await expect(pull).resolves.toMatchObject({ error: 'removed' });
+      expect(fs.existsSync(clone)).toBe(false);
+    } finally { spy.mockRestore(); }
+  });
+
+  it('a marketplace removed with no pull in flight deletes its folder at once', async () => {
+    const row = await svc.add(m.url);
+    const clone = path.join(tmp, 'marketplaces', row.slug);
+    expect(fs.existsSync(clone)).toBe(true);
+    svc.remove(row.slug);
+    expect(fs.existsSync(clone)).toBe(false);
   });
 });
