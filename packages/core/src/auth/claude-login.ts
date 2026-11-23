@@ -36,6 +36,9 @@ import { prepareAccountConfigDir } from './claude-config-dirs.js';
 
 export type LoginStatus = 'starting' | 'awaiting_code' | 'exchanging' | 'complete' | 'error';
 
+/** The account a finished sign-in landed in. */
+export interface LoginAccount { id: string; label: string; isDefault: boolean }
+
 export interface LoginSession {
   id: string;
   status: LoginStatus;
@@ -43,6 +46,16 @@ export interface LoginSession {
   url: string | null;
   error: string | null;
   createdAt: string;
+  /**
+   * The account that got the token, once the login is complete (spec 2026-11-23): every sign-in
+   * lands in an account. `isDefault: false` lets the page ask before the default changes.
+   */
+  account?: { id: string; label: string; isDefault: boolean };
+  /**
+   * For a sign-in with no account of its own (the generic card): where the token will land, known
+   * from the start. `new`: a new token account, so the page explains what such a login lacks.
+   */
+  landsIn?: { kind: 'new' | 'existing'; label: string };
 }
 
 /** Claude's OAuth tokens are `sk-ant-oat01-…`; captured from setup-token's output. */
@@ -207,7 +220,14 @@ export class ClaudeLoginService {
     void this.clean.login.authStatus(null, { fresh: true }).then(() => this.onChangeCb?.());
   }
   /** A login started with `startForAccount` hands its token here instead of the single saved file (multi-account). The login is complete when this settles. */
-  onAccountToken: ((token: string, label: string, accountId?: string) => void | Promise<void>) | null = null;
+  onAccountToken: ((token: string, label: string, accountId?: string) => LoginAccount | void | Promise<LoginAccount | void>) | null = null;
+  /**
+   * Where a sign-in with no account of its own goes (the generic card): the label of a new
+   * account, or with `accountId` the account whose token is replaced. The daemon wires it
+   * (daemon/build.ts): the default account when that is a token account, else a new account.
+   * Not wired (a unit test of this class alone): the old single file, as before.
+   */
+  genericTarget: (() => { label: string; accountId?: string } | null) | null = null;
 
   // --- token storage ------------------------------------------------------
   getToken(): string | null {
@@ -276,7 +296,8 @@ export class ClaudeLoginService {
    */
   async start(): Promise<LoginSession> {
     if (this.clean) return this.clean.login.start({ email: this.clean.ownerEmail, tag: PRIMARY_TAG });
-    return this.startLogin(null, null);
+    const target = this.genericTarget?.() ?? null;
+    return this.startLogin(target ? target.label : null, target?.accountId ?? null, target ? { kind: target.accountId ? 'existing' : 'new', label: target.label } : undefined);
   }
 
   /**
@@ -306,7 +327,7 @@ export class ClaudeLoginService {
   }
 
   /** A waiting attempt is reused only for the same destination; a token must not change owner. */
-  private async startLogin(accountLabel: string | null, accountId: string | null): Promise<LoginSession> {
+  private async startLogin(accountLabel: string | null, accountId: string | null, landsIn?: LoginSession['landsIn']): Promise<LoginSession> {
     // An attempt that is storing its token finishes first, so an old save cannot land after a new one.
     if (this.live?.saving) await this.live.saving;
     const pending = this.live;
@@ -317,6 +338,7 @@ export class ClaudeLoginService {
     const session: LoginSession = {
       id: uuid(), status: 'starting', url: null, error: null,
       createdAt: new Date().toISOString(),
+      ...(landsIn ? { landsIn } : {}),
     };
     const proc = this.spawnPty('claude', ['setup-token'], {
       // Wide enough that a ~100-character token never wraps (a 120-column terminal
@@ -517,8 +539,10 @@ export class ClaudeLoginService {
     clearInterval(live.watch);
     live.session.status = 'exchanging';
     try {
-      if (live.accountLabel && this.onAccountToken) await this.onAccountToken(token, live.accountLabel, live.accountId ?? undefined);
-      else this.saveToken(token);
+      if (live.accountLabel && this.onAccountToken) {
+        const account = await this.onAccountToken(token, live.accountLabel, live.accountId ?? undefined);
+        if (account) live.session.account = account;
+      } else this.saveToken(token);
     } catch {
       this.fail(live, 'Dispatch could not save this login. Try again.');
       return;

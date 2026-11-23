@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { AccountsStore, CLI_ACCOUNT_ID, parseCodexAuth } from './accounts.js';
+import { AccountsStore, CLI_ACCOUNT_ID, parseCodexAuth, genericClaudeSignInTarget } from './accounts.js';
 
 let dir: string;
 beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'accounts-')); });
@@ -18,6 +18,26 @@ describe('AccountsStore', () => {
     expect(a.spawnEnv('claude-code', {})).toEqual({ CLAUDE_CODE_OAUTH_TOKEN: '' });
     expect(a.spawnEnv('codex', {})).toEqual({});
     expect(a.spawnEnv('shell', {})).toEqual({});
+  });
+
+  // Spec 2026-11-23, section 4: the page must tell a saved sign-in (no claude.ai connectors) from the others.
+  it('the view says what kind of login each Claude account is', () => {
+    const a = new AccountsStore(dir);
+    a.addClaude({ token: 'tok-team', label: 'Team' });
+    a.upsertClaudeConfigDir({ id: 'box', label: 'Box', configDir: path.join(dir, 'cfg') });
+    expect(a.view().claude.map((x) => [x.label, x.kind])).toEqual([['CLI login (this computer)', 'cli'], ['Team', 'saved'], ['Box', 'folder']]);
+    expect(a.view().codex.map((x) => x.kind)).toEqual(['cli']);
+  });
+
+  // Spec 2026-11-23, section 3: where a sign-in with no account of its own lands.
+  it('a generic sign-in replaces the token of a token default, and makes a dated new account when the default is the CLI login', () => {
+    const a = new AccountsStore(dir);
+    const when = new Date(2026, 10, 23, 15, 0);
+    expect(genericClaudeSignInTarget(a, when)).toEqual({ label: 'Dispatch login, Nov 23' });
+    const team = a.addClaude({ token: 'tok-team', label: 'Team' });
+    expect(genericClaudeSignInTarget(a, when)).toEqual({ label: 'Dispatch login, Nov 23' }); // an added account that is not the default changes nothing
+    a.setDefault('claude', team.id);
+    expect(genericClaudeSignInTarget(a, when)).toEqual({ label: 'Team', accountId: team.id });
   });
 
   // Issue #185: on an install that already has an account store, a saved token that appears later

@@ -30,7 +30,14 @@ export interface CodexAccount { id: string; label: string; email?: string; dir: 
  * The wire shape: never the token. `usageAccess` (W1-H, Claude only): what the sign-in can do for the
  * usage figures, from the gauge's last read; absent until a read has said.
  */
-export interface PublicAccount { id: string; label: string; email?: string; plan?: string; isCli: boolean; addedAt: string | null; usageAccess?: UsageAccess }
+/**
+ * What kind of login an account is: the machine's own (`cli`), a sign-in that Dispatch saved
+ * (`saved`: a `setup-token` login, which has no claude.ai connectors), or a login folder of its
+ * own (`folder`: a hosted Claude account, a Codex account). The word for the secret is not used
+ * here on purpose: a test proves the public view never holds it.
+ */
+export type AccountKind = 'cli' | 'saved' | 'folder';
+export interface PublicAccount { id: string; label: string; email?: string; plan?: string; isCli: boolean; kind: AccountKind; addedAt: string | null; usageAccess?: UsageAccess }
 export interface AccountsView { claude: PublicAccount[]; codex: PublicAccount[]; defaults: Record<AccountProvider, string> }
 
 interface FileShape { claude: ClaudeAccount[]; codex: CodexAccount[]; defaults: Partial<Record<AccountProvider, string>>; cliLabels?: Partial<Record<AccountProvider, string>> }
@@ -136,9 +143,10 @@ export class AccountsStore {
   }
 
   view(): AccountsView {
-    const pub = (a: { id: string; label: string; email?: string; plan?: string; addedAt: string }): PublicAccount =>
-      ({ id: a.id, label: a.label, ...(a.email ? { email: a.email } : {}), ...(a.plan ? { plan: a.plan } : {}), isCli: false, addedAt: a.addedAt });
-    const cli = (p: AccountProvider): PublicAccount => ({ id: CLI_ACCOUNT_ID, label: this.data.cliLabels?.[p] || CLI_LABEL[p], isCli: true, addedAt: null });
+    // `kind` (spec 2026-11-23): a saved sign-in has no claude.ai connectors, and the page says so.
+    const pub = (a: { id: string; label: string; email?: string; plan?: string; addedAt: string; configDir?: string; dir?: string }): PublicAccount =>
+      ({ id: a.id, label: a.label, ...(a.email ? { email: a.email } : {}), ...(a.plan ? { plan: a.plan } : {}), isCli: false, kind: a.configDir || a.dir ? 'folder' : 'saved', addedAt: a.addedAt });
+    const cli = (p: AccountProvider): PublicAccount => ({ id: CLI_ACCOUNT_ID, label: this.data.cliLabels?.[p] || CLI_LABEL[p], isCli: true, kind: 'cli', addedAt: null });
     const withAccess = (a: PublicAccount): PublicAccount => { const u = this.claudeUsageAccess(a.id); return u ? { ...a, usageAccess: { state: u.state, lastOkAt: u.lastOkAt } } : a; };
     return {
       claude: [cli('claude'), ...this.data.claude.map(pub)].map(withAccess),
@@ -336,6 +344,21 @@ export class AccountsStore {
  * scope), so such an account holds no Claude account id to match by. An id that is gone, or `cli`,
  * falls back to the match above.
  */
+/**
+ * Where a Claude sign-in with no account of its own lands (spec 2026-11-23, section 3). The generic
+ * card (Chat, the signed-out banner) cannot name an account, so: when the default is a token
+ * account, that account gets the new token; when the default is the CLI login, which a
+ * `setup-token` sign-in cannot repair, the token becomes a new account with a dated label. That
+ * new account is not the default: the page asks the owner first.
+ */
+export function genericClaudeSignInTarget(accounts: AccountsStore, now: Date = new Date()): { label: string; accountId?: string } {
+  const def = accounts.defaultId('claude');
+  if (def !== CLI_ACCOUNT_ID && accounts.claudeToken(def)) {
+    return { label: accounts.list('claude').find((a) => a.id === def)?.label ?? 'Claude account', accountId: def };
+  }
+  return { label: `Dispatch login, ${now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` };
+}
+
 export async function adoptClaudeLoginToken(
   accounts: AccountsStore,
   token: string,

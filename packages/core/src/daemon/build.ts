@@ -32,7 +32,7 @@ import { RolesService } from '../roles/service.js';
 import { AuthRequestService } from '../auth/service.js';
 import { ClaudeLoginService } from '../auth/claude-login.js';
 import { CodexLoginService } from '../auth/codex-login.js';
-import { AccountsStore, adoptClaudeLoginToken, type AccountProvider } from '../auth/accounts.js';
+import { AccountsStore, adoptClaudeLoginToken, genericClaudeSignInTarget, type AccountProvider } from '../auth/accounts.js';
 import { claudeLoginSources, setClaudeSignedInSource } from '../auth/claude-login-sources.js';
 import type { KeyRegistry } from '../auth/principals.js';
 import type { AccessGate, GateDeps } from '../auth/access-gate.js';
@@ -601,8 +601,13 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   claudeLogin.onAccountToken = async (token, label, accountId) => {
     // Profile first, so signing an existing account in again updates it (adoptClaudeLoginToken).
     // With an account id ("Sign in again", W1-H) that account's token is replaced in place.
-    await adoptClaudeLoginToken(accounts, token, label, fetchClaudeProfile, accountId);
+    const account = await adoptClaudeLoginToken(accounts, token, label, fetchClaudeProfile, accountId);
+    // The page shows the account and, when it is not the default, asks before the default changes.
+    return { id: account.id, label: account.label, isDefault: accounts.defaultId('claude') === account.id };
   };
+  // A sign-in from the generic card lands in an account too (spec 2026-11-23): the old single
+  // file is not written any more, so no login exists that the Accounts page does not show.
+  claudeLogin.genericTarget = () => genericClaudeSignInTarget(accounts);
 
   // ── Secrets, integrations, tools and the spawn env ──────────────────────────
   // Doppler secrets: token-backed connection + per-spawn injection (DOPPLER_* env +

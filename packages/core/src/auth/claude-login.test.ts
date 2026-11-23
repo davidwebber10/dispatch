@@ -126,6 +126,63 @@ describe('ClaudeLoginService', () => {
     expect(s.error).toMatch(/exited before completing/);
   });
 
+  // Spec 2026-11-23, section 3: a sign-in from the generic card lands in an account, never in the old file.
+  describe('the generic sign-in lands in an account', () => {
+    async function signIn(svc: ClaudeLoginService, f: ReturnType<typeof fakePty>) {
+      const p = svc.start();
+      setTimeout(() => f.emit('https://claude.com/cai/oauth/x\r\n'), 20);
+      await p;
+      const done = svc.submitCode('c');
+      setTimeout(() => f.emit('sk-ant-oat01-NEW\r\n'), 20);
+      return done;
+    }
+
+    test('with a target, the token goes to the account sink and no file is written; the session names the account', async () => {
+      const f = fakePty();
+      const svc = new ClaudeLoginService(dir, f.spawn as any);
+      const got: unknown[] = [];
+      svc.genericTarget = () => ({ label: 'Dispatch login, 23 Nov' });
+      svc.onAccountToken = async (token, label, accountId) => { got.push({ token, label, accountId }); return { id: 'a1', label, isDefault: false }; };
+      const s = await signIn(svc, f);
+      expect(s.status).toBe('complete');
+      expect(got).toEqual([{ token: 'sk-ant-oat01-NEW', label: 'Dispatch login, 23 Nov', accountId: undefined }]);
+      expect(fs.existsSync(path.join(dir, 'claude-oauth-token'))).toBe(false);
+      expect(s.account).toEqual({ id: 'a1', label: 'Dispatch login, 23 Nov', isDefault: false });
+      expect(svc.status()!.account).toEqual({ id: 'a1', label: 'Dispatch login, 23 Nov', isDefault: false });
+      expect(JSON.stringify(svc.status())).not.toContain('sk-ant');
+    });
+
+    test('the page learns before the code is pasted whether a new account will be made or one is signed in again', async () => {
+      const f = fakePty();
+      const svc = new ClaudeLoginService(dir, f.spawn as any);
+      svc.onAccountToken = async (_t, label) => ({ id: 'a1', label, isDefault: false });
+      svc.genericTarget = () => ({ label: 'Dispatch login, Nov 23' });
+      const p = svc.start();
+      setTimeout(() => f.emit('https://claude.com/cai/oauth/x\r\n'), 20);
+      expect((await p).landsIn).toEqual({ kind: 'new', label: 'Dispatch login, Nov 23' });
+      svc.cancel();
+      svc.genericTarget = () => ({ label: 'Team', accountId: 'team1' });
+      const f2 = fakePty();
+      const svc2 = new ClaudeLoginService(dir, f2.spawn as any);
+      svc2.genericTarget = svc.genericTarget;
+      const p2 = svc2.start();
+      setTimeout(() => f2.emit('https://claude.com/cai/oauth/y\r\n'), 20);
+      expect((await p2).landsIn).toEqual({ kind: 'existing', label: 'Team' });
+      svc2.cancel();
+    });
+
+    test('a target with an account id replaces the token of that account', async () => {
+      const f = fakePty();
+      const svc = new ClaudeLoginService(dir, f.spawn as any);
+      const got: unknown[] = [];
+      svc.genericTarget = () => ({ label: 'Team', accountId: 'team1' });
+      svc.onAccountToken = async (_t, label, accountId) => { got.push(accountId); return { id: accountId!, label, isDefault: true }; };
+      const s = await signIn(svc, f);
+      expect(got).toEqual(['team1']);
+      expect(s.account).toEqual({ id: 'team1', label: 'Team', isDefault: true });
+    });
+  });
+
   // Issue 185: the account made from the saved token was removed; the file must go with it.
   test('forgetSavedToken() removes the saved token file and tells the listener', () => {
     fs.writeFileSync(path.join(dir, 'claude-oauth-token'), 'sk-ant-oat01-OLD', { mode: 0o600 });
@@ -168,7 +225,7 @@ describe('ClaudeLoginService', () => {
     setTimeout(() => f.emit('sk-ant-oat01-AAA\r\n'), 20);
     await done;
     expect(svc.isAuthenticated()).toBe(true);
-    svc.signOut();
+    void svc.signOut();
     expect(svc.isAuthenticated()).toBe(false);
     expect(svc.getToken()).toBeNull();
   });
