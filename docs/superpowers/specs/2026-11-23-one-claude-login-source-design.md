@@ -1,7 +1,7 @@
 # One source for the Claude login
 
 Date: 2026-11-23. Status: approved by the owner on 2026-11-23, with the four decisions of
-section 9 as recommended. Follows issues 185 and 188 and pull request 186 (released in 4.12.2). Earlier design: `2026-11-06-multi-account-design.md`.
+section 9 as recommended; built (section 11). Follows issues 185 and 188 and pull request 186 (released in 4.12.2). Earlier design: `2026-11-06-multi-account-design.md`.
 
 ## Intent
 
@@ -188,3 +188,46 @@ code lists it and can use it.
   the isolated daemon (the daemon takes its path from the login shell).
 - Whether `ClaudeLoginService` keeps `isAuthenticated()` for the hosted surface under another
   name.
+
+## 11. Build record (2026-11-23)
+
+Units 1 to 6 are built on one branch. Where this section and a section above differ, this one
+is right.
+
+- **The source** is `auth/claude-login-sources.ts`: `overlay(account)`, `processEnv(account)`
+  and `accountOf(config)` for the login, and `claudeSignedIn(account)` for the gates. The daemon
+  wires the signed-in check once (`setClaudeSignedInSource`).
+- **The guard** is `tests/auth/login-sources.test.ts`: the table, and a scan of the source that
+  fails when a file starts `claude` and is not on its list.
+- **The account kind** in the public list is `cli`, `saved` (a sign-in that Dispatch keeps) or
+  `folder` (a login folder of its own). The word for the secret is not used: an older test
+  proves that the list never holds it, and that test stays strict.
+- **The card says the two ways once the link is on screen,** not before the sign-in starts: the
+  daemon decides where a sign-in lands when it starts, and tells the page (`landsIn`).
+- **The old file.** The daemon never writes it: a generic sign-in always has a target. The write
+  path stays in `ClaudeLoginService` for the case where no account sink is wired, which is only
+  a unit test of that class. `isAuthenticated()` stays for the hosted surface.
+- **`GET /api/claude-auth`** answers "is the default Claude account signed in" on a local
+  install.
+- **Not built:** the date in the label of the migrated account `saved` (a new Dispatch login
+  has it); the stand-in `claude` of the end-to-end check as a script in the repository.
+
+The end-to-end check, by hand on an isolated daemon, with a stand-in `claude` that records a
+label for the login it was given. The install had a saved sign-in "Team", an old token file,
+and the CLI login as the default:
+
+| Process | Login it got |
+| --- | --- |
+| Thread with no account | the CLI login |
+| Thread on "Team" | Team |
+| Thread on the migrated old file ("Dispatch login") | that login |
+| Usage probe, one per account | each its own; the CLI login's probe got the CLI login |
+| Chat turn, default = the CLI login | the CLI login |
+| Chat turn, after the default changed to "Team" | Team |
+| New thread with no account, after that change | Team |
+
+No token text reached the daemon log.
+
+Two tests failed in one full run of the core suite and passed alone: `tests/routes/watches.test.ts`
+and `src/routes/git.test.ts`. Both are the known port collision of the route tests, not this
+change.
