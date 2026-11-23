@@ -213,7 +213,11 @@ export function NewThreadModal({ sessionId: initialSession, prompts, onClose, on
   // which is exactly what a CLI-mode thread is for. OpenCode is exempt: its "sign-in" is
   // an OpenRouter API key resolved from Doppler at spawn (needsKey below), not a login
   // command — its own auth-store state is irrelevant when the daemon injects the key.
-  const needsLogin = currentStatus?.installed === true && currentStatus.signedIn === false && harness !== 'opencode';
+  // The machine's own Claude login gates a thread only when the thread will run on it. A thread on a
+  // saved sign-in (picked here, or the default) starts whatever the machine login says (one source
+  // for the Claude login, spec 2026-11-23): an install can have a working account and no machine login.
+  const onOtherClaudeAccount = harness === 'claude' && effectiveAccountId !== null && effectiveAccountId !== 'cli';
+  const needsLogin = currentStatus?.installed === true && currentStatus.signedIn === false && harness !== 'opencode' && !onOtherClaudeAccount;
   // OpenCode's gate: installed, but the configured Doppler secret doesn't resolve. Until
   // settings load, assume the key is fine — a slow probe never blocks the modal.
   const needsKey = harness === 'opencode' && selectedAvailable && harnessSettings !== null && !harnessSettings.opencodeKey.present;

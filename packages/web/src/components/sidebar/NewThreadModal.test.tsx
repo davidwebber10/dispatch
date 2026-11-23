@@ -593,6 +593,28 @@ describe('NewThreadModal accounts', () => {
     fireEvent.click(screen.getByRole('option', { name: label }));
   };
 
+  // Review of #189: the machine's own Claude login gates a thread only when the thread will run on
+  // it. An install whose default is a saved sign-in has a working account and no machine login.
+  it('a thread on a saved sign-in is not gated by a signed-out machine login; a thread on the CLI login is', async () => {
+    const withSaved = (def: string) => ({ ...cliOnly, claude: [...cliOnly.claude, { id: 'acc-2', label: 'Work', isCli: false, kind: 'saved', addedAt: '2026-11-06' }], defaults: { claude: def, codex: 'cli' } });
+    const signedOut = [{ name: 'claude', installed: true, signedIn: false }, { name: 'codex', installed: true, signedIn: true }];
+    const allSignedIn = [{ name: 'claude', installed: true, signedIn: true }, { name: 'codex', installed: true, signedIn: true }, { name: 'grok', installed: true, signedIn: true }, { name: 'opencode', installed: true, signedIn: true }];
+    (api.recheckProviders as any).mockResolvedValue(signedOut);
+    try {
+    (api.getAccounts as any).mockResolvedValueOnce(withSaved('acc-2'));
+    const first = render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+    expect(await screen.findByRole('combobox', { name: 'Account' })).toHaveTextContent('Work');
+    expect(screen.queryByText(/isn't signed in/)).toBeNull();
+    expect(screen.getByRole('button', { name: /start new thread/i })).toBeInTheDocument();
+    first.unmount();
+    // The default is the CLI login and the machine login is signed out: the gate is right.
+    (api.getAccounts as any).mockResolvedValueOnce(withSaved('cli'));
+    render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+    expect(await screen.findByText(/isn't signed in/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /start new thread/i })).toBeNull();
+    } finally { (api.recheckProviders as any).mockResolvedValue(allSignedIn); }
+  });
+
   it('shows the Account row with only the CLI login, and offers Add account…', async () => {
     (api.getAccounts as any).mockResolvedValueOnce(cliOnly);
     render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);

@@ -32,6 +32,24 @@ describe('setup routes', () => {
     expect(res.body.secrets).toEqual({ connected: false });
   });
 
+  // Review of #189: for the app, "Claude is signed in" is the account a new thread runs on (the
+  // default Claude account). The machine's own login answers only when that account is the CLI login.
+  it('the Claude provider is signed in when the default account is, also when the machine login is not', async () => {
+    const { setClaudeSignedInSource } = await import('../../src/auth/claude-login-sources.js');
+    try {
+      setClaudeSignedInSource(async () => false);
+      expect((await request(app).get('/api/setup/providers')).body.find((p: any) => p.name === 'claude').signedIn).toBe(false);
+      expect((await request(app).get('/api/setup/state')).body.providers.find((p: any) => p.name === 'claude').signedIn).toBe(false);
+      setClaudeSignedInSource(async () => true);
+      expect((await request(app).get('/api/setup/providers')).body.find((p: any) => p.name === 'claude').signedIn).toBe(true);
+      // A check that could not answer keeps what the machine check said.
+      setClaudeSignedInSource(async () => 'unknown');
+      expect((await request(app).get('/api/setup/providers')).body.find((p: any) => p.name === 'claude').signedIn).toBe(true);
+      // Codex is not touched.
+      expect((await request(app).get('/api/setup/providers')).body.find((p: any) => p.name === 'codex')).toEqual({ name: 'codex', installed: false, signedIn: false });
+    } finally { setClaudeSignedInSource(null); }
+  });
+
   it('POST /complete flips firstRun to false', async () => {
     await request(app).post('/api/setup/complete').expect(200);
     const res = await request(app).get('/api/setup/state');

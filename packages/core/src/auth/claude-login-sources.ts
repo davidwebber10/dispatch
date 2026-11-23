@@ -24,6 +24,7 @@ export interface ClaudeLoginSources {
 }
 
 type Accounts = Pick<AccountsStore, 'spawnEnv' | 'defaultId' | 'has'>;
+type SignInAccounts = Pick<AccountsStore, 'defaultId' | 'has' | 'claudeConfigDir' | 'claudeToken'>;
 
 export function claudeLoginSources(accounts: Accounts, base: () => Record<string, string>): ClaudeLoginSources {
   const overlay = (accountId?: string | null): Record<string, string> => accounts.spawnEnv('claude-code', accountId ? { accountId } : {});
@@ -53,4 +54,44 @@ export function setClaudeSignedInSource(fn: ((accountId?: string | null) => Prom
 export async function claudeSignedIn(accountId?: string | null): Promise<SignedIn> {
   if (signedInSource) return signedInSource(accountId);
   return (await detectProvider('claude')).signedIn;
+}
+
+/**
+ * The checker the daemon wires. Each kind of account has its own answer:
+ * - a saved sign-in: one is stored (an expired one shows in the thread, as before);
+ * - a login folder (hosted), and the primary login of a clean-login box: Claude Code's own status;
+ * - the CLI login of a local install: the machine check (`setup/detect.ts`).
+ * A status that could not be read is 'unknown', never false: a gate closes only on a definite
+ * "signed out" (review of #189).
+ */
+export function makeClaudeSignedIn(d: {
+  accounts: SignInAccounts;
+  usesCleanLogin: () => boolean;
+  cliStatus: (o?: { configDir?: string | null }) => Promise<{ loggedIn?: boolean } | null>;
+  machine: () => Promise<SignedIn>;
+}): (accountId?: string | null) => Promise<SignedIn> {
+  const status = async (o?: { configDir?: string | null }): Promise<SignedIn> => {
+    const st = await d.cliStatus(o).catch(() => null);
+    return st ? st.loggedIn === true : 'unknown';
+  };
+  return async (accountId) => {
+    const id = accountId && d.accounts.has('claude', accountId) ? accountId : d.accounts.defaultId('claude');
+    if (id !== 'cli') {
+      const dir = d.accounts.claudeConfigDir(id);
+      return dir ? status({ configDir: dir }) : d.accounts.claudeToken(id) !== null;
+    }
+    if (d.usesCleanLogin()) return status();
+    return d.machine().catch(() => 'unknown' as const);
+  };
+}
+
+/**
+ * "This box is signed in to Claude", for the hosted heartbeat. The clean login keeps its own
+ * answer. In token mode the sign-in is an account now (the old single file is not written), so
+ * the answer is: the default Claude account has a stored sign-in.
+ */
+export function boxClaudeAuthenticated(d: { accounts: Pick<AccountsStore, 'defaultId' | 'claudeToken'>; usesCleanLogin: boolean; cleanAuthenticated: () => boolean }): boolean {
+  if (d.usesCleanLogin) return d.cleanAuthenticated();
+  const def = d.accounts.defaultId('claude');
+  return def !== 'cli' && d.accounts.claudeToken(def) !== null;
 }

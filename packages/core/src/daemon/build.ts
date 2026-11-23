@@ -33,7 +33,7 @@ import { AuthRequestService } from '../auth/service.js';
 import { ClaudeLoginService } from '../auth/claude-login.js';
 import { CodexLoginService } from '../auth/codex-login.js';
 import { AccountsStore, adoptClaudeLoginToken, genericClaudeSignInTarget, type AccountProvider } from '../auth/accounts.js';
-import { claudeLoginSources, setClaudeSignedInSource } from '../auth/claude-login-sources.js';
+import { boxClaudeAuthenticated, claudeLoginSources, makeClaudeSignedIn, setClaudeSignedInSource } from '../auth/claude-login-sources.js';
 import type { KeyRegistry } from '../auth/principals.js';
 import type { AccessGate, GateDeps } from '../auth/access-gate.js';
 import type { PairCodes } from '../auth/pair-code.js';
@@ -587,16 +587,11 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   // A token account: a token is stored. A hosted account: Claude Code's own status in its folder.
   // The CLI login: the CLI's own answer, and never the old saved token (it is no longer a login
   // of its own: the migration above made it an account).
-  const claudeAccountSignedIn = async (accountId?: string | null): Promise<boolean | 'unknown'> => {
-    const id = accountId && accounts.has('claude', accountId) ? accountId : accounts.defaultId('claude');
-    if (id !== 'cli') {
-      const dir = accounts.claudeConfigDir(id);
-      if (dir) return (await claudeLogin.cliStatus({ configDir: dir }).catch(() => null))?.loggedIn === true;
-      return accounts.claudeToken(id) !== null;
-    }
-    if (claudeLogin.usesCleanLogin) return (await claudeLogin.cliStatus().catch(() => null))?.loggedIn === true;
-    return (await detectProvider('claude').catch(() => null))?.signedIn ?? 'unknown';
-  };
+  const claudeAccountSignedIn = makeClaudeSignedIn({
+    accounts, usesCleanLogin: () => claudeLogin.usesCleanLogin,
+    cliStatus: (o) => claudeLogin.cliStatus(o ?? {}),
+    machine: async () => (await detectProvider('claude')).signedIn,
+  });
   setClaudeSignedInSource(claudeAccountSignedIn);
   claudeLogin.onAccountToken = async (token, label, accountId) => {
     // Profile first, so signing an existing account in again updates it (adoptClaudeLoginToken).
@@ -736,7 +731,8 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   app.locals.pendingQuestions = { get: (id: string) => pendingQuestionsDb.get(db, id) };
   // Per-box state projection for the OS control plane (design §4.4.5); started by the timers.
   const boxHeartbeat = new HeartbeatService(db, () => ({
-    authenticated: claudeLogin.isAuthenticated(),
+    // Token mode: the sign-in is an account now, so the old single file no longer says it (review of #189).
+    authenticated: boxClaudeAuthenticated({ accounts, usesCleanLogin: claudeLogin.usesCleanLogin, cleanAuthenticated: () => claudeLogin.isAuthenticated() }),
     toolsReachable: osConnections.snapshot().reachable,
     usage7d: usage.total(7),
     usageByModel7d: usage.byModel(7),

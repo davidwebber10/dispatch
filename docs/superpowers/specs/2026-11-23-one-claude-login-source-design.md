@@ -231,3 +231,23 @@ No token text reached the daemon log.
 Two tests failed in one full run of the core suite and passed alone: `tests/routes/watches.test.ts`
 and `src/routes/git.test.ts`. Both are the known port collision of the route tests, not this
 change.
+
+### Review round 1 (an independent Codex review, 2026-11-23)
+
+Four findings, all real, all fixed on the branch:
+
+- **The New Thread window closed its gate for a working saved sign-in.** With the token gone
+  from the base environment, the machine check answers for the machine login only, and the
+  window used it for every Claude thread. Now the setup routes answer "the default Claude account
+  is signed in", and the window applies the machine gate only to a thread that runs on the CLI
+  login.
+- **A status that could not be read counted as signed out** for a login folder and for the
+  clean login. The checker is now `makeClaudeSignedIn` in `auth/claude-login-sources.ts`: no
+  answer is "unknown", and only a definite "signed out" closes a gate. The tests run the real
+  checker.
+- **The hosted heartbeat in token mode still read the old file.** It now reads the default
+  account (`boxClaudeAuthenticated`); the clean login keeps its own answer.
+- **The source scan was weak.** It now sees both quote styles, pins the count of places per
+  file, and checks that the base environment names no Claude login variable. It is still a scan
+  of text: a command built in a variable is not seen, and the base environment with no token is
+  what protects that case.
