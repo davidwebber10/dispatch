@@ -62,6 +62,9 @@ const lastLine = gitErrorLine;
 export class MarketplaceService {
   constructor(readonly dir: string, private readonly stateFile: string) {}
 
+  /** How many git runs (a clone or a pull) are in flight per marketplace: git writes into the clone while one runs. */
+  private readonly gitRuns = new Map<string, number>();
+
   list(): Marketplace[] { return this.readState(); }
 
   get(slug: string): Marketplace | null { return this.readState().find((m) => m.slug === slug) ?? null; }
@@ -80,7 +83,10 @@ export class MarketplaceService {
     const rows = this.readState();
     if (!rows.some((m) => m.slug === slug)) throw new Error('unknown marketplace');
     this.writeState(rows.filter((m) => m.slug !== slug));
-    fs.rmSync(this.cloneDir(slug), { recursive: true, force: true });
+    // While git writes into the clone, a recursive delete can fail with ENOTEMPTY (an entry appears
+    // between the listing and the rmdir). The pull in flight deletes the folder when git has ended:
+    // it finds the row gone.
+    if (!this.gitRuns.get(slug)) fs.rmSync(this.cloneDir(slug), { recursive: true, force: true });
   }
 
   setTrusted(slug: string, on: boolean): Marketplace {
@@ -98,16 +104,23 @@ export class MarketplaceService {
     if (!row) throw new Error('unknown marketplace');
     const clone = this.cloneDir(slug);
     let r: { ok: boolean; stderr: string };
-    if (!fs.existsSync(path.join(clone, '.git'))) {
-      fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
-      fs.rmSync(clone, { recursive: true, force: true });
-      r = await runGit(['clone', '--quiet', '--', row.url, clone], this.dir);
-    } else {
-      r = await runGit(['pull', '--quiet', '--ff-only'], clone);
+    this.gitRuns.set(slug, (this.gitRuns.get(slug) ?? 0) + 1);
+    try {
+      if (!fs.existsSync(path.join(clone, '.git'))) {
+        fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
+        fs.rmSync(clone, { recursive: true, force: true });
+        r = await runGit(['clone', '--quiet', '--', row.url, clone], this.dir);
+      } else {
+        r = await runGit(['pull', '--quiet', '--ff-only'], clone);
+      }
+    } finally {
+      const left = (this.gitRuns.get(slug) ?? 1) - 1;
+      if (left > 0) this.gitRuns.set(slug, left); else this.gitRuns.delete(slug);
     }
     const rows = this.readState();
     const live = rows.find((m) => m.slug === slug);
-    if (!live) { fs.rmSync(clone, { recursive: true, force: true }); return { ...row, error: 'removed' }; } // removed while the pull ran
+    // Removed while git ran: remove() left the folder to this run. Another run still in flight deletes it in its turn.
+    if (!live) { if (!this.gitRuns.get(slug)) fs.rmSync(clone, { recursive: true, force: true }); return { ...row, error: 'removed' }; }
     if (r.ok) {
       live.error = null; live.lastPulledAt = new Date().toISOString();
       const meta = this.readJson(path.join(clone, 'marketplace.json'));
