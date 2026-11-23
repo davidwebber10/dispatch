@@ -58,6 +58,11 @@ rl.on('line', (line) => {
       send({ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: 'sess-fake' });
       return;
     }
+    // A login that cannot be renewed: the error result Claude Code prints (the text of a real failure, 2026-11-21).
+    if (text === 'TRIGGER_AUTH_FAIL') {
+      send({ type: 'result', subtype: 'success', is_error: true, result: 'Failed to authenticate: this login reached its time limit and cannot be renewed. Run `claude auth login` to sign in again.', session_id: 'sess-fake' });
+      return;
+    }
     if (typeof text === 'string' && text.startsWith('TRIGGER_BASH:')) {
       // A Bash tool call asking permission for the given command (the broad-kill guard tests).
       send({ type: 'control_request', request_id: 'req-bash', request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: text.slice('TRIGGER_BASH:'.length) }, tool_use_id: 'tu-1' } });

@@ -302,6 +302,16 @@ test('system/auth_required sets authRequired; it stays through another failure a
   expect(result.current.authRequired).toBeNull();
 });
 
+test('auth_required `at` is placed on this browser\'s clock with the daemon clock of the status frame', () => {
+  const { result } = renderHook(() => useStructuredChat('t-skew'));
+  const mac = Date.now() + 90_000; // the daemon's clock is 90 s ahead of this browser
+  act(() => cbs.onEvent({ type: 'system', subtype: 'status', status: null, now: mac }));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'auth_required', provider: 'claude', accountId: 'work', reason: 'The login expired', at: mac - 60_000 }));
+  // The failure was 60 s before the status frame on the daemon's clock: about 60 s ago here.
+  const at = result.current.authRequired!.at!;
+  expect(Math.abs(at - (Date.now() - 60_000))).toBeLessThan(2_000);
+});
+
 test('system/status toggles compacting and surfaces the result on the follow-up status', () => {
   const { result } = renderHook(() => useStructuredChat('t1'));
   expect(result.current.compacting).toBe(false);

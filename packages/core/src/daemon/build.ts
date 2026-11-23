@@ -58,7 +58,7 @@ import { ClaudeCliLogin, planOf } from '../auth/claude-cli-login.js';
 import { useCleanClaudeLogin, isHostedBox } from '../os/hosted-mode.js';
 import { boxLog } from '../os/box-log.js';
 import { createProcessReaper, type ProcessReaper } from '../os/process-reaper.js';
-import { wireStopOnAuthFailure } from '../os/auth-stop.js';
+import { wireStopOnAuthFailure, wireRestartOnAuthFailure } from '../os/auth-stop.js';
 import { createApprovalsRouter } from '../os/approvals-routes.js';
 import { createContinuityRouter } from '../os/continuity.js';
 import { setProfileSource, resolveProfile } from '../os/profile.js';
@@ -552,10 +552,14 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     accounts, claudeLogin, pushService, broadcaster, spawnEnv: () => spawnEnv.current(), network, clock: opts.clock,
   });
   const { usageLimits, limitSnapshots, usageGauge } = limits;
-  // A hosted box: a chat thread whose CLI is signed out gives its process back (os/auth-stop.ts).
+  // A thread whose login failed (os/auth-stop.ts). Hosted: its process is stopped once the turn ends (~185 MB
+  // each). Local: the process stays, so the chat keeps its sign-in card; the next message replaces it first,
+  // because a running `claude` keeps the login it started with ("Sign in again" on an added account saves a
+  // NEW token that only a new process receives). Only Claude: the other harnesses share a process or hold no
+  // login in their env.
   const stopAuthWatch = isHostedBox(env) || useCleanClaudeLogin(env)
     ? wireStopOnAuthFailure({ managers: harnesses.managers.values(), stop: (id) => sessionService.stopTerminal(id), onAuthFailure: () => claudeLogin.noteAuthFailure() })
-    : () => {};
+    : wireRestartOnAuthFailure([harnesses.claude]);
   // Fleet totals are a read-only projection of the canonical analytics ledger.
   const usage = new UsageRecorder(db);
   wireThreadSettledPush(db, statusService, pushService);

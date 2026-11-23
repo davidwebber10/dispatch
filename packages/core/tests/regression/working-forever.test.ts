@@ -64,7 +64,7 @@ describe('Working forever: the socket says the status, the frames do not', () =>
     startTurn('cc');
     const c = client('cc');
     expect(c.frames[0]).toMatchObject({ type: 'system', subtype: 'status', status: 'working', turnOpen: true });
-    expect(c.frames[0]).toEqual({ type: 'system', subtype: 'status', ...status.snapshot('cc') });
+    expect(c.frames[0]).toEqual({ type: 'system', subtype: 'status', ...status.snapshot('cc'), now: expect.any(Number) });
   });
 
   it('stale working after exit: the process exits mid-turn and the client is told the turn is over', () => {

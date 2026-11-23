@@ -14,6 +14,7 @@ import { hostCopy } from '../../lib/hostCopy';
 import { Button } from '../ui';
 import { fontVar } from '../../lib/fontSize';
 import { CompanyConnections } from '../connections/CompanyConnections';
+import { useSignInRecovered } from '../../stores/signInRecovered';
 
 /**
  * Settings → Accounts (multi-account spec 2026-11-06): the signed-in accounts under each harness,
@@ -172,7 +173,7 @@ export function AccountsSection() {
                     ? <Button aria-label={`Sign in again to ${a.label}`} onClick={() => setClaudeSignIn(a.id)} variant="primary" size="sm" icon={<SignIn size={14} weight="bold" />}>Sign in again</Button>
                     : undefined}>
                   {!a.isCli && claudeSignIn === a.id && (
-                    <ClaudeLogin autoStart buttonLabel="Sign in again" start={() => api.accountsClaudeLogin(a.label, a.id)} onDone={() => { setClaudeSignIn(null); void checkUsage(a.id); }} />
+                    <ClaudeLogin autoStart buttonLabel="Sign in again" start={() => api.accountsClaudeLogin(a.label, a.id)} onDone={() => { setClaudeSignIn(null); useSignInRecovered.getState().mark('claude', a.id); void checkUsage(a.id); }} />
                   )}
                 </SettingsRow>
               )}

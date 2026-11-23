@@ -33,8 +33,8 @@ describe('detectAuthFailure — a signed-out or expired login, not any error', (
 
 describe('authRequiredFrame — the typed chat event', () => {
   it('an error result with an auth failure becomes system/auth_required with provider, account, reason', () => {
-    expect(authRequiredFrame({ type: 'result', is_error: true, result: 'Invalid API key · Please run /login' }, 'claude', 'work'))
-      .toEqual({ type: 'system', subtype: 'auth_required', provider: 'claude', accountId: 'work', reason: 'The login is not valid', detail: 'Invalid API key · Please run /login' });
+    expect(authRequiredFrame({ type: 'result', is_error: true, result: 'Invalid API key · Please run /login' }, 'claude', 'work', 1_700_000_000_000))
+      .toEqual({ type: 'system', subtype: 'auth_required', provider: 'claude', accountId: 'work', reason: 'The login is not valid', detail: 'Invalid API key · Please run /login', at: 1_700_000_000_000 });
   });
 
   it('reads Claude errors[] and a spawn_error message too', () => {

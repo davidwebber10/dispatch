@@ -38,6 +38,8 @@ export interface AuthRequiredFrame {
   reason: string;
   /** The CLI's own words, for the card's "details". */
   detail: string;
+  /** When the failure happened (epoch ms): a sign-in made after it already answers the card, even one that was not on screen. */
+  at: number;
 }
 
 /** The text an error frame carries: a result's `result` and `errors[]`, a spawn error's `message`. */
@@ -57,10 +59,10 @@ function errorText(e: any): string | null {
  * The typed `system/auth_required` chat event for an error frame that reports a signed-out login,
  * or null. Each structured manager pushes it into its ring right after the error frame.
  */
-export function authRequiredFrame(event: unknown, provider: AuthProvider, accountId: string | undefined): AuthRequiredFrame | null {
+export function authRequiredFrame(event: unknown, provider: AuthProvider, accountId: string | undefined, now: number = Date.now()): AuthRequiredFrame | null {
   const text = errorText(event);
   if (!text) return null;
   const reason = detectAuthFailure(text);
   if (!reason) return null;
-  return { type: 'system', subtype: 'auth_required', provider, ...(accountId ? { accountId } : {}), reason, detail: text.slice(0, 500) };
+  return { type: 'system', subtype: 'auth_required', provider, ...(accountId ? { accountId } : {}), reason, detail: text.slice(0, 500), at: now };
 }

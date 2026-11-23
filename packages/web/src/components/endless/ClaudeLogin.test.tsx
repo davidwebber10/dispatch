@@ -49,6 +49,19 @@ describe('ClaudeLogin', () => {
     expect(onDone).not.toHaveBeenCalled();
   });
 
+  it('a rejected code swaps in the new sign-in link and empties the code box', async () => {
+    // The CLI starts a fresh sign-in after a rejection; a code from the old link cannot work.
+    vi.spyOn(api, 'claudeLoginStart').mockResolvedValue(session());
+    vi.spyOn(api, 'claudeLoginCode').mockResolvedValue(session({ url: 'https://claude.com/cai/oauth/authorize?x=2', error: "OAuth error: That code wasn't accepted." }));
+    render(<ClaudeLogin onDone={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Log in to Claude' }));
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Login code' }), { target: { value: 'old#code' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit code' }));
+    expect(await screen.findByText(/OAuth error: That code wasn't accepted/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Open the Claude login page/ })).toHaveAttribute('href', 'https://claude.com/cai/oauth/authorize?x=2');
+    expect(screen.getByRole('textbox', { name: 'Login code' })).toHaveValue('');
+  });
+
   it('a failed start shows the error and lets the user try again', async () => {
     vi.spyOn(api, 'claudeLoginStart').mockRejectedValueOnce(new Error('POST /api/claude-auth/login failed: 500 claude not found'));
     render(<ClaudeLogin onDone={() => {}} />);
@@ -86,6 +99,15 @@ describe('ClaudeLogin notices how the login ended', () => {
     await tick();
     expect(screen.getByRole('textbox', { name: 'Login code' })).toBeInTheDocument();
     expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it('takes a new link from the daemon while it waits (the CLI printed it late after a refused code)', async () => {
+    vi.spyOn(api, 'claudeAuthStatus').mockResolvedValue({ authenticated: false, session: session({ url: 'https://claude.com/cai/oauth/authorize?x=9' }) });
+    await open();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Login code' }), { target: { value: 'dead#code' } });
+    await tick();
+    expect(screen.getByRole('link', { name: /Open the Claude login page/ })).toHaveAttribute('href', 'https://claude.com/cai/oauth/authorize?x=9');
+    expect(screen.getByRole('textbox', { name: 'Login code' })).toHaveValue(''); // the code of the dead link is gone
   });
 
   it('says so and offers a new start when the login has ended', async () => {

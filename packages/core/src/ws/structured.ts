@@ -5,6 +5,7 @@ import type { IStructuredManager } from '../structured/manager.js';
 import { sendOrDrop, waitForRoom, hasRoom, HARD_CEILING_FACTOR } from './backpressure.js';
 import { wsMaxBufferedBytes } from '../caps.js';
 import { isDormantStop } from '../os/process-reaper.js';
+import { isAuthStop } from '../os/auth-stop.js';
 import type { StatusSnapshot } from '../status/events.js';
 
 /**
@@ -18,8 +19,10 @@ export interface StatusSource {
 }
 
 /** The frame that carries a status snapshot: the first frame of a connection, then one per transition. */
-function statusFrame(snapshot: StatusSnapshot): { type: 'system'; subtype: 'status' } & StatusSnapshot {
-  return { type: 'system', subtype: 'status', ...snapshot };
+function statusFrame(snapshot: StatusSnapshot): { type: 'system'; subtype: 'status'; now: number } & StatusSnapshot {
+  // `now`: the daemon's clock, so a browser on another machine can place the daemon's times (the time of a
+  // sign-in failure, system/auth_required `at`) on its own clock. The first frame of every connection.
+  return { type: 'system', subtype: 'status', ...snapshot, now: Date.now() };
 }
 
 /**
@@ -255,7 +258,7 @@ export function handleStructuredConnection(
   // `detail` is the CLI's stderr tail, when it wrote one: often the only place it says why (#76).
   const onExit = (eid: string, code: number, detail?: string) => {
     // A dormant stop (os/process-reaper.ts) is not an end the person should see: the next message resumes it.
-    if (eid === id && !isDormantStop(id)) {
+    if (eid === id && !isDormantStop(id) && !isAuthStop(id)) {
       emit(JSON.stringify({ type: 'result', is_error: true, subtype: 'process_exit', result: `Process exited (${code})${detail ? `: ${detail}` : ''}` }));
     }
   };

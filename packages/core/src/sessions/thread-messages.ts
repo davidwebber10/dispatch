@@ -1,3 +1,4 @@
+import { takeAuthRestart, stopQuietly } from '../os/auth-stop.js';
 import type Database from 'better-sqlite3';
 import * as terminalsDb from '../db/terminals.js';
 import * as coordinatorMessagesDb from '../db/coordinator-messages.js';
@@ -25,6 +26,8 @@ export interface ThreadMessagesDeps {
     sendStructuredMessage(terminalId: string, content: string | ContentBlock[], source?: MessageSource, logAs?: coordinatorMessagesDb.CoordinatorMessageSource): void;
     /** Anyone else sending to a thread, or the owner typing in it, ends its usage-limit pause. */
     noteThreadTouched(terminalId: string, source?: string, logAs?: string): void;
+    /** Stop a thread's process (SessionService.stopTerminal). */
+    stopTerminal(terminalId: string): void;
   };
 }
 
@@ -56,6 +59,10 @@ export class ThreadMessages {
     // Lazily resume a thread that died on a daemon restart (resumes the same claude
     // conversation when an external_id was captured) before delivering the message.
     const manager = this.structuredManagerForTerminal(terminalId);
+    // The thread's last turn failed on its login and its process is still the one that failed: a running
+    // CLI keeps the login it started with, so replace it. The new process resumes the same conversation
+    // and reads the login as it is now (os/auth-stop.ts).
+    if (manager?.isAlive(terminalId) && takeAuthRestart(terminalId)) stopQuietly(terminalId, () => this.deps.threads.stopTerminal(terminalId));
     if (!manager?.isAlive(terminalId)) this.ensureStructuredAlive(terminalId);
     if (!manager?.isAlive(terminalId)) {
       const cause = this.spawner.lastSpawnError.get(terminalId);

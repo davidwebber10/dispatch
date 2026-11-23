@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { SignedOutCard } from './SignedOutCard';
 import { api } from '../../../api/client';
 import { useAccounts } from '../../../stores/accounts';
 import { useTabs } from '../../../stores/tabs';
 import { useUI } from '../../../stores/ui';
 import { useThreadStatus } from '../../../stores/threadStatus';
+import { useSignInRecovered } from '../../../stores/signInRecovered';
 import type { Terminal } from '../../../api/types';
 
 vi.mock('../../../api/client', () => ({
@@ -35,6 +36,7 @@ beforeEach(() => {
   (api.getAccounts as any).mockResolvedValue(view);
   useAccounts.setState({ view, loading: false } as any);
   useThreadStatus.setState({ byTerminal: {} } as any);
+  useSignInRecovered.setState({ at: {} });
   useTabs.setState({ byProject: { s1: [tab()] } } as any);
   vi.spyOn(useTabs.getState(), 'loadTabs').mockResolvedValue(undefined as any);
 });
@@ -48,13 +50,45 @@ describe('SignedOutCard', () => {
     expect(buttons.slice(0, 2)).toEqual(['Sign in', 'Switch account']);
   });
 
+  const W = { provider: 'claude' as const, accountId: 'work', reason: 'The login expired' };
+
+  it('a sign-in of the same account finished after the failure: the card says Signed in and offers Retry', async () => {
+    const onRetry = vi.fn();
+    render(<SignedOutCard tab={tab()} auth={{ ...W, at: Date.now() - 60_000 }} onRetry={onRetry} />);
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
+    act(() => useSignInRecovered.getState().mark('claude', 'work'));
+    expect(await screen.findByText(/Signed in\. Retry sends your last message again/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sign in' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(onRetry).toHaveBeenCalled();
+  });
+
+  it('a sign-in made while the card was NOT on screen (Settings) still answers it when it comes back', () => {
+    const failedAt = Date.now() - 60_000;
+    useSignInRecovered.getState().mark('claude', 'work'); // after the failure, before the card mounts
+    render(<SignedOutCard tab={tab()} auth={{ ...W, at: failedAt }} onRetry={() => {}} />);
+    expect(screen.getByText(/Signed in\. Retry sends your last message again/)).toBeInTheDocument();
+  });
+
+  it('a sign-in older than the failure does not hide the card', () => {
+    useSignInRecovered.setState({ at: { 'claude:work': 1000 } });
+    render(<SignedOutCard tab={tab()} auth={{ ...W, at: 2000 }} onRetry={() => {}} />);
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
+  });
+
+  it('a sign-in of ANOTHER account does not change the card', () => {
+    render(<SignedOutCard tab={tab()} auth={{ ...W, at: Date.now() - 60_000 }} onRetry={() => {}} />);
+    act(() => useSignInRecovered.getState().mark('claude', 'other'));
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
+  });
+
   it('Claude added account: Sign in runs the headless setup-token flow for that account, then offers Retry', async () => {
     (api.accountsClaudeLogin as any).mockResolvedValue({ status: 'awaiting_code', url: 'https://claude.ai/oauth', error: null });
     (api.claudeLoginCode as any).mockResolvedValue({ status: 'complete', url: null, error: null });
     const onRetry = vi.fn();
     render(<SignedOutCard tab={tab()} auth={{ provider: 'claude', accountId: 'work', reason: 'The login expired' }} onRetry={onRetry} />);
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
-    await waitFor(() => expect(api.accountsClaudeLogin).toHaveBeenCalledWith('Work'));
+    await waitFor(() => expect(api.accountsClaudeLogin).toHaveBeenCalledWith('Work', 'work'));
     fireEvent.change(await screen.findByLabelText('Login code'), { target: { value: 'abc' } });
     fireEvent.click(screen.getByRole('button', { name: 'Submit code' }));
     const retry = await screen.findByRole('button', { name: 'Retry' });
