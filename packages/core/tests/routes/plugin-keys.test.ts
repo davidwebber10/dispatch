@@ -54,6 +54,24 @@ describe('plugin keys on the read routes (2026-11-07)', () => {
     expect((await request(app).get('/api/terminals/tA').set(asPlugin('writer'))).status).toBe(403);
   });
 
+  // A plugin that reports on past work must find the threads the daemon archived since (the idle
+  // auto-archive takes them out of the list above within days).
+  it('read:threads opens the archived list of a project, and an archived thread by id', async () => {
+    terminalsDb.create(db, { id: 'tOld', sessionId: 'A', type: 'claude-code', label: 'Old worker', config: { transport: 'structured', role: 'agent' } });
+    terminalsDb.archive(db, 'tOld');
+    const open = await request(app).get('/api/sessions/A/terminals').set(asPlugin('reader'));
+    expect(open.body.map((t: any) => t.id)).toEqual(['tA']);
+    const archived = await request(app).get('/api/sessions/A/terminals/archived').set(asPlugin('reader'));
+    expect(archived.status).toBe(200);
+    expect(archived.body.map((t: any) => t.id)).toEqual(['tOld']);
+    expect(typeof archived.body[0].archivedAt).toBe('string');
+    expect((await request(app).get('/api/terminals/tOld').set(asPlugin('reader'))).status).toBe(200);
+    expect((await request(app).get('/api/terminals/tOld/conversation').set(asPlugin('reader'))).status).toBe(200);
+    const no = await request(app).get('/api/sessions/A/terminals/archived').set(asPlugin('writer'));
+    expect(no.status).toBe(403);
+    expect(no.body.message).toBe('The plugin "writer" lacks the permission "read:threads".');
+  });
+
   it('read:ledger opens the ledger card; the thread-only ledger routes stay closed to a plugin key', async () => {
     const card = await request(app).get('/api/sessions/A/ledger/card').set(asPlugin('reader'));
     expect(card.status).toBe(200);

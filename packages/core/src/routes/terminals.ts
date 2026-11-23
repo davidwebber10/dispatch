@@ -54,8 +54,11 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // Answered message POSTs by `Idempotency-Key`, per thread (W1-D). In memory: a restart forgets them.
   const messageKeys = createIdempotencyCache();
 
-  // GET /api/sessions/:id/terminals/archived — MUST be before the generic list route
-  router.get('/sessions/:id/terminals/archived', (req, res) => {
+  // GET /api/sessions/:id/terminals/archived — MUST be before the generic list route.
+  // A plugin with read:threads may read it, as it reads the open list below: a plugin that reports
+  // on past work has to find the threads the idle auto-archive took out of that list. A thread key
+  // may not; the owner reads it as before.
+  router.get('/sessions/:id/terminals/archived', keyRoute({ plugin: needs('read:threads') }), (req, res) => {
     try {
       const terminals = sessionService.listArchivedTerminals(req.params.id);
       res.json(redactKeysDeep(terminals));

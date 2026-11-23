@@ -355,7 +355,7 @@ removed. Anything not listed is refused: `The plugin "<id>" lacks the permission
 | Permission | Grants |
 | --- | --- |
 | `read:projects` | the project list |
-| `read:threads` | a project's threads and a thread's transcript |
+| `read:threads` | a project's threads, its archived threads (`GET /api/sessions/<id>/terminals/archived`), and a thread's transcript, archived or not |
 | `read:ledger` | a project's ledger card and item sources |
 | `read:usage` | the usage-limit summary (`GET /api/usage-limits/summary`): every account's windows and resets |
 | `read:analytics` | the analytics routes (`GET /api/analytics/*`), read only |

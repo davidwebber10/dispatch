@@ -56,6 +56,8 @@ const EXPECTED_KEY_ROUTES: string[] = [
   // Task 8: terminal and session routes
   'GET /api/sessions',
   'GET /api/sessions/:id/terminals',
+  // A plugin with read:threads reads a project's archived threads too (a plugin key only; no thread key).
+  'GET /api/sessions/:id/terminals/archived',
   'POST /api/sessions/:id/terminals',
   'GET /api/sessions/:id/overseer/worker-defaults',
   'GET /api/terminals/:terminalId',
