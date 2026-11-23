@@ -516,7 +516,13 @@ export interface UpdateProgress {
 /** GET/POST /api/claude-auth — the daemon's headless Claude login (`claude setup-token`). */
 /** The device-code sign-in of an added Codex account (core auth/codex-login.ts); `idle` when none runs. */
 export interface CodexLoginSession { accountId: string; status: 'idle' | 'starting' | 'awaiting_user' | 'complete' | 'error'; url: string | null; code: string | null; error: string | null; createdAt: string | null }
-export interface ClaudeLoginSession { id: string; status: 'starting' | 'awaiting_code' | 'exchanging' | 'complete' | 'error'; url: string | null; error: string | null; createdAt: string }
+export interface ClaudeLoginSession {
+  id: string; status: 'starting' | 'awaiting_code' | 'exchanging' | 'complete' | 'error'; url: string | null; error: string | null; createdAt: string;
+  /** The account that got the sign-in, once it is complete. Not the default: the card asks before the default changes. */
+  account?: { id: string; label: string; isDefault: boolean };
+  /** For the generic card: where the sign-in will land. `new`: a new Dispatch login, which has no claude.ai connectors. */
+  landsIn?: { kind: 'new' | 'existing'; label: string };
+}
 /** One usage-limit window; `usedPercent` is null when the provider gave a reset time but no figure. */
 /** The daemon's run-out estimate for a window (core limits/forecast.ts): the recent pace projected to 100%. */
 export interface LimitForecast { runsOutAt: number | null; lastsUntilReset: boolean; basisHours: number }
@@ -591,7 +597,7 @@ export type AccountProvider = 'claude' | 'codex';
  * figures stay), `ok`. `lastOkAt`: when the usage read last worked (ms), or null.
  */
 export type UsageAccessState = 'ok' | 'sign-in-needed' | 'not-available' | 'rate-limited';
-export interface Account { id: string; label: string; email?: string; plan?: string; isCli: boolean; addedAt: string | null; signedIn?: boolean; threadCount?: number; usageAccess?: { state: UsageAccessState; lastOkAt: number | null } }
+export interface Account { id: string; label: string; email?: string; plan?: string; isCli: boolean; /** `saved`: a sign-in that Dispatch keeps; it has no claude.ai connectors. Absent on an older daemon. */ kind?: 'cli' | 'saved' | 'folder'; addedAt: string | null; signedIn?: boolean; threadCount?: number; usageAccess?: { state: UsageAccessState; lastOkAt: number | null } }
 /** A thread pinned to an account (the delete notice lists them). */
 export interface AccountThread { id: string; label: string; sessionId: string }
 export interface AccountsView { claude: Account[]; codex: Account[]; defaults: Record<AccountProvider, string> }

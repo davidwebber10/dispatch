@@ -148,6 +148,16 @@ export function AccountsSection() {
             <AccountName key={`${provider}:${a.id}`} account={a} isMobile={isMobile} onSave={(name) => rename(provider, a.id, name)} />
             {a.email && <SettingsRow label="Email" value={a.email} />}
             {a.plan && <SettingsRow label="Plan" value={a.plan} />}
+            {/* What a thread on this login can reach (one source for the Claude login, spec 2026-11-23):
+                a sign-in that Dispatch saved runs the model only. An older daemon sends no kind: no line. */}
+            {provider === 'claude' && (a.kind === 'saved' || a.kind === 'cli') && (
+              <SettingsRow label="claude.ai connectors" hint={
+                <span data-testid="account-connectors">
+                  {a.kind === 'saved'
+                    ? 'No claude.ai connectors. Threads on this login cannot use your mail, calendar or chat connectors.'
+                    : 'Has the claude.ai connectors of this computer’s Claude login.'}
+                </span>} />
+            )}
             {provider === 'codex' && !a.isCli && a.signedIn !== undefined && (
               <SettingsRow label="Sign-in" control={a.signedIn ? <StatusMark tone="accent">Signed in</StatusMark> : <StatusMark tone="yellow">Not signed in</StatusMark>} />
             )}
@@ -239,7 +249,7 @@ export function AccountsSection() {
   const addTitle = adding ? `Add a ${PROVIDER_TITLE[adding]} account` : undefined;
   return (
     <div ref={nav.top}>
-      <SettingsPage intro="New threads use the default account unless you pick another. Usage limits show every account.">
+      <SettingsPage intro="New threads, scheduled jobs, Chat and thread titles use the default account. You can pick another account for a thread. Usage limits show every account.">
         {error && <div role="alert" style={errText}>{error}</div>}
         {/* Hosted box only (renders nothing on a local daemon). */}
         <CompanyConnections />
