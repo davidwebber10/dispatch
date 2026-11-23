@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { AccountsStore } from '../../src/auth/accounts.js';
-import { claudeLoginSources, makeClaudeSignedIn, boxClaudeAuthenticated } from '../../src/auth/claude-login-sources.js';
+import { childEnv } from '../../src/platform/inherited-env.js';
+import { claudeLoginSources, makeClaudeSignedIn, makeBoxClaudeAuthenticated } from '../../src/auth/claude-login-sources.js';
 
 /**
  * One source for the Claude login (spec 2026-11-23). The first block is the table: what login each
@@ -116,14 +117,37 @@ describe('is the account signed in that a process will run on', () => {
     expect(await out.signedIn('cli')).toBe(false);
   });
 
-  it('a box in token mode is authenticated when its default account has a stored sign-in; the old file alone does not count', () => {
-    const t = setup();
-    expect(boxClaudeAuthenticated({ accounts: t.store, usesCleanLogin: false, cleanAuthenticated: () => false })).toBe(false); // the default is the CLI login
-    t.store.setDefault('claude', t.team);
-    expect(boxClaudeAuthenticated({ accounts: t.store, usesCleanLogin: false, cleanAuthenticated: () => false })).toBe(true);
-    // The clean login keeps its own answer.
-    expect(boxClaudeAuthenticated({ accounts: t.store, usesCleanLogin: true, cleanAuthenticated: () => false })).toBe(false);
-    expect(boxClaudeAuthenticated({ accounts: t.store, usesCleanLogin: true, cleanAuthenticated: () => true })).toBe(true);
+  // Review round 2: the heartbeat is synchronous, so it reads a cached answer of the same checker
+  // that the gates use, and refreshes it behind. Token mode with the CLI login as the default is
+  // then right too (a working machine login), not only a saved default.
+  it('the box state follows the checker of the default account, from a cache that refreshes behind it', async () => {
+    let answer: boolean | 'unknown' = false;
+    let asked = 0;
+    const box = makeBoxClaudeAuthenticated({ usesCleanLogin: () => false, cleanAuthenticated: () => false, signedIn: async () => { asked += 1; return answer; } });
+    const tick = () => new Promise((r) => setImmediate(r));
+    await tick();
+    expect(box()).toBe(false);
+    await tick(); // the refresh that this read started has ended
+    answer = true; // the person signed in (a saved default, or the machine login of a CLI default)
+    expect(box()).toBe(false); // the cached answer; this read starts a refresh
+    await tick();
+    expect(box()).toBe(true);
+    await tick();
+    answer = 'unknown'; // a check that cannot answer keeps the last known state
+    box();
+    await tick();
+    expect(box()).toBe(true);
+    expect(asked).toBeGreaterThanOrEqual(3);
+  });
+
+  it('the clean login keeps its own answer for the box state, and the checker is not asked', () => {
+    let asked = 0;
+    let clean = false;
+    const box = makeBoxClaudeAuthenticated({ usesCleanLogin: () => true, cleanAuthenticated: () => clean, signedIn: async () => { asked += 1; return true; } });
+    expect(box()).toBe(false);
+    clean = true;
+    expect(box()).toBe(true);
+    expect(asked).toBe(0);
   });
 });
 
@@ -157,8 +181,9 @@ describe('every place that starts claude takes its login from the account', () =
     return out;
   }
   // A place starts `claude` when it names the command for a spawn (either quote), or resolves its
-  // binary. This is a scan of text: it cannot see a command that is built in a variable first. The
-  // base environment with no token (below) is what keeps such a place from a wrong login.
+  // binary. This is a scan of text: it cannot see a command that is built in a variable first.
+  // Such a place still gets no login it was not given: `childEnv` drops the daemon's own Claude
+  // token, and the base environment names none (both tested below).
   const STARTS = /command:\s*(?:[\w.?]+\s*\?\?\s*)?['"]claude['"]|(?:spawn\w*|execFile\w*)\(\s*['"]claude['"]|(?:resolveBin|usable)\(\s*['"]claude['"]|[bB]in\s*\?\?\s*['"]claude['"]|AUTH_PROBES\[name\]/g;
 
   it('the places that start claude are exactly the known ones, file by file', () => {
@@ -175,6 +200,18 @@ describe('every place that starts claude takes its login from the account', () =
       expect(line.match(STARTS), line).not.toBeNull();
     }
     expect("const harness = opts.harness ?? 'claude';".match(STARTS)).toBeNull(); // a harness name is not a command
+  });
+
+  // Review round 2: a place that the scan cannot see (a command built in a variable) still gets no
+  // login it was not given, because no process inherits the daemon's own Claude token.
+  it('a child with no account overlay does not inherit a Claude token from the daemon', () => {
+    const before = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = 'tok-of-the-daemon';
+    try {
+      expect(childEnv({}).CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+      expect(childEnv({ PATH: '/bin' }, { CLAUDE_CODE_OAUTH_TOKEN: 'tok-team' }).CLAUDE_CODE_OAUTH_TOKEN).toBe('tok-team'); // an overlay still sets it
+      expect(childEnv({ CLAUDE_CODE_OAUTH_TOKEN: '' }).CLAUDE_CODE_OAUTH_TOKEN).toBe('');
+    } finally { if (before === undefined) delete process.env.CLAUDE_CODE_OAUTH_TOKEN; else process.env.CLAUDE_CODE_OAUTH_TOKEN = before; }
   });
 
   it('the base environment of every child holds no Claude login', () => {

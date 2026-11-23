@@ -217,7 +217,11 @@ export function NewThreadModal({ sessionId: initialSession, prompts, onClose, on
   // saved sign-in (picked here, or the default) starts whatever the machine login says (one source
   // for the Claude login, spec 2026-11-23): an install can have a working account and no machine login.
   const onOtherClaudeAccount = harness === 'claude' && effectiveAccountId !== null && effectiveAccountId !== 'cli';
-  const needsLogin = currentStatus?.installed === true && currentStatus.signedIn === false && harness !== 'opencode' && !onOtherClaudeAccount;
+  // For Claude the daemon gives two answers: `signedIn` is the default account's, `machineSignedIn`
+  // the machine login's. A thread on the CLI login asks the machine's, so it never borrows the
+  // answer of a saved default. An older daemon sends one answer: the machine's.
+  const loginStatus = harness === 'claude' && currentStatus?.machineSignedIn !== undefined ? currentStatus.machineSignedIn : currentStatus?.signedIn;
+  const needsLogin = currentStatus?.installed === true && loginStatus === false && harness !== 'opencode' && !onOtherClaudeAccount;
   // OpenCode's gate: installed, but the configured Doppler secret doesn't resolve. Until
   // settings load, assume the key is fine — a slow probe never blocks the modal.
   const needsKey = harness === 'opencode' && selectedAvailable && harnessSettings !== null && !harnessSettings.opencodeKey.present;

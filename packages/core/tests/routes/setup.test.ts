@@ -42,9 +42,15 @@ describe('setup routes', () => {
       expect((await request(app).get('/api/setup/state')).body.providers.find((p: any) => p.name === 'claude').signedIn).toBe(false);
       setClaudeSignedInSource(async () => true);
       expect((await request(app).get('/api/setup/providers')).body.find((p: any) => p.name === 'claude').signedIn).toBe(true);
-      // A check that could not answer keeps what the machine check said.
+      // Review round 2: a check that could not answer is 'unknown'. It never borrows the answer of
+      // another login (the machine's), in either direction.
       setClaudeSignedInSource(async () => 'unknown');
-      expect((await request(app).get('/api/setup/providers')).body.find((p: any) => p.name === 'claude').signedIn).toBe(true);
+      expect((await request(app).get('/api/setup/providers')).body.find((p: any) => p.name === 'claude').signedIn).toBe('unknown');
+      setClaudeSignedInSource(async () => { throw new Error('probe failed'); });
+      expect((await request(app).get('/api/setup/providers')).body.find((p: any) => p.name === 'claude').signedIn).toBe('unknown');
+      // The machine's own answer travels apart, for a thread that the person puts on the CLI login.
+      setClaudeSignedInSource(async () => false);
+      expect((await request(app).get('/api/setup/providers')).body.find((p: any) => p.name === 'claude')).toMatchObject({ signedIn: false, machineSignedIn: true });
       // Codex is not touched.
       expect((await request(app).get('/api/setup/providers')).body.find((p: any) => p.name === 'codex')).toEqual({ name: 'codex', installed: false, signedIn: false });
     } finally { setClaudeSignedInSource(null); }

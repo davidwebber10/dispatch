@@ -33,7 +33,7 @@ import { AuthRequestService } from '../auth/service.js';
 import { ClaudeLoginService } from '../auth/claude-login.js';
 import { CodexLoginService } from '../auth/codex-login.js';
 import { AccountsStore, adoptClaudeLoginToken, genericClaudeSignInTarget, type AccountProvider } from '../auth/accounts.js';
-import { boxClaudeAuthenticated, claudeLoginSources, makeClaudeSignedIn, setClaudeSignedInSource } from '../auth/claude-login-sources.js';
+import { claudeLoginSources, makeBoxClaudeAuthenticated, makeClaudeSignedIn, setClaudeSignedInSource } from '../auth/claude-login-sources.js';
 import type { KeyRegistry } from '../auth/principals.js';
 import type { AccessGate, GateDeps } from '../auth/access-gate.js';
 import type { PairCodes } from '../auth/pair-code.js';
@@ -593,6 +593,10 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     machine: async () => (await detectProvider('claude')).signedIn,
   });
   setClaudeSignedInSource(claudeAccountSignedIn);
+  const boxAuthenticated = makeBoxClaudeAuthenticated({
+    usesCleanLogin: () => claudeLogin.usesCleanLogin, cleanAuthenticated: () => claudeLogin.isAuthenticated(),
+    signedIn: () => claudeAccountSignedIn(),
+  });
   claudeLogin.onAccountToken = async (token, label, accountId) => {
     // Profile first, so signing an existing account in again updates it (adoptClaudeLoginToken).
     // With an account id ("Sign in again", W1-H) that account's token is replaced in place.
@@ -732,7 +736,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   // Per-box state projection for the OS control plane (design §4.4.5); started by the timers.
   const boxHeartbeat = new HeartbeatService(db, () => ({
     // Token mode: the sign-in is an account now, so the old single file no longer says it (review of #189).
-    authenticated: boxClaudeAuthenticated({ accounts, usesCleanLogin: claudeLogin.usesCleanLogin, cleanAuthenticated: () => claudeLogin.isAuthenticated() }),
+    authenticated: boxAuthenticated(),
     toolsReachable: osConnections.snapshot().reachable,
     usage7d: usage.total(7),
     usageByModel7d: usage.byModel(7),

@@ -86,12 +86,24 @@ export function makeClaudeSignedIn(d: {
 }
 
 /**
- * "This box is signed in to Claude", for the hosted heartbeat. The clean login keeps its own
- * answer. In token mode the sign-in is an account now (the old single file is not written), so
- * the answer is: the default Claude account has a stored sign-in.
+ * "This box is signed in to Claude", for the hosted heartbeat, which reads it synchronously. The
+ * clean login keeps its own (cached) answer. In token mode the sign-in is an account now (the old
+ * single file is not written), so the answer is the same checker the gates use, for the default
+ * Claude account: a stored sign-in, or the machine login when the default is the CLI login. Each
+ * read gives the last known answer and starts a refresh; a check that cannot answer keeps it.
  */
-export function boxClaudeAuthenticated(d: { accounts: Pick<AccountsStore, 'defaultId' | 'claudeToken'>; usesCleanLogin: boolean; cleanAuthenticated: () => boolean }): boolean {
-  if (d.usesCleanLogin) return d.cleanAuthenticated();
-  const def = d.accounts.defaultId('claude');
-  return def !== 'cli' && d.accounts.claudeToken(def) !== null;
+export function makeBoxClaudeAuthenticated(d: { usesCleanLogin: () => boolean; cleanAuthenticated: () => boolean; signedIn: () => Promise<SignedIn> }): () => boolean {
+  let known = false;
+  let asking = false;
+  const refresh = (): void => {
+    if (asking) return;
+    asking = true;
+    d.signedIn().then((v) => { if (v !== 'unknown') known = v; }).catch(() => { /* keeps the last known answer */ }).finally(() => { asking = false; });
+  };
+  if (!d.usesCleanLogin()) refresh();
+  return () => {
+    if (d.usesCleanLogin()) return d.cleanAuthenticated();
+    refresh();
+    return known;
+  };
 }

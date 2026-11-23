@@ -607,6 +607,19 @@ describe('NewThreadModal accounts', () => {
     expect(screen.queryByText(/isn't signed in/)).toBeNull();
     expect(screen.getByRole('button', { name: /start new thread/i })).toBeInTheDocument();
     first.unmount();
+    // Review round 2: the daemon says the default account (the saved sign-in) is signed in, and the
+    // machine login is not. A thread that the person puts on the CLI login must be gated: it does
+    // not borrow the answer of the default account.
+    (api.recheckProviders as any).mockResolvedValue([{ name: 'claude', installed: true, signedIn: true, machineSignedIn: false }, { name: 'codex', installed: true, signedIn: true }]);
+    (api.getAccounts as any).mockResolvedValueOnce(withSaved('acc-2'));
+    const second = render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+    expect(await screen.findByRole('combobox', { name: 'Account' })).toHaveTextContent('Work');
+    expect(screen.getByRole('button', { name: /start new thread/i })).toBeInTheDocument();
+    pickAccount(/CLI login/);
+    expect(await screen.findByText(/isn't signed in/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /start new thread/i })).toBeNull();
+    second.unmount();
+    (api.recheckProviders as any).mockResolvedValue(signedOut);
     // The default is the CLI login and the machine login is signed out: the gate is right.
     (api.getAccounts as any).mockResolvedValueOnce(withSaved('cli'));
     render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);

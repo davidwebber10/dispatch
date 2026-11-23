@@ -361,7 +361,11 @@ export interface CodexRecentSession { id: string; mtime: number; preview: string
 
 // Setup / onboarding — mirrors core /api/setup.
 export type ProviderName = 'claude' | 'codex' | 'grok' | 'opencode';
-export interface ProviderStatus { name: ProviderName; installed: boolean; version?: string; signedIn: boolean | 'unknown'; }
+export interface ProviderStatus {
+  name: ProviderName; installed: boolean; version?: string; signedIn: boolean | 'unknown';
+  /** Claude only: the answer of the machine's own login. `signedIn` is the default Claude account's. Absent on an older daemon. */
+  machineSignedIn?: boolean | 'unknown';
+}
 /** Result of POST /api/setup/install/:provider — the re-detected truth, not the exit code. */
 export interface InstallResult { ok: boolean; output: string; status: ProviderStatus; loginCommand: string; }
 export interface TailscaleStatus { installed: boolean; running: boolean; dnsName?: string; url?: string; }

@@ -251,3 +251,28 @@ Four findings, all real, all fixed on the branch:
   file, and checks that the base environment names no Claude login variable. It is still a scan
   of text: a command built in a variable is not seen, and the base environment with no token is
   what protects that case.
+
+### Review round 2 (the last round, 2026-11-23)
+
+Four more findings, all real, all fixed:
+
+- **A thread that the person puts on the CLI login borrowed the answer of a saved default.** The
+  setup routes now give two answers for Claude: `signedIn` (the default account) and
+  `machineSignedIn` (the machine's own login). The New Thread window asks the second one for a
+  thread on the CLI login.
+- **An unknown answer of the default account fell back to the machine's answer.** It stays
+  "unknown" now. The answer of one login is never used for another.
+- **The heartbeat in token mode was wrong for a CLI default.** It now reads a cached answer of
+  the same checker the gates use (`makeBoxClaudeAuthenticated`), for any kind of default.
+- **A place that the scan cannot see could still inherit a token** from the daemon's own
+  environment. `inheritedEnv` now drops `CLAUDE_CODE_OAUTH_TOKEN`: no child gets a Claude login
+  that an account did not give it. This also holds for a shell tab.
+
+The end-to-end check was run again for the hardest install: a saved sign-in as the default, the
+machine login signed out, and a token in the daemon's own environment. The setup routes said
+`signedIn: true, machineSignedIn: false`; the worker gate was open; a thread and a Chat turn got
+the saved sign-in; a thread on the CLI login got the machine login; no process got the daemon's
+token.
+
+The reviewer's last verdict was NO-SHIP on the commit before these fixes. No third round was
+run: none of the round 2 findings was High.
