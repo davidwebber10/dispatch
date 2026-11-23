@@ -1,4 +1,4 @@
-import { describe, expect, test, beforeEach, afterEach } from 'vitest';
+import { describe, expect, test, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -132,6 +132,24 @@ describe('ClaudeLoginService', () => {
     expect(fs.existsSync(path.join(dir, 'claude-oauth-token'))).toBe(false);
     expect(changed).toBe(1);
     svc.forgetSavedToken(); // no file: no error
+  });
+
+  test('forgetSavedToken() does not hide a file that could not be deleted', () => {
+    const file = path.join(dir, 'claude-oauth-token');
+    fs.writeFileSync(file, 'sk-ant-oat01-OLD', { mode: 0o600 });
+    const svc = new ClaudeLoginService(dir, (() => fakePty().spawn()) as any);
+    let changed = 0;
+    svc.onChange(() => { changed += 1; });
+    const real = fs.rmSync.bind(fs);
+    const spy = vi.spyOn(fs, 'rmSync').mockImplementation((target, options) => {
+      if (String(target) === file) throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+      return real(target, options);
+    });
+    try {
+      expect(() => svc.forgetSavedToken()).toThrow(/EACCES/);
+      expect(svc.getToken()).toBe('sk-ant-oat01-OLD');
+      expect(changed).toBe(0);
+    } finally { spy.mockRestore(); }
   });
 
   test('signOut() forgets the token', async () => {

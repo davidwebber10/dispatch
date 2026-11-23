@@ -188,9 +188,17 @@ export function createAccountsRouter(accounts: AccountsStore, claudeLogin: Claud
       } catch (err) { return void res.status(500).json({ error: clientMessage(err) }); }
     }
     try {
+      // The saved login came from the old single-login file. The file goes first: if it cannot be
+      // deleted the account stays and the owner is told, because a token left on disk still reaches
+      // processes and makes the account again at the next start (issue 185).
+      if (provider === 'claude' && id === 'saved' && accounts.has('claude', 'saved')) {
+        try { claudeLogin.forgetSavedToken(); }
+        catch (err) {
+          console.error('[accounts] the saved login was not removed: its token file could not be deleted:', (err as NodeJS.ErrnoException)?.code ?? 'error');
+          return void res.status(500).json({ error: 'The saved login was not removed: its token file could not be deleted. Check the permissions of the Dispatch data folder, then try again.' });
+        }
+      }
       if (!accounts.remove(provider, id)) return void res.status(404).json({ error: 'unknown account' });
-      // The saved login came from the old single-login file: forget the file too, or the next start brings the account back.
-      if (provider === 'claude' && id === 'saved') claudeLogin.forgetSavedToken();
       // Its threads lose the pin and run on the default from their next start (what the notice said).
       const unpinned = extras.threads?.unpin(provider, id) ?? 0;
       res.json({ unpinned });
