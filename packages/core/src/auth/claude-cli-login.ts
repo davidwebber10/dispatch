@@ -130,6 +130,8 @@ interface Live {
   err: string;
   /** Where this attempt's stderr was when the last code went in. */
   errFrom: number;
+  /** The last code that went in, so that it is never repeated in a message. '' before the first one. */
+  code: string;
   exitCode: number | null;
   configDir: string | null;
   tag: unknown;
@@ -216,7 +218,7 @@ export class ClaudeCliLogin {
       return { ...session };
     }
     const live: Live = {
-      session, child, out: '', err: '', errFrom: 0, exitCode: null, configDir, tag: target.tag ?? null,
+      session, child, out: '', err: '', errFrom: 0, code: '', exitCode: null, configDir, tag: target.tag ?? null,
       timer: setTimeout(() => this.fail(live, MSG.timeout), this.sessionTimeoutMs),
     };
     live.timer.unref?.();
@@ -272,6 +274,7 @@ export class ClaudeCliLogin {
     live.session.status = 'exchanging';
     live.session.error = null;
     live.errFrom = live.err.length;
+    live.code = code;
     try { live.child.stdin.write(code + '\n'); } catch { this.fail(live, MSG.ended); return { ...live.session }; }
 
     const deadline = Date.now() + this.exchangeTimeoutMs;
@@ -321,13 +324,14 @@ export class ClaudeCliLogin {
    * words, redacted, so the person is not told that a good code was wrong.
    */
   private failureText(live: Live): string | null {
-    const fresh = live.err.slice(live.errFrom);
-    const m = LOGIN_FAILED_RE.exec(fresh) ?? LOGIN_FAILED_RE.exec(live.err);
-    // No failure line we know: the last words on stderr are still the real reason (a credential that
-    // could not be stored, a network error). Without any words the caller keeps its own sentence.
-    const lastLine = m ? null : fresh.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).pop() ?? null;
-    if (!m && !lastLine) return null;
-    const why = redactLogText((m ? m[1] : lastLine) ?? '', 160).trim();
+    // Only a failure line we know is shown. Any other words on stderr (a warning, a stack frame, an
+    // echo of what was typed) are never put on the page: the caller keeps its fixed sentence.
+    const m = LOGIN_FAILED_RE.exec(live.err.slice(live.errFrom)) ?? LOGIN_FAILED_RE.exec(live.err);
+    if (!m) return null;
+    // The pasted code, whole or in halves, is never repeated to the page, whatever Claude Code wrote.
+    let said = m[1] ?? '';
+    for (const part of [live.code, ...live.code.split('#')]) if (part.length >= 2) said = said.split(part).join('[code]');
+    const why = redactLogText(said, 160).trim();
     if (!why || /wasn.t accepted|not accepted|invalid (?:code|grant)/i.test(why)) return MSG.rejected;
     return `${MSG.failedWith} ${why} Start it again.`;
   }

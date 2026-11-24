@@ -97,7 +97,7 @@ describe('ClaudeLogin', () => {
     expect(link).toHaveAttribute('target', '_blank');
     fireEvent.change(screen.getByRole('textbox', { name: 'Login code' }), { target: { value: '  abc#123  ' } });
     fireEvent.click(screen.getByRole('button', { name: 'Submit code' }));
-    await waitFor(() => expect(code).toHaveBeenCalledWith('abc#123'));
+    await waitFor(() => expect(code).toHaveBeenCalledWith('abc#123', 's1'));
     await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
   });
 
@@ -133,6 +133,21 @@ describe('ClaudeLogin', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Log in to Claude' }));
     expect(await screen.findByText(/claude not found/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Log in to Claude' })).toBeEnabled();
+  });
+});
+
+// Review of #193: with two screens open, a code must reach only the attempt its own screen shows.
+describe('ClaudeLogin sends the code with the attempt it belongs to', () => {
+  it('the code goes with the id of the attempt on screen', async () => {
+    vi.spyOn(api, 'claudeLoginStart').mockResolvedValue(session({ id: 'attempt-7' }));
+    const send = vi.spyOn(api, 'claudeLoginCode').mockResolvedValue(session({ id: 'attempt-7', status: 'complete', url: null }));
+    const onDone = vi.fn();
+    render(<ClaudeLogin onDone={onDone} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Log in to Claude' }));
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Login code' }), { target: { value: ' abc ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit code' }));
+    await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
+    expect(send).toHaveBeenCalledWith('abc', 'attempt-7');
   });
 });
 

@@ -219,7 +219,11 @@ export function createAccountsRouter(accounts: AccountsStore, claudeLogin: Claud
       // An account with a login folder on a local install: Claude Code signs the folder out first. On
       // macOS its credential is in the keychain, so deleting the folder alone would leave it there.
       const folder = provider === 'claude' ? accounts.claudeConfigDir(id) : null;
-      if (folder) await claudeLogin.signOutAccountFolder?.(folder);
+      if (folder) {
+        // A folder that stays signed in keeps its account, so the removal can be tried again.
+        try { await claudeLogin.signOutAccountFolder?.(folder); }
+        catch (err) { return void res.status(500).json({ error: `The account was not removed. ${clientMessage(err)}` }); }
+      }
       if (!accounts.remove(provider, id)) return void res.status(404).json({ error: 'unknown account' });
       // Its threads lose the pin and run on the default from their next start (what the notice said).
       const unpinned = extras.threads?.unpin(provider, id) ?? 0;

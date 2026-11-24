@@ -108,7 +108,7 @@ export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to
     setError(null);
     setPhase('sending');
     try {
-      const s = await api.claudeLoginCode(c);
+      const s = await api.claudeLoginCode(c, attemptId.current);
       if (s.status === 'complete') { finish(s); return; }
       setError(s.error ?? 'The login did not finish. Try the code again.');
       // A refused code makes the CLI start a new sign-in: the link is new, the old code is dead.

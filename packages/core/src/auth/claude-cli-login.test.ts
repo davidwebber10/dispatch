@@ -228,13 +228,22 @@ describe('the reason of a failed sign-in is the one Claude Code gives', () => {
     expect(s.error).toBe(`${MSG.failedWith} A keychain cannot be found to store the login. Start it again.`);
   });
 
-  test('a failure with other words on stderr shows the last line; with no words it stays the "not accepted" sentence', async () => {
-    const a = harness((_l, c) => { c.stderr.write('some warning\nsecurity: The specified keychain could not be found.\n'); c.exit(1); });
+  test('words on stderr that are not a failure line we know are never shown: the fixed sentence stays, as before', async () => {
+    const a = harness((_l, c) => { c.stderr.write('some warning\n    at exchange (file:///opt/cli.js:1:1)\nab#cd\n'); c.exit(1); });
     await a.login.start({});
-    expect((await a.login.submitCode('c#s')).error).toBe(`${MSG.failedWith} security: The specified keychain could not be found. Start it again.`);
+    expect((await a.login.submitCode('ab#cd')).error).toBe(MSG.rejected);
     const b = harness((_l, c) => c.exit(1));
     await b.login.start({});
     expect((await b.login.submitCode('c#s')).error).toBe(MSG.rejected);
+  });
+
+  test('a failure line that repeats the pasted code never shows it, whole or in halves', async () => {
+    const { login } = harness((_l, c) => { c.stderr.write("Couldn't log in: the code ab12#cd34 (ab12, cd34) could not be exchanged.\n"); c.exit(1); });
+    await login.start({});
+    const s = await login.submitCode('ab12#cd34');
+    expect(s.error).toContain(MSG.failedWith);
+    expect(s.error).not.toContain('ab12');
+    expect(s.error).not.toContain('cd34');
   });
 });
 
@@ -246,13 +255,14 @@ describe('ClaudeLoginService: a full sign-in for one account on a local install'
   function tokenPty() {
     const em = new EventEmitter();
     let killed = false;
+    const written: string[] = [];
     const proc: any = {
       onData: (cb: (d: string) => void) => { em.on('data', cb); setTimeout(() => em.emit('data', 'https://claude.com/cai/oauth/authorize?code=true&client_id=x\n'), 2); },
       onExit: (cb: () => void) => em.on('exit', cb),
-      write: () => {},
+      write: (d: string) => { written.push(d); },
       kill: () => { killed = true; em.emit('exit'); },
     };
-    return { spawn: (() => proc) as any, get killed() { return killed; } };
+    return { spawn: (() => proc) as any, written, get killed() { return killed; } };
   }
   const withPrimary = async (fn: (dir: string, primary: string) => Promise<void>) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cl-folder-'));
@@ -333,7 +343,7 @@ describe('ClaudeLoginService: a full sign-in for one account on a local install'
 
   test('removing the account signs its folder out with Claude Code (the credential can be in the keychain)', () => withPrimary(async (dir) => {
     const svc = new ClaudeLoginService(dir, tokenPty().spawn);
-    const { login, exec } = harness(() => {});
+    const { login, exec } = harness(() => {}, '{"loggedIn":false}');
     svc.useFolderLogin(login);
     const folder = path.join(dir, 'claude-accounts', 'acct1');
     await svc.signOutAccountFolder(folder);
@@ -376,6 +386,95 @@ describe('ClaudeLoginService: a full sign-in for one account on a local install'
     await svc.submitCode('c#s');
     svc.cancel(); // a later cancel must not touch the folder of the account that now exists
     expect(fs.readdirSync(root)).toHaveLength(2);
+  }));
+
+  // Review of #193: cleanup and completion belong to ONE attempt.
+  test('a start that was replaced before its link came does not delete the folder of the attempt that replaced it', () => withPrimary(async (dir) => {
+    const svc = new ClaudeLoginService(dir, tokenPty().spawn);
+    let n = 0;
+    const children: FakeChild[] = [];
+    const login = new ClaudeCliLogin({
+      spawn: ((_cmd: string, _args: string[]) => {
+        const c = new FakeChild(() => {});
+        children.push(c);
+        if (n++ > 0) setTimeout(() => { c.stdout.write(PRINTED); }, 2); // the first one never prints its link
+        return c as any;
+      }) as any,
+      exec: async () => ({ stdout: '{"loggedIn":false}', code: 0 }), env: () => ({ PATH: '/bin' }), startTimeoutMs: 2000, exchangeTimeoutMs: 1000,
+    });
+    svc.useFolderLogin(login);
+    const root = path.join(dir, 'claude-accounts');
+    const first = svc.startForAccount('A', undefined, undefined, { folder: true });
+    await new Promise((r) => setTimeout(r, 20));
+    const second = await svc.startForAccount('B', undefined, undefined, { folder: true });
+    expect(second.status).toBe('awaiting_code');
+    expect((await first).status).toBe('error');
+    expect(fs.readdirSync(root)).toHaveLength(1); // B's folder; A's is gone
+    expect(svc.status()?.id).toBe(second.id);
+    svc.cancel();
+    expect(fs.readdirSync(root)).toHaveLength(0);
+  }));
+
+  test('a cancel while Claude Code confirms the sign-in makes no account, and the login that was written is signed out', () => withPrimary(async (dir) => {
+    const svc = new ClaudeLoginService(dir, tokenPty().spawn);
+    let answer!: (v: { stdout: string; code: number }) => void;
+    const execCalls: string[] = [];
+    const children: FakeChild[] = [];
+    const login = new ClaudeCliLogin({
+      spawn: (() => { const c = new FakeChild((_l, ch) => ch.exit(0)); children.push(c); setTimeout(() => c.stdout.write(PRINTED), 2); return c as any; }) as any,
+      exec: (async (_c: string, args: string[], o: { env: NodeJS.ProcessEnv }) => {
+        execCalls.push(`${args.join(' ')} ${path.basename(String(o.env.CLAUDE_CONFIG_DIR))}`);
+        if (args.join(' ') === 'auth status' && execCalls.filter((x) => x.startsWith('auth status')).length === 1) return new Promise((r) => { answer = r; });
+        return { stdout: '{"loggedIn":false}', code: 0 };
+      }) as any,
+      env: () => ({ PATH: '/bin' }), startTimeoutMs: 1000, exchangeTimeoutMs: 1000,
+    });
+    svc.useFolderLogin(login);
+    const got: unknown[] = [];
+    svc.onAccountConfigDir = (i) => { got.push(i); };
+    const root = path.join(dir, 'claude-accounts');
+    await svc.startForAccount('Team', undefined, undefined, { folder: true });
+    const id = fs.readdirSync(root)[0];
+    const submit = svc.submitCode('c#s');
+    await vi.waitFor(() => expect(answer).toBeTypeOf('function'));
+    svc.cancel();
+    answer({ stdout: '{"loggedIn":true,"authMethod":"claude.ai"}', code: 0 });
+    await submit;
+    await vi.waitFor(() => expect(execCalls).toContain(`auth logout ${id}`));
+    expect(got).toEqual([]);
+    await vi.waitFor(() => expect(fs.readdirSync(root)).toHaveLength(0));
+    expect(svc.status()).toBeNull();
+  }));
+
+  test('a code from a screen of another attempt is refused before it reaches any sign-in', () => withPrimary(async (dir) => {
+    const pty = tokenPty();
+    const svc = new ClaudeLoginService(dir, pty.spawn);
+    const { login, children } = harness((_l, c) => c.exit(0));
+    svc.useFolderLogin(login);
+    const full = await svc.startForAccount('Team', 'acct1', undefined, { folder: true });
+    const token = await svc.startForAccount('Work');
+    // The first screen still shows the full sign-in and sends its code with its own attempt id.
+    await expect(svc.submitCode('c#s', full.id)).rejects.toMatchObject({ code: 'no_session' });
+    expect(pty.written).toEqual([]);
+    const again = await svc.startForAccount('Team', 'acct1', undefined, { folder: true });
+    await expect(svc.submitCode('token-code', token.id)).rejects.toMatchObject({ code: 'no_session' });
+    expect(children[children.length - 1].lines).toEqual([]);
+    // The right id, or no id (an older page), still goes through.
+    expect((await svc.submitCode('c#s', again.id)).status).toBe('complete');
+  }));
+
+  test('removing the account fails in plain words when Claude Code still says the folder is signed in', () => withPrimary(async (dir) => {
+    const svc = new ClaudeLoginService(dir, tokenPty().spawn);
+    const stillIn = harness(() => {}); // `auth status` answers loggedIn: true after the logout
+    svc.useFolderLogin(stillIn.login);
+    await expect(svc.signOutAccountFolder(path.join(dir, 'claude-accounts', 'acct1'))).rejects.toThrow('Claude Code could not sign this account out');
+    const out = harness(() => {}, '{"loggedIn":false}');
+    svc.useFolderLogin(out.login);
+    await expect(svc.signOutAccountFolder(path.join(dir, 'claude-accounts', 'acct1'))).resolves.toBeUndefined();
+    // No answer (Claude Code is not installed any more): the removal goes on, nothing can be signed out.
+    const silent = harness(() => {}, 'not json');
+    svc.useFolderLogin(silent.login);
+    await expect(svc.signOutAccountFolder(path.join(dir, 'claude-accounts', 'acct1'))).resolves.toBeUndefined();
   }));
 
   test('with no folder sign-in wired, a full sign-in is refused in plain words and nothing starts', () => withPrimary(async (dir) => {

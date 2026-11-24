@@ -563,7 +563,8 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     // A local install: the new folder takes over "the first run is done" and the trusted project
     // folders of this computer, so its first interactive thread does not open on Claude Code's
     // first-run screen (auth/claude-account-state.ts). A hosted box has its own image state.
-    if (localInstall) seedAccountClaudeState(configDir);
+    // Only for a NEW account: "Sign in again" must not change what the account already says.
+    if (localInstall && !accounts.has('claude', id)) seedAccountClaudeState(configDir);
     accounts.upsertClaudeConfigDir({ id, label, configDir, ...(status.email ? { email: status.email } : {}), ...(planOf(status) ? { plan: planOf(status)! } : {}) });
   };
   // Added Codex accounts sign in with `codex login --device-auth` under the threads' spawn env

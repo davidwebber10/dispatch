@@ -113,6 +113,23 @@ describe('accounts routes: a Claude account with its own login folder', () => {
     expect(store.has('claude', 'acct1')).toBe(false);
   });
 
+  it('a folder that Claude Code could not sign out keeps its account and its folder, and the answer says why', async () => {
+    const folder = path.join(dir, 'claude-accounts', 'acct1');
+    fs.mkdirSync(folder, { recursive: true });
+    store.upsertClaudeConfigDir({ id: 'acct1', label: 'Team', configDir: folder });
+    const app = express();
+    app.use(express.json());
+    app.use('/api/accounts', createAccountsRouter(store, {
+      offersFolderLogin: true, usesCleanLogin: false, forgetSavedToken: () => {},
+      signOutAccountFolder: async () => { throw new Error('Claude Code could not sign this account out.'); },
+    } as never, { threads: { pinnedTo: () => [], unpin: () => { order.push('unpin'); return 0; } } }));
+    const r = await request(app).delete('/api/accounts/claude/acct1').expect(500);
+    expect(r.body.error).toBe('The account was not removed. Claude Code could not sign this account out.');
+    expect(store.has('claude', 'acct1')).toBe(true);
+    expect(fs.existsSync(folder)).toBe(true);
+    expect(order).toEqual([]);
+  });
+
   it('removing an account with a saved token signs no folder out', async () => {
     const app = appWith({ offers: true });
     const saved = store.addClaude({ token: 'tok-w', label: 'Work' });

@@ -155,8 +155,8 @@ Not seen with the real command: the usage figures of the account.
 - **The wrong reason for a failed sign-in.** The first two attempts failed because the fake home
   folder had no keychain, and the page said "Claude did not accept that code". Claude Code
   2.1.331 starts its failure line with "Couldn't log in:", and Dispatch knew only the older
-  "Login failed:". Dispatch now reads both, and with neither it shows the last line that Claude
-  Code wrote. It affects a hosted box too, when its image takes a newer Claude Code.
+  "Login failed:". Dispatch now reads both. It affects a hosted box too, when its image takes a
+  newer Claude Code.
 - **A folder left by each failed attempt** for a new account. The folder of an attempt that ends
   with no account is deleted now.
 - **The first-run screen.** After the sign-in, the folder takes over two things from the state
@@ -176,7 +176,32 @@ folder when that file is at most 60 seconds older than the thread
 that file. The later, right session id of the second thread did not replace the adopted one. It
 is not caused by this change: it needs only a project with one transcript.
 
-## 11. Open before the release
+## 11. Review round 1 (an independent Codex review, 2026-11-24)
+
+Verdict: ship with fixes. Four findings on this change, all real, all fixed with a test:
+
+- **Cleanup was not tied to one attempt (High).** A start that was replaced before its link came
+  answered late and deleted the folder of the attempt that replaced it. And a cancel while Claude
+  Code confirmed a sign-in deleted the folder, after which the confirmation still saved an
+  account for it. Now an answer deletes only the folder of its own attempt, and a completion
+  that arrives for a deleted folder makes no account: the folder is signed out and removed.
+- **Words from stderr could reach the page (High).** The first fix of the failure reason showed
+  the last line of stderr when no known failure line was there. That line can be a stack frame
+  or an echo of the pasted code. Now only a known failure line is shown, as before this change,
+  and the pasted code, whole or in halves, is cut out of it.
+- **A sign-out that failed still removed the account (Medium).** The folder and the account
+  went, and the login stayed in the keychain. Now Dispatch asks Claude Code after the sign-out:
+  a folder that is still signed in keeps its account, and the answer says so. When Claude Code
+  cannot be run at all, the removal goes on.
+- **A code from a stale screen could reach the other kind of sign-in (Medium).** With two
+  screens open, the second sign-in replaced the first, and the first screen could still send its
+  code. The page now sends the id of its attempt with the code, and a code for another attempt
+  is refused before it reaches any sign-in. This holds for every kind of sign-in.
+
+One more change from the review: the first-run state is taken over only for a new account, not
+at "Sign in again".
+
+## 12. Open before the release
 
 1. **A real sign-in through the page**, by the owner, on an isolated daemon with the real
    `claude`: the link, the code, a thread in each mode, the connectors in that thread, the usage

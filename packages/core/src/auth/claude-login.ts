@@ -198,6 +198,15 @@ export class ClaudeLoginService {
   /** A sign-in with `claude auth login` ended signed in: an account folder is reported, then every listener. */
   private readonly accountSignedIn = async ({ configDir, tag, status }: { configDir: string | null; tag: unknown; status: ClaudeAuthStatus }): Promise<void> => {
     const t = tag as { kind: 'primary' } | { kind: 'account'; id: string; label: string } | null;
+    // A sign-in for a new account that was cancelled or replaced while Claude Code confirmed it (a
+    // local install): its folder is already gone, so there is no account. Claude Code wrote the login
+    // all the same, on macOS into the keychain: sign that folder out, then remove what it made again.
+    if (!this.clean && configDir && configDir === this.droppedFolder) {
+      this.droppedFolder = null;
+      await this.folder?.logout(configDir).catch(() => undefined);
+      this.removeAttemptFolder(configDir);
+      return;
+    }
     // The account exists now: its folder is no longer the folder of an attempt.
     if (configDir && configDir === this.newFolder) this.newFolder = null;
     if (t && t.kind === 'account' && configDir) await this.onAccountConfigDir?.({ id: t.id, label: t.label, configDir, status });
@@ -225,6 +234,8 @@ export class ClaudeLoginService {
   private folderTurn = false;
   /** The folder made for a NEW account by the attempt in flight. It is deleted when the attempt ends with no account. */
   private newFolder: string | null = null;
+  /** The last such folder that was deleted: a completion that arrives for it afterwards is undone, not saved. */
+  private droppedFolder: string | null = null;
 
   useFolderLogin(login: ClaudeCliLogin): void {
     this.folder = login;
@@ -245,13 +256,23 @@ export class ClaudeLoginService {
   private dropNewFolder(): void {
     const dir = this.newFolder;
     this.newFolder = null;
-    if (!dir || path.basename(path.dirname(dir)) !== 'claude-accounts') return;
+    if (!dir) return;
+    this.droppedFolder = dir;
+    this.removeAttemptFolder(dir);
+  }
+
+  private removeAttemptFolder(dir: string): void {
+    if (path.basename(path.dirname(dir)) !== 'claude-accounts') return;
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* an empty folder that stays is harmless */ }
   }
 
-  /** A folder attempt answered: an attempt that ended in an error leaves no folder for a new account. */
-  private afterFolderStep(session: LoginSession): LoginSession {
-    if (session.status === 'error') this.dropNewFolder();
+  /**
+   * A step of a folder attempt answered. An attempt that ended in an error leaves no folder for a
+   * new account. `mine` is the folder of THAT attempt: an answer that comes after another attempt
+   * took over must not delete the other attempt's folder (review of #193).
+   */
+  private afterFolderStep(session: LoginSession, mine: string | null): LoginSession {
+    if (session.status === 'error' && mine !== null && this.newFolder === mine) this.dropNewFolder();
     return session;
   }
 
@@ -263,6 +284,11 @@ export class ClaudeLoginService {
   async signOutAccountFolder(configDir: string): Promise<void> {
     if (this.clean || !this.folder) return;
     await this.folder.logout(configDir);
+    // The sign-out command hides its own failure. Ask: a folder that is still signed in keeps its
+    // account, so the person can try again. No answer at all means Claude Code cannot be run, and
+    // then nothing can be signed out: the removal goes on.
+    const st = await this.folder.authStatus(configDir, { fresh: true });
+    if (st?.loggedIn === true) throw new Error('Claude Code could not sign this account out. Try again, or run `claude auth logout` for it in a terminal.');
   }
 
   /**
@@ -346,7 +372,7 @@ export class ClaudeLoginService {
     if (this.folderTurn && this.folder) {
       // An attempt that ended by itself (a timeout, a CLI that exited) is seen here by the page's poll.
       const s = this.folder.status();
-      return s ? this.afterFolderStep(s) : null;
+      return s ? this.afterFolderStep(s, this.newFolder) : null;
     }
     const session = this.live?.session ?? this.finished;
     return session ? { ...session } : null;
@@ -388,7 +414,7 @@ export class ClaudeLoginService {
       if (configDir !== this.newFolder) this.dropNewFolder();
       this.folderTurn = true;
       if (!accountId) this.newFolder = configDir;
-      return this.afterFolderStep(await login.start({ configDir, tag }));
+      return this.afterFolderStep(await login.start({ configDir, tag }), accountId ? null : configDir);
     }
     this.endFolderTurn();
     return this.startLogin(label.trim() || 'Claude account', accountId || null);
@@ -472,9 +498,15 @@ export class ClaudeLoginService {
    * Submit the code the user copied after authorising, and resolve once a token
    * has been captured (or the attempt fails).
    */
-  async submitCode(code: string): Promise<LoginSession> {
+  async submitCode(code: string, attemptId?: string): Promise<LoginSession> {
+    // A screen that still shows an attempt which another one replaced (a second tab): its code must
+    // reach no sign-in at all. A page that sends no id (an older one) goes on as before.
+    if (attemptId && this.status()?.id !== attemptId) throw Object.assign(new Error('no login in progress'), { code: 'no_session' });
     if (this.clean) return this.clean.login.submitCode(code);
-    if (this.folderTurn && this.folder) return this.afterFolderStep(await this.folder.submitCode(code));
+    if (this.folderTurn && this.folder) {
+      const mine = this.newFolder;
+      return this.afterFolderStep(await this.folder.submitCode(code), mine);
+    }
     const live = this.live;
     // Structured so the UI can offer "start again" instead of surfacing a raw 400.
     // Reachable whenever the daemon restarted while the user was away authorising.
