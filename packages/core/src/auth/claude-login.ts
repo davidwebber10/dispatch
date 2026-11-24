@@ -195,22 +195,65 @@ export class ClaudeLoginService {
   /** A hosted added account signed in (its own config dir). The daemon adds or updates the account. */
   onAccountConfigDir: ((info: { id: string; label: string; configDir: string; status: ClaudeAuthStatus }) => void | Promise<void>) | null = null;
 
+  /** A sign-in with `claude auth login` ended signed in: an account folder is reported, then every listener. */
+  private readonly accountSignedIn = async ({ configDir, tag, status }: { configDir: string | null; tag: unknown; status: ClaudeAuthStatus }): Promise<void> => {
+    const t = tag as { kind: 'primary' } | { kind: 'account'; id: string; label: string } | null;
+    if (t && t.kind === 'account' && configDir) await this.onAccountConfigDir?.({ id: t.id, label: t.label, configDir, status });
+    this.onChangeCb?.();
+  };
+
   useCleanLogin(login: ClaudeCliLogin, opts: { ownerEmail?: string | null } = {}): void {
     this.clean = { login, ownerEmail: opts.ownerEmail?.trim() || null };
-    login.onLoggedIn = async ({ configDir, tag, status }) => {
-      const t = tag as { kind: 'primary' } | { kind: 'account'; id: string; label: string } | null;
-      if (t && t.kind === 'account' && configDir) await this.onAccountConfigDir?.({ id: t.id, label: t.label, configDir, status });
-      this.onChangeCb?.();
-    };
+    login.onLoggedIn = this.accountSignedIn;
     // After the build: the env provider can name services that do not exist yet (found in a box run).
     setImmediate(() => { void login.authStatus().then(() => this.onChangeCb?.()); });
   }
 
   get usesCleanLogin(): boolean { return this.clean !== null; }
 
-  /** `claude auth status` of the primary login (clean login only; cached briefly). */
+  // --- a full sign-in for ONE account on a local install (spec 2026-11-24) ---
+  /**
+   * A local install keeps `claude setup-token` for its ordinary sign-ins. An account can instead be
+   * signed in with Claude Code's own `claude auth login` in a folder of its own, as on a hosted box:
+   * that login keeps the claude.ai connectors of the account, which a setup-token token cannot fetch.
+   * Dispatch holds no token for such an account.
+   */
+  private folder: ClaudeCliLogin | null = null;
+  /** The attempt in flight, or the last one, is a folder sign-in: its status, its code and a cancel go there. */
+  private folderTurn = false;
+
+  useFolderLogin(login: ClaudeCliLogin): void {
+    this.folder = login;
+    login.onLoggedIn = this.accountSignedIn;
+  }
+
+  /** This install can sign an account in with a folder of its own, next to the token sign-in. */
+  get offersFolderLogin(): boolean { return this.clean === null && this.folder !== null; }
+
+  private endFolderTurn(): void {
+    if (!this.folderTurn) return;
+    this.folderTurn = false;
+    this.folder?.cancel();
+  }
+
+  /**
+   * Sign an account folder out with Claude Code's own command, before the folder is deleted: on macOS
+   * the credential is in the keychain, not in the folder. The clean login keeps its own way (the
+   * credential is a file in the folder).
+   */
+  async signOutAccountFolder(configDir: string): Promise<void> {
+    if (this.clean || !this.folder) return;
+    await this.folder.logout(configDir);
+  }
+
+  /**
+   * `claude auth status`, cached briefly. The clean login: the primary login, or an account folder.
+   * A local install: an account folder only (the login of the computer has its own check, setup/detect.ts).
+   */
   async cliStatus(o: { fresh?: boolean; configDir?: string | null } = {}): Promise<ClaudeAuthStatus | null> {
-    return this.clean ? this.clean.login.authStatus(o.configDir ?? null, o) : null;
+    if (this.clean) return this.clean.login.authStatus(o.configDir ?? null, o);
+    if (o.configDir && this.folder) return this.folder.authStatus(o.configDir, o);
+    return null;
   }
 
   /** A thread reported an auth error: ask Claude Code again at the next read (clean login only). */
@@ -281,6 +324,7 @@ export class ClaudeLoginService {
   // --- login flow ---------------------------------------------------------
   status(): LoginSession | null {
     if (this.clean) return this.clean.login.status();
+    if (this.folderTurn && this.folder) return this.folder.status();
     const session = this.live?.session ?? this.finished;
     return session ? { ...session } : null;
   }
@@ -296,6 +340,7 @@ export class ClaudeLoginService {
    */
   async start(): Promise<LoginSession> {
     if (this.clean) return this.clean.login.start({ email: this.clean.ownerEmail, tag: PRIMARY_TAG });
+    this.endFolderTurn();
     const target = this.genericTarget?.() ?? null;
     return this.startLogin(target ? target.label : null, target?.accountId ?? null, target ? { kind: target.accountId ? 'existing' : 'new', label: target.label } : undefined);
   }
@@ -304,15 +349,21 @@ export class ClaudeLoginService {
    * The same flow, but the captured token becomes a NEW account with this label (onAccountToken),
    * or, with `accountId`, replaces the token of that saved account ("Sign in again").
    */
-  async startForAccount(label: string, accountId?: string, dataDirForAccounts?: string): Promise<LoginSession> {
-    if (this.clean) {
-      // A hosted added account: its own config dir, shared parts linked to the primary (claude-config-dirs.ts).
+  async startForAccount(label: string, accountId?: string, dataDirForAccounts?: string, opts: { /** A full sign-in in a folder of the account (a local install; the clean login always is one). */ folder?: boolean } = {}): Promise<LoginSession> {
+    if (this.clean || opts.folder) {
+      const login = this.clean?.login ?? this.folder;
+      if (!login) throw new Error('This Dispatch cannot make a full sign-in. Update Dispatch, or use the sign-in that Dispatch keeps.');
+      // One sign-in at a time: a token attempt that waits for its code ends here.
+      if (!this.clean) this.cancelTokenAttempt();
+      // The account's own config dir, shared parts linked to the primary (claude-config-dirs.ts).
       const id = accountId || uuid().slice(0, 8);
       const base = dataDirForAccounts ?? this.dataDir;
       const configDir = prepareAccountConfigDir(base, id);
       const tag = this.accountTag(id, label.trim() || 'Claude account');
-      return this.clean.login.start({ configDir, tag });
+      if (!this.clean) this.folderTurn = true;
+      return login.start({ configDir, tag });
     }
+    this.endFolderTurn();
     return this.startLogin(label.trim() || 'Claude account', accountId || null);
   }
 
@@ -396,6 +447,7 @@ export class ClaudeLoginService {
    */
   async submitCode(code: string): Promise<LoginSession> {
     if (this.clean) return this.clean.login.submitCode(code);
+    if (this.folderTurn && this.folder) return this.folder.submitCode(code);
     const live = this.live;
     // Structured so the UI can offer "start again" instead of surfacing a raw 400.
     // Reachable whenever the daemon restarted while the user was away authorising.
@@ -501,6 +553,12 @@ export class ClaudeLoginService {
   /** Abandon any in-flight attempt. Safe to call when nothing is running. */
   cancel(): void {
     if (this.clean) { this.clean.login.cancel(); return; }
+    this.endFolderTurn();
+    this.cancelTokenAttempt();
+  }
+
+  /** End the `claude setup-token` attempt, when one is in flight, and forget the last one. */
+  private cancelTokenAttempt(): void {
     this.finished = null;
     if (!this.live) return;
     clearInterval(this.live.watch);

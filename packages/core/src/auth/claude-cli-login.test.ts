@@ -209,3 +209,115 @@ describe('a signed-out thread stops its process (hosted)', () => {
     off();
   });
 });
+
+// A full sign-in for ONE account on a local install (spec 2026-11-24): the token sign-in stays the
+// default path, and an account can instead get its own login folder, which keeps the claude.ai
+// connectors of that account.
+describe('ClaudeLoginService: a full sign-in for one account on a local install', () => {
+  /** A `claude setup-token` terminal that prints a link at once. */
+  function tokenPty() {
+    const em = new EventEmitter();
+    let killed = false;
+    const proc: any = {
+      onData: (cb: (d: string) => void) => { em.on('data', cb); setTimeout(() => em.emit('data', 'https://claude.com/cai/oauth/authorize?code=true&client_id=x\n'), 2); },
+      onExit: (cb: () => void) => em.on('exit', cb),
+      write: () => {},
+      kill: () => { killed = true; em.emit('exit'); },
+    };
+    return { spawn: (() => proc) as any, get killed() { return killed; } };
+  }
+  const withPrimary = async (fn: (dir: string, primary: string) => Promise<void>) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cl-folder-'));
+    const primary = path.join(dir, 'primary');
+    const prev = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = primary;
+    try { await fn(dir, primary); } finally {
+      if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prev;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
+  test('it runs `claude auth login` in the account folder, reports the account, and leaves the token login as it was', () => withPrimary(async (dir, primary) => {
+    fs.writeFileSync(path.join(dir, 'claude-oauth-token'), 'sk-ant-oat01-old');
+    const svc = new ClaudeLoginService(dir, tokenPty().spawn);
+    const { login, calls } = harness((_l, c) => c.exit(0));
+    svc.useFolderLogin(login);
+    expect(svc.usesCleanLogin).toBe(false);
+    expect(svc.offersFolderLogin).toBe(true);
+    const got: any[] = [];
+    svc.onAccountConfigDir = (i) => { got.push(i); };
+    const s = await svc.startForAccount('Team', undefined, undefined, { folder: true });
+    expect(s.status).toBe('awaiting_code');
+    const folder = calls[0].env.CLAUDE_CONFIG_DIR!;
+    expect(path.dirname(folder)).toBe(path.join(dir, 'claude-accounts'));
+    expect(calls[0].args).toEqual(['auth', 'login', '--claudeai']);
+    expect(calls[0].env.CLAUDE_CODE_OAUTH_TOKEN).toBe('');
+    expect(fs.readlinkSync(path.join(folder, 'projects'))).toBe(path.join(primary, 'projects'));
+    // The code and the status of this attempt go to the folder sign-in.
+    expect(svc.status()?.id).toBe(s.id);
+    const done = await svc.submitCode('c#s');
+    expect(done.status).toBe('complete');
+    expect(svc.status()?.status).toBe('complete');
+    expect(got).toHaveLength(1);
+    expect(got[0]).toMatchObject({ label: 'Team', configDir: folder });
+    expect(got[0].id).toBe(path.basename(folder));
+    // The token login of the install is not touched.
+    expect(svc.getToken()).toBe('sk-ant-oat01-old');
+    expect(svc.isAuthenticated()).toBe(true);
+  }));
+
+  test('"sign in again" for an account that has a folder uses the same folder', () => withPrimary(async (dir) => {
+    const svc = new ClaudeLoginService(dir, tokenPty().spawn);
+    const { login, calls } = harness(() => {});
+    svc.useFolderLogin(login);
+    await svc.startForAccount('Team', 'acct1', undefined, { folder: true });
+    expect(calls[0].env.CLAUDE_CONFIG_DIR).toBe(path.join(dir, 'claude-accounts', 'acct1'));
+    svc.cancel();
+  }));
+
+  test('one sign-in at a time: a token sign-in ends the folder one, and a folder sign-in ends the token one', () => withPrimary(async (dir) => {
+    const pty = tokenPty();
+    const svc = new ClaudeLoginService(dir, pty.spawn);
+    const { login, children } = harness(() => {});
+    svc.useFolderLogin(login);
+    await svc.startForAccount('Team', 'acct1', undefined, { folder: true });
+    const token = await svc.startForAccount('Work');
+    expect(children[0].killed).toBe(true);
+    expect(svc.status()?.id).toBe(token.id);
+    const folder = await svc.startForAccount('Team', 'acct1', undefined, { folder: true });
+    expect(pty.killed).toBe(true);
+    expect(svc.status()?.id).toBe(folder.id);
+    svc.cancel();
+    expect(svc.status()).toBeNull();
+    expect(children[1].killed).toBe(true);
+  }));
+
+  test('the sign-in state of a folder comes from Claude Code; the login of the computer is not asked here', () => withPrimary(async (dir) => {
+    const svc = new ClaudeLoginService(dir, tokenPty().spawn);
+    const { login, exec } = harness(() => {});
+    svc.useFolderLogin(login);
+    const st = await svc.cliStatus({ configDir: path.join(dir, 'claude-accounts', 'acct1'), fresh: true });
+    expect(st?.loggedIn).toBe(true);
+    expect((exec.mock.calls[0] as any)[2].env.CLAUDE_CONFIG_DIR).toBe(path.join(dir, 'claude-accounts', 'acct1'));
+    expect(await svc.cliStatus()).toBeNull();
+    expect(exec).toHaveBeenCalledTimes(1);
+  }));
+
+  test('removing the account signs its folder out with Claude Code (the credential can be in the keychain)', () => withPrimary(async (dir) => {
+    const svc = new ClaudeLoginService(dir, tokenPty().spawn);
+    const { login, exec } = harness(() => {});
+    svc.useFolderLogin(login);
+    const folder = path.join(dir, 'claude-accounts', 'acct1');
+    await svc.signOutAccountFolder(folder);
+    const call = exec.mock.calls.find((c: any) => c[1].join(' ') === 'auth logout') as any;
+    expect(call[2].env.CLAUDE_CONFIG_DIR).toBe(folder);
+  }));
+
+  test('with no folder sign-in wired, a full sign-in is refused in plain words and nothing starts', () => withPrimary(async (dir) => {
+    const svc = new ClaudeLoginService(dir, tokenPty().spawn);
+    expect(svc.offersFolderLogin).toBe(false);
+    await expect(svc.startForAccount('Team', undefined, undefined, { folder: true })).rejects.toThrow('This Dispatch cannot make a full sign-in');
+    expect(svc.status()).toBeNull();
+    expect(fs.existsSync(path.join(dir, 'claude-accounts'))).toBe(false);
+  }));
+});
