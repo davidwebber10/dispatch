@@ -34,6 +34,7 @@ import { ClaudeLoginService } from '../auth/claude-login.js';
 import { CodexLoginService } from '../auth/codex-login.js';
 import { AccountsStore, adoptClaudeLoginToken, genericClaudeSignInTarget, type AccountProvider } from '../auth/accounts.js';
 import { claudeLoginSources, makeBoxClaudeAuthenticated, makeClaudeSignedIn, setClaudeSignedInSource } from '../auth/claude-login-sources.js';
+import { seedAccountClaudeState } from '../auth/claude-account-state.js';
 import type { KeyRegistry } from '../auth/principals.js';
 import type { AccessGate, GateDeps } from '../auth/access-gate.js';
 import type { PairCodes } from '../auth/pair-code.js';
@@ -557,7 +558,12 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     claudeLogin.useFolderLogin(new ClaudeCliLogin({ env: () => childEnv(spawnEnv.current()) }));
   }
   // An account signed in with a folder of its own (a hosted added account, or a local full sign-in).
+  const localInstall = !useCleanClaudeLogin(env);
   claudeLogin.onAccountConfigDir = ({ id, label, configDir, status }) => {
+    // A local install: the new folder takes over "the first run is done" and the trusted project
+    // folders of this computer, so its first interactive thread does not open on Claude Code's
+    // first-run screen (auth/claude-account-state.ts). A hosted box has its own image state.
+    if (localInstall) seedAccountClaudeState(configDir);
     accounts.upsertClaudeConfigDir({ id, label, configDir, ...(status.email ? { email: status.email } : {}), ...(planOf(status) ? { plan: planOf(status)! } : {}) });
   };
   // Added Codex accounts sign in with `codex login --device-auth` under the threads' spawn env

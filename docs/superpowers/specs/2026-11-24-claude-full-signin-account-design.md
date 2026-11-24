@@ -79,15 +79,22 @@ behaves as before: it has no token sign-in, and the new kind in a request change
 
 - **Servers added to Claude Code at user scope** (`claude mcp add` with user scope) are not in a
   folder account. Integrations that Dispatch gives a thread still come.
-- **The first interactive thread of a folder account** can show Claude Code's own first-run
-  questions, for example whether it may trust the project folder. The answer is kept in the
-  folder of the account.
+- **A question about imports in an interactive thread.** When the person's own `CLAUDE.md` in the
+  home folder imports another file, Claude Code asks once for each project, in the first
+  interactive thread of the account there, whether it may load "external imports". With a login
+  folder, Claude Code sees that file as a project file of every folder below the home folder.
+  Dispatch does not answer that question for the person: it is a safety question. A Pretty
+  thread shows no question.
+- **A project folder that the person trusts later** on the computer's own login is not trusted
+  for the account by that: the account asks again, once.
 - **The window for a new thread** still adds an account with the token sign-in. The choice is on
   the Accounts page only.
 - **A code from the full sign-in has a `#` in the middle.** A code without it is refused in plain
   words, and the sign-in stays open.
 - **Two accounts of one person in two organizations** show the same mail address. The name that
   the person gives the account tells them apart.
+- **A daemon that stops during a sign-in for a new account** can leave one empty folder under
+  `claude-accounts`. It holds no login.
 
 ## 6. Tests
 
@@ -126,7 +133,50 @@ The end-to-end check, on an isolated daemon with a stand-in `claude` that plays
 
 No token text reached the daemon log.
 
-## 9. Open before the release
+## 9. The check with a real sign-in (2026-11-24)
+
+The owner signed a team account in through the page, on an isolated daemon with the real
+`claude` (2.1.331). The fake home folder of that daemon had a link to the real keychain folder:
+without it macOS has no keychain for the process, and Claude Code stores a login nowhere else.
+
+| Step | Result |
+| --- | --- |
+| The link, the code, the account in the list | worked; the list showed "Signed in" |
+| A Pretty thread on the account | listed the connectors of the team organization, 12 of them connected |
+| A Pretty thread on the login of the computer, same project | listed the 10 connectors of that login: the two logins stay apart |
+| The first interactive thread on the account | opened on Claude Code's first-run screen (the theme question) |
+| The same after the first-run state was taken over | no first-run screen; the import question of section 5 |
+| Removing the account | the keychain item of the folder was gone; the login of the computer was unchanged |
+
+Not seen with the real command: the usage figures of the account.
+
+**Three defects found by this check, all fixed on the branch:**
+
+- **The wrong reason for a failed sign-in.** The first two attempts failed because the fake home
+  folder had no keychain, and the page said "Claude did not accept that code". Claude Code
+  2.1.331 starts its failure line with "Couldn't log in:", and Dispatch knew only the older
+  "Login failed:". Dispatch now reads both, and with neither it shows the last line that Claude
+  Code wrote. It affects a hosted box too, when its image takes a newer Claude Code.
+- **A folder left by each failed attempt** for a new account. The folder of an attempt that ends
+  with no account is deleted now.
+- **The first-run screen.** After the sign-in, the folder takes over two things from the state
+  file of the computer's own login (`auth/claude-account-state.ts`): that the first run is done,
+  and which project folders the person trusts. Nothing else is copied. A hosted box is not
+  changed.
+
+A fourth defect is older than this change and has its own pull request: a new thread could show
+the conversation of another thread (section 10).
+
+## 10. A defect that this check showed, in older code
+
+Two Pretty threads were made 28 seconds apart in a new project. The second showed the first
+turn of the first. Cause: a thread with no session yet adopts the only transcript of its project
+folder when that file is at most 60 seconds older than the thread
+(`sessions/thread-transcripts.ts`, `pickRecoverableSession`). The first thread's transcript was
+that file. The later, right session id of the second thread did not replace the adopted one. It
+is not caused by this change: it needs only a project with one transcript.
+
+## 11. Open before the release
 
 1. **A real sign-in through the page**, by the owner, on an isolated daemon with the real
    `claude`: the link, the code, a thread in each mode, the connectors in that thread, the usage

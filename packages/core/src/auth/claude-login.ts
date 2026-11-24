@@ -198,6 +198,8 @@ export class ClaudeLoginService {
   /** A sign-in with `claude auth login` ended signed in: an account folder is reported, then every listener. */
   private readonly accountSignedIn = async ({ configDir, tag, status }: { configDir: string | null; tag: unknown; status: ClaudeAuthStatus }): Promise<void> => {
     const t = tag as { kind: 'primary' } | { kind: 'account'; id: string; label: string } | null;
+    // The account exists now: its folder is no longer the folder of an attempt.
+    if (configDir && configDir === this.newFolder) this.newFolder = null;
     if (t && t.kind === 'account' && configDir) await this.onAccountConfigDir?.({ id: t.id, label: t.label, configDir, status });
     this.onChangeCb?.();
   };
@@ -221,6 +223,8 @@ export class ClaudeLoginService {
   private folder: ClaudeCliLogin | null = null;
   /** The attempt in flight, or the last one, is a folder sign-in: its status, its code and a cancel go there. */
   private folderTurn = false;
+  /** The folder made for a NEW account by the attempt in flight. It is deleted when the attempt ends with no account. */
+  private newFolder: string | null = null;
 
   useFolderLogin(login: ClaudeCliLogin): void {
     this.folder = login;
@@ -234,6 +238,21 @@ export class ClaudeLoginService {
     if (!this.folderTurn) return;
     this.folderTurn = false;
     this.folder?.cancel();
+    this.dropNewFolder();
+  }
+
+  /** The attempt for a new account ended with no account: its folder goes. Only a folder under `claude-accounts`. */
+  private dropNewFolder(): void {
+    const dir = this.newFolder;
+    this.newFolder = null;
+    if (!dir || path.basename(path.dirname(dir)) !== 'claude-accounts') return;
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* an empty folder that stays is harmless */ }
+  }
+
+  /** A folder attempt answered: an attempt that ended in an error leaves no folder for a new account. */
+  private afterFolderStep(session: LoginSession): LoginSession {
+    if (session.status === 'error') this.dropNewFolder();
+    return session;
   }
 
   /**
@@ -324,7 +343,11 @@ export class ClaudeLoginService {
   // --- login flow ---------------------------------------------------------
   status(): LoginSession | null {
     if (this.clean) return this.clean.login.status();
-    if (this.folderTurn && this.folder) return this.folder.status();
+    if (this.folderTurn && this.folder) {
+      // An attempt that ended by itself (a timeout, a CLI that exited) is seen here by the page's poll.
+      const s = this.folder.status();
+      return s ? this.afterFolderStep(s) : null;
+    }
     const session = this.live?.session ?? this.finished;
     return session ? { ...session } : null;
   }
@@ -360,8 +383,12 @@ export class ClaudeLoginService {
       const base = dataDirForAccounts ?? this.dataDir;
       const configDir = prepareAccountConfigDir(base, id);
       const tag = this.accountTag(id, label.trim() || 'Claude account');
-      if (!this.clean) this.folderTurn = true;
-      return login.start({ configDir, tag });
+      if (this.clean) return login.start({ configDir, tag });
+      // A local install. One attempt at a time: the folder of an earlier attempt for a new account goes.
+      if (configDir !== this.newFolder) this.dropNewFolder();
+      this.folderTurn = true;
+      if (!accountId) this.newFolder = configDir;
+      return this.afterFolderStep(await login.start({ configDir, tag }));
     }
     this.endFolderTurn();
     return this.startLogin(label.trim() || 'Claude account', accountId || null);
@@ -447,7 +474,7 @@ export class ClaudeLoginService {
    */
   async submitCode(code: string): Promise<LoginSession> {
     if (this.clean) return this.clean.login.submitCode(code);
-    if (this.folderTurn && this.folder) return this.folder.submitCode(code);
+    if (this.folderTurn && this.folder) return this.afterFolderStep(await this.folder.submitCode(code));
     const live = this.live;
     // Structured so the UI can offer "start again" instead of surfacing a raw 400.
     // Reachable whenever the daemon restarted while the user was away authorising.

@@ -210,6 +210,34 @@ describe('a signed-out thread stops its process (hosted)', () => {
   });
 });
 
+// Found with a real sign-in on 2026-11-24 (Claude Code 2.1.331): the failure line now starts with
+// "Couldn't log in:", and a failure that is not about the code was shown as "did not accept that code".
+describe('the reason of a failed sign-in is the one Claude Code gives', () => {
+  test('"Couldn\'t log in: That code wasn\'t accepted…" is the plain "not accepted" sentence', async () => {
+    const { login } = harness((_l, c) => { c.stderr.write("Couldn't log in: That code wasn't accepted. It may be incomplete, expired, already used, or from an earlier sign-in attempt. Sign in again to get a new code.\n"); c.exit(1); });
+    await login.start({});
+    const s = await login.submitCode('c#s');
+    expect(s).toMatchObject({ status: 'error', error: MSG.rejected });
+  });
+
+  test('"Couldn\'t log in:" with another reason shows that reason, not "the code was not accepted"', async () => {
+    const { login } = harness((_l, c) => { c.stderr.write("Couldn't log in: A keychain cannot be found to store the login.\n"); c.exit(1); });
+    await login.start({});
+    const s = await login.submitCode('c#s');
+    expect(s.status).toBe('error');
+    expect(s.error).toBe(`${MSG.failedWith} A keychain cannot be found to store the login. Start it again.`);
+  });
+
+  test('a failure with other words on stderr shows the last line; with no words it stays the "not accepted" sentence', async () => {
+    const a = harness((_l, c) => { c.stderr.write('some warning\nsecurity: The specified keychain could not be found.\n'); c.exit(1); });
+    await a.login.start({});
+    expect((await a.login.submitCode('c#s')).error).toBe(`${MSG.failedWith} security: The specified keychain could not be found. Start it again.`);
+    const b = harness((_l, c) => c.exit(1));
+    await b.login.start({});
+    expect((await b.login.submitCode('c#s')).error).toBe(MSG.rejected);
+  });
+});
+
 // A full sign-in for ONE account on a local install (spec 2026-11-24): the token sign-in stays the
 // default path, and an account can instead get its own login folder, which keeps the claude.ai
 // connectors of that account.
@@ -311,6 +339,43 @@ describe('ClaudeLoginService: a full sign-in for one account on a local install'
     await svc.signOutAccountFolder(folder);
     const call = exec.mock.calls.find((c: any) => c[1].join(' ') === 'auth logout') as any;
     expect(call[2].env.CLAUDE_CONFIG_DIR).toBe(folder);
+  }));
+
+  test('a sign-in for a NEW account that fails or is cancelled leaves no folder behind', () => withPrimary(async (dir) => {
+    const svc = new ClaudeLoginService(dir, tokenPty().spawn);
+    const failing = harness((_l, c) => { c.stderr.write("Couldn't log in: That code wasn't accepted.\n"); c.exit(1); });
+    svc.useFolderLogin(failing.login);
+    const root = path.join(dir, 'claude-accounts');
+    await svc.startForAccount('Team', undefined, undefined, { folder: true });
+    expect(fs.readdirSync(root)).toHaveLength(1);
+    expect((await svc.submitCode('c#s')).status).toBe('error');
+    expect(fs.readdirSync(root)).toHaveLength(0);
+    // Cancelled while it waits for the code.
+    await svc.startForAccount('Team', undefined, undefined, { folder: true });
+    expect(fs.readdirSync(root)).toHaveLength(1);
+    svc.cancel();
+    expect(fs.readdirSync(root)).toHaveLength(0);
+    // Replaced by another sign-in.
+    await svc.startForAccount('Team', undefined, undefined, { folder: true });
+    await svc.startForAccount('Work');
+    expect(fs.readdirSync(root)).toHaveLength(0);
+    svc.cancel();
+  }));
+
+  test('the folder of an account that exists is never deleted by a failed "sign in again"; a new account that signed in keeps its folder', () => withPrimary(async (dir) => {
+    const svc = new ClaudeLoginService(dir, tokenPty().spawn);
+    const failing = harness((_l, c) => { c.stderr.write("Couldn't log in: That code wasn't accepted.\n"); c.exit(1); });
+    svc.useFolderLogin(failing.login);
+    const root = path.join(dir, 'claude-accounts');
+    await svc.startForAccount('Team', 'acct1', undefined, { folder: true });
+    await svc.submitCode('c#s');
+    expect(fs.readdirSync(root)).toEqual(['acct1']);
+    const ok = harness((_l, c) => c.exit(0));
+    svc.useFolderLogin(ok.login);
+    await svc.startForAccount('New', undefined, undefined, { folder: true });
+    await svc.submitCode('c#s');
+    svc.cancel(); // a later cancel must not touch the folder of the account that now exists
+    expect(fs.readdirSync(root)).toHaveLength(2);
   }));
 
   test('with no folder sign-in wired, a full sign-in is refused in plain words and nothing starts', () => withPrimary(async (dir) => {

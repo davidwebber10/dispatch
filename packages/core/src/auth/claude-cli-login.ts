@@ -39,7 +39,8 @@ export interface ClaudeAuthStatus {
 /** The printed authorize URL. The localhost one (handed to BROWSER) is never it. */
 const URL_RE = /https:\/\/claude\.(?:com|ai)\/[^\s"'<>]+/g;
 export const INVALID_CODE_TEXT = 'Invalid code. Please make sure the full code was copied.';
-export const LOGIN_FAILED_RE = /Login failed:([^\n]*)/;
+/** Claude Code's failure line. 2.1.322 said "Login failed: …"; 2.1.331 says "Couldn't log in: …" (seen 2026-11-24). */
+export const LOGIN_FAILED_RE = /(?:Login failed|Couldn['’]t log in):([^\n]*)/;
 
 /** The plain sentences a person reads. */
 export const MSG = {
@@ -320,9 +321,13 @@ export class ClaudeCliLogin {
    * words, redacted, so the person is not told that a good code was wrong.
    */
   private failureText(live: Live): string | null {
-    const m = LOGIN_FAILED_RE.exec(live.err.slice(live.errFrom)) ?? LOGIN_FAILED_RE.exec(live.err);
-    if (!m) return null;
-    const why = redactLogText(m[1] ?? '', 160);
+    const fresh = live.err.slice(live.errFrom);
+    const m = LOGIN_FAILED_RE.exec(fresh) ?? LOGIN_FAILED_RE.exec(live.err);
+    // No failure line we know: the last words on stderr are still the real reason (a credential that
+    // could not be stored, a network error). Without any words the caller keeps its own sentence.
+    const lastLine = m ? null : fresh.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).pop() ?? null;
+    if (!m && !lastLine) return null;
+    const why = redactLogText((m ? m[1] : lastLine) ?? '', 160).trim();
     if (!why || /wasn.t accepted|not accepted|invalid (?:code|grant)/i.test(why)) return MSG.rejected;
     return `${MSG.failedWith} ${why} Start it again.`;
   }
