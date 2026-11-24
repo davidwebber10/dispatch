@@ -68,6 +68,27 @@ describe('ThreadTranscripts', () => {
     expect(transcripts.recoverSessionId('t2', path.join(tmp, 'no-such-dir'))).toBeNull();
   });
 
+  // Seen on 2026-11-24: two threads made 28 s apart in a new project. The second one, read before its
+  // first turn, adopted the transcript of the first (the only file, inside the 60 s slack) and showed
+  // the first thread's conversation. Its own session id never replaced the adopted one.
+  it('never adopts a transcript that is the session of another thread', () => {
+    terminalsDb.create(db, { id: 'first', sessionId: 's1', type: 'claude-code', label: 'first', externalId: 'first-session' });
+    fs.mkdirSync(projectsDir(), { recursive: true });
+    fs.writeFileSync(path.join(projectsDir(), 'first-session.jsonl'), '{}\n');
+    terminalsDb.create(db, { id: 'second', sessionId: 's1', type: 'claude-code', label: 'second' });
+    expect(transcripts.recoverSessionId('second', projectsDir())).toBeNull();
+    expect(terminalsDb.getById(db, 'second')?.external_id ?? null).toBeNull();
+    // An archived thread still owns its session.
+    db.prepare("UPDATE terminals SET archived_at = '2026-11-24T00:00:00.000Z' WHERE id = 'first'").run();
+    expect(transcripts.recoverSessionId('second', projectsDir())).toBeNull();
+    // A thread of another harness with the same id owns no Claude transcript.
+    db.prepare("UPDATE terminals SET type = 'codex' WHERE id = 'first'").run();
+    expect(transcripts.recoverSessionId('second', projectsDir())).toBe('first-session');
+    // The rule for one file only: with no owner known, the file is adopted as before.
+    expect(pickRecoverableSession([{ id: 'x', birth: Date.now() }], Date.now(), () => false)).toBe('x');
+    expect(pickRecoverableSession([{ id: 'x', birth: Date.now() }], Date.now(), () => true)).toBeNull();
+  });
+
   it('pickRecoverableSession refuses a transcript born more than 60 s before the thread', () => {
     expect(pickRecoverableSession([{ id: 'a', birth: 1_000_000 }], 1_000_000 + 59_000)).toBe('a');
     expect(pickRecoverableSession([{ id: 'a', birth: 1_000_000 }], 1_000_000 + 61_000)).toBeNull();
