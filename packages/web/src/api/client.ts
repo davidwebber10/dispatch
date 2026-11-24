@@ -215,6 +215,8 @@ export const api = {
   endlessStop: () => req<{ ok: true }>('/api/endless/stop', { method: 'POST' }),
   claudeAuthStatus: () => req<{ authenticated: boolean; session: ClaudeLoginSession | null; method?: 'claude-auth-login'; account?: { email: string | null; plan: string | null; orgName: string | null } | null }>('/api/claude-auth'),
   claudeLoginStart: () => req<ClaudeLoginSession>('/api/claude-auth/login', { method: 'POST' }),
+  /** End the sign-in that waits for a code (the person chose another way). */
+  claudeLoginCancel: () => req<void>('/api/claude-auth/login/cancel', { method: 'POST' }),
   claudeLoginCode: (code: string) => req<ClaudeLoginSession>('/api/claude-auth/login/code', { method: 'POST', body: body({ code }) }),
   endlessState: () => req<EndlessState>('/api/endless/state'),
   endlessSearch: (q: string, project: string | null) =>

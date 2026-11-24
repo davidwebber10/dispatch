@@ -104,7 +104,7 @@ function TurnError({ text, mobile = false }: { text: string; mobile?: boolean })
       <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-word' }}>{text}{retryError && <><br />{retryError}</>}</span>
       <button type="button" onClick={retry} style={{ flexShrink: 0, padding: '5px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', cursor: 'pointer' }}>Retry</button>
       {/* A login problem: log the daemon in from here, then send the message again. */}
-      {isClaudeAuthError(text) && <div style={{ flexBasis: '100%' }}><ClaudeLogin onDone={retry} /></div>}
+      {isClaudeAuthError(text) && <div style={{ flexBasis: '100%' }}><ClaudeLogin offerSaved onDone={retry} /></div>}
     </div>
   );
 }
