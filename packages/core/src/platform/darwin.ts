@@ -12,20 +12,15 @@ const TAILSCALE_BIN = '/Applications/Tailscale.app/Contents/MacOS/Tailscale';
 
 type LoginRunner = (cmd: string, args: string[], opts: { encoding: 'utf-8'; timeout: number; stdio: ['ignore', 'pipe', 'ignore']; cwd: string }) => string | Buffer;
 
-/** `p` with `dir` first and no later copy of it. */
-export function withDirFirst(p: string, dir: string): string {
-  return [dir, ...p.split(path.delimiter).filter((d) => d && d !== dir)].join(path.delimiter);
-}
-
 /**
- * The PATH a login shell builds, with the directory of the node running this process kept first.
+ * The PATH a login shell builds, as the shell gives it.
  *
  * The shell runs from the home directory, not the repo: a version manager's cd hook (fnm use-on-cd,
- * nvm) reads the repo's .nvmrc and would put another Node first. Even from home a start file can
- * put another node ahead, so the daemon's own node dir goes back on top. That keeps every child
- * (the updater, npm, the tools installer) on the Node the daemon runs on.
+ * nvm) reads the repo's .nvmrc and would put another Node first. The PATH is otherwise left alone, so
+ * every thread keeps the tools (`claude`, `codex`, `pnpm`) the person's own shell would give it.
+ * The updater pins the daemon's Node itself (update/apply.ts).
  */
-export function resolveLoginPathWith(run: LoginRunner, envShell: string | undefined, execPath: string, home: string): string | undefined {
+export function resolveLoginPathWith(run: LoginRunner, envShell: string | undefined, home: string): string | undefined {
   try {
     const shell = envShell || '/bin/zsh';
     const out = run(
@@ -35,7 +30,7 @@ export function resolveLoginPathWith(run: LoginRunner, envShell: string | undefi
     );
     const m = String(out).match(/__DISPATCH_PATH_START__(.*?)__DISPATCH_PATH_END__/s);
     const p = m?.[1]?.trim();
-    return p && p.length > 0 ? withDirFirst(p, path.dirname(execPath)) : undefined;
+    return p && p.length > 0 ? p : undefined;
   } catch {
     return undefined;
   }
@@ -44,7 +39,7 @@ export function resolveLoginPathWith(run: LoginRunner, envShell: string | undefi
 export const darwin: Platform = {
   id: 'darwin',
   defaultShell: () => ({ command: process.env.SHELL || '/bin/zsh', args: [] }),
-  resolveLoginPath: () => resolveLoginPathWith(execFileSync, process.env.SHELL, process.execPath, os.homedir()),
+  resolveLoginPath: () => resolveLoginPathWith(execFileSync, process.env.SHELL, os.homedir()),
   dataDir: () => path.join(os.homedir(), '.dispatch'),
   logDir: () => path.join(os.homedir(), 'Library', 'Logs', 'dispatch'),
   resolveCommand: (name) => {

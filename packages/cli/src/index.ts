@@ -577,7 +577,7 @@ export function assertNodeVersion(ctx: Ctx): void {
   if (nodeAtLeast(have)) return;
   throw new Error(recorded
     ? `Node ${MIN_NODE} or newer is required (pnpm 11 needs it). The daemon's node (${node}) is Node ${have}. ` +
-      `Run \`dispatch install\` under Node ${MIN_NODE} or newer, then \`dispatch build\`.`
+      `Run \`dispatch install\` under Node ${MIN_NODE} or newer, then \`dispatch build\`, then \`dispatch restart\`.`
     : `Node ${MIN_NODE} or newer is required (pnpm 11 needs it). This shell runs Node ${have}. ` +
       `Switch to Node 22 or newer (in the repo, \`fnm use\` or \`nvm use\` reads .nvmrc), then retry.`);
 }

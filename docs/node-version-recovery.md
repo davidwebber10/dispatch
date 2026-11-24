@@ -27,4 +27,5 @@ Without fnm, put that Node first on PATH for the same commands. Run them from th
 After this, plain `dispatch update` works from any shell.
 
 If `dispatch build` stops with a message about the daemon's node, that Node is missing or older than
-22.13. Install a working one, then run `dispatch install` and `dispatch build` under it.
+22.13. Install a working one, then run `dispatch install`, `dispatch build` and `dispatch restart` under it.
+`install` starts the daemon before the native modules are rebuilt, so the restart at the end is needed.

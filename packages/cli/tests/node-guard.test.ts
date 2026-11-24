@@ -35,7 +35,7 @@ describe('assertNodeVersion with the real probe', () => {
     const old = fake('20.20.2');
     const run = () => assertNodeVersion({ daemon: { installedNode: () => old } } as any);
     expect(run).toThrow(/daemon's node .* is Node 20\.20\.2/);
-    expect(run).toThrow(/dispatch build/);
+    expect(run).toThrow(/dispatch build`, then `dispatch restart/);
   });
 
   test('nothing recorded and an old node: no "daemon\'s node", no "dispatch install"', () => {
