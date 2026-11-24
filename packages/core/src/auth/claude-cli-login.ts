@@ -332,12 +332,15 @@ export class ClaudeCliLogin {
     // pasted `code#state`, a token or a long opaque run is cut (os/box-log.ts). Nothing is replaced
     // before it, so no shape that the redaction knows can be broken (review of #193, round 2).
     const full = redactLogText(m[1] ?? '', Number.MAX_SAFE_INTEGER).trim();
-    if (!full || /wasn.t accepted|not accepted|invalid (?:code|grant)/i.test(full)) return MSG.rejected;
+    // The words that are shown, and that say which kind of failure it is: the first 160 characters, as
+    // before this change. Words past that point never decide the kind (review of #193, round 3).
+    const why = full.length > 160 ? `${full.slice(0, 160)}…` : full;
+    if (!why || /wasn.t accepted|not accepted|invalid (?:code|grant)/i.test(why)) return MSG.rejected;
     // A pasted code that the redaction did not know (a short one) is still never repeated: when the
     // line holds it, whole or one half, the caller keeps its fixed sentence. Parts under 4 characters
     // are not looked for: they are in ordinary words, and no real code is that short.
+    // The whole line is looked at here, so a code that the 160-character cut splits is found too.
     if ([live.code, ...live.code.split('#')].some((part) => part.length >= 4 && full.includes(part))) return null;
-    const why = full.length > 160 ? `${full.slice(0, 160)}…` : full;
     return `${MSG.failedWith} ${why} Start it again.`;
   }
 

@@ -219,7 +219,14 @@ widened, and one new finding came from the first fix:
 
 Both sequences of the reviewer are tests now.
 
-## 13. Open before the release
+## 13. The confirm check (2026-11-24)
+
+Both High findings of round 2 were closed. Two smaller points came from the check, both fixed:
+the kind of a failure is decided by the first 160 characters of the line, as before this change,
+and a new account never gets the id of a folder that was dropped. No further review round was
+run.
+
+## 14. Open before the release
 
 1. **A real sign-in through the page**, by the owner, on an isolated daemon with the real
    `claude`: the link, the code, a thread in each mode, the connectors in that thread, the usage

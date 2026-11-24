@@ -262,6 +262,16 @@ describe('the reason of a failed sign-in is the one Claude Code gives', () => {
     expect((await b.login.submitCode('acce#pted')).error).toBe(MSG.rejected);
   });
 
+  // Review round 3: the kind of failure is decided by the words that are shown, not by words past the cut.
+  test('"not accepted" past the 160th character does not turn another failure into "the code was not accepted"', async () => {
+    const line = `Couldn't log in: the keychain could not store the login. ${'More detail follows here. '.repeat(6)}It was not accepted by the credential store.`;
+    const { login } = harness((_l, c) => { c.stderr.write(`${line}\n`); c.exit(1); });
+    await login.start({});
+    const s = await login.submitCode('c#s');
+    expect(s.error).toContain(`${MSG.failedWith} the keychain could not store the login.`);
+    expect(s.error).not.toBe(MSG.rejected);
+  });
+
   test('a real code in the failure line is cut by the redaction, and a long line is cut at 160 characters', async () => {
     const code = 'Zk3vQ9xLm2Tn8Rw5#Hb7Yc4Jd6Pf1Sg0';
     const { login } = harness((_l, c) => { c.stderr.write(`Couldn't log in: exchange of ${code} failed because ${'the server answered with an error and '.repeat(8)}\n`); c.exit(1); });

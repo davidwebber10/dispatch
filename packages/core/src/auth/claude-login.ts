@@ -3,7 +3,7 @@ import path from 'path';
 import * as pty from 'node-pty';
 import { v4 as uuid } from 'uuid';
 import type { ClaudeCliLogin, ClaudeAuthStatus } from './claude-cli-login.js';
-import { prepareAccountConfigDir } from './claude-config-dirs.js';
+import { accountConfigDir, prepareAccountConfigDir } from './claude-config-dirs.js';
 
 /**
  * Headless Claude login for surfaces that have no terminal.
@@ -417,8 +417,11 @@ export class ClaudeLoginService {
       // One sign-in at a time: a token attempt that waits for its code ends here.
       if (!this.clean) this.cancelTokenAttempt();
       // The account's own config dir, shared parts linked to the primary (claude-config-dirs.ts).
-      const id = accountId || uuid().slice(0, 8);
       const base = dataDirForAccounts ?? this.dataDir;
+      // A new id is never the id of a folder that was dropped and whose late completion can still come:
+      // that completion would undo this sign-in (review of #193, round 3).
+      let id = accountId || uuid().slice(0, 8);
+      while (!accountId && this.droppedFolders.has(accountConfigDir(base, id))) id = uuid().slice(0, 8);
       const configDir = prepareAccountConfigDir(base, id);
       const tag = this.accountTag(id, label.trim() || 'Claude account');
       if (this.clean) return login.start({ configDir, tag });
