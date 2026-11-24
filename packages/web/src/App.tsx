@@ -75,7 +75,9 @@ export default function App() {
   const hydrated = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
-    void useProjects.getState().load();
+    // A failed launch fetch (Tailscale still waking) leaves the saved list on screen: retry once at the first socket open.
+    let projectsFailed = false;
+    void useProjects.getState().load().catch(() => { projectsFailed = true; });
     void useServers.getState().load();
     // The open tabs of the last visit come back first; the address is read after them (the effect below).
     hydrated.current = useTabs.getState().hydrate();
@@ -135,7 +137,10 @@ export default function App() {
         // Hosted: two closes with no open between them may be the router refusing the socket (503/409).
         if (s === 'closed' && socketWasClosed) void probeBox();
         if (s === 'closed') socketWasClosed = true;
-        else if (s === 'open' && socketWasClosed) {
+        else if (s === 'open' && !socketWasClosed && projectsFailed) {
+          projectsFailed = false;
+          void useProjects.getState().load().catch(() => { /* offline again: the next reconnect resyncs */ });
+        } else if (s === 'open' && socketWasClosed) {
           socketWasClosed = false;
           void resyncAfterReconnect();
           // Endless messages broadcast while the socket was down were missed: reload the tail.

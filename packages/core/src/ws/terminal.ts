@@ -106,7 +106,11 @@ export function handleTerminalConnection(
     // A hosted box never restarts a sign-in by itself (box defect #7): a "Sign in — X" thread whose
     // login ended stays ended; the person starts a new sign-in when they want one.
     const isHostedSignIn = !!terminal && isHostedBox() && typeof (terminal.config as { signIn?: unknown } | undefined)?.signIn === 'string';
-    if (terminal && isPtyType(terminal.type) && !isHostedSignIn) {
+    // A finished agent run (config.runner) is looked at, never restarted: its relaunch re-runs the saved
+    // runnerPrompt from the top (a second full run, and its cost, from nothing more than opening the run page).
+    // Only an explicit action (the relaunch route) starts one again. The close below tells the viewer it ended.
+    const isFinishedRun = !!terminal && (terminal.config as { runner?: unknown } | undefined)?.runner === true;
+    if (terminal && isPtyType(terminal.type) && !isHostedSignIn && !isFinishedRun) {
       try { sessionService.relaunchTerminal(targetId); } catch {}
     }
   }
