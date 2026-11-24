@@ -19,7 +19,7 @@ import { runCommand, lastLines, probeHttp, cmdBuild, cmdRun, cmdUpdate, nodeAtLe
 // real commands had succeeded quietly — matching the pre-mock behavior where these
 // calls actually ran (and usually succeeded) against the real dev environment.
 function resetChildProcessMocks(): void {
-  vi.mocked(execFileSync).mockReset().mockImplementation((() => '') as any);
+  vi.mocked(execFileSync).mockReset().mockImplementation(((_c: string, a?: string[]) => (a?.[1] === 'process.versions.node' ? '24.14.0\n' : '')) as any);
   vi.mocked(spawnSync).mockReset().mockImplementation((() => ({ status: 0, stdout: '', stderr: '' })) as any);
 }
 resetChildProcessMocks();
@@ -152,12 +152,46 @@ describe('which node builds', () => {
     expect(envs).toHaveLength(2);
     for (const env of envs) expect(env.PATH!.startsWith('/fnm/node-versions/v24.14.0/installation/bin:')).toBe(true);
     // The tools installer uses it too.
-    expect(vi.mocked(execFileSync).mock.calls.some(c => c[0] === '/fnm/node-versions/v24.14.0/installation/bin/node')).toBe(true);
+    expect(vi.mocked(execFileSync).mock.calls.some(c => c[0] === '/fnm/node-versions/v24.14.0/installation/bin/node' && String((c[2] as any).env.PATH).startsWith('/fnm/node-versions/v24.14.0/installation/bin:'))).toBe(true);
   });
 
   test('without a recorded daemon node it falls back to the CLI node', () => {
     cmdBuild({ daemon: {}, nodePath: '/opt/node22/bin/node', nodeVersion: '22.23.3' } as any);
     for (const env of pnpmEnv()) expect(env.PATH!.startsWith('/opt/node22/bin:')).toBe(true);
+  });
+
+  test('the tools installer child gets the corrected PATH, not the shell PATH', () => {
+    vi.stubEnv('PATH', '/shell/fnm_multishells/1/bin:/usr/bin');
+    const daemon = { installedNode: () => '/d/v24/bin/node' };
+    cmdBuild({ daemon, repoRoot: '/r', nodeVersion: '24.14.0' } as any);
+    const tools = vi.mocked(execFileSync).mock.calls.find(c => c[0] === '/d/v24/bin/node' && String((c[1] as string[])[0]).endsWith('cli.js'));
+    expect(tools).toBeDefined();
+    expect((tools![2] as any).env.PATH.split(':')[0]).toBe('/d/v24/bin');
+  });
+
+  test('a native module built for another node is rebuilt with the daemon node, then checked again', () => {
+    const daemon = { installedNode: () => '/d/v24/bin/node' };
+    let loaded = false;
+    vi.mocked(execFileSync).mockImplementation(((cmd: string, args: string[], opts: any) => {
+      if (cmd === '/d/v24/bin/node' && args[0] === '-e' && args[1].includes('better-sqlite3')) {
+        if (!loaded) throw new Error('NODE_MODULE_VERSION 127 != 137');
+        return Buffer.from('');
+      }
+      if (cmd === 'pnpm' && args[0] === '-r' && args[1] === 'rebuild') { loaded = true; expect(opts.env.PATH.startsWith('/d/v24/bin:')).toBe(true); }
+      return Buffer.from('');
+    }) as any);
+    cmdBuild({ daemon, repoRoot: '/r', nodeVersion: '24.14.0' } as any);
+    const rebuilds = vi.mocked(execFileSync).mock.calls.filter(c => c[0] === 'pnpm' && (c[1] as string[])[1] === 'rebuild');
+    expect(rebuilds.map(c => (c[1] as string[])[2])).toEqual(['better-sqlite3']);
+  });
+
+  test('a native module that still fails after the rebuild stops the build', () => {
+    const daemon = { installedNode: () => '/d/v24/bin/node' };
+    vi.mocked(execFileSync).mockImplementation(((cmd: string, args: string[]) => {
+      if (cmd === '/d/v24/bin/node' && args[0] === '-e' && args[1].includes('better-sqlite3')) throw new Error('bad ABI');
+      return Buffer.from('');
+    }) as any);
+    expect(() => cmdBuild({ daemon, repoRoot: '/r', nodeVersion: '24.14.0' } as any)).toThrow(/better-sqlite3 still does not load/);
   });
 
   test('a daemon node below the minimum stops the build, whatever the shell runs', () => {
@@ -419,7 +453,7 @@ describe('cmdUpdate progress file', () => {
     const daemon = mkDaemon(() => { seen.push(`${read(dataDir).state}:restart`); });
     await cmdUpdate({ daemon, dataDir, repoRoot: dataDir, releasesFetch } as any);
     expect(seen.map((x) => x.split(':')[0] + ':' + (x.includes(process.execPath) ? 'node' : x.split(':').slice(1).join(':')))).toEqual(
-      ['install:pnpm install', 'build:pnpm -r', 'tools:node', 'restarting:restart']);
+      ['install:pnpm install', 'build:pnpm -r', 'build:node', 'build:node', 'tools:node', 'restarting:restart']);
     const s = read(dataDir);
     expect(s).toMatchObject({ v: 1, state: 'restarting', step: 'restart', steps: ['pull', 'install', 'build', 'tools', 'restart'], error: null });
     expect(typeof s.pid).toBe('number');
