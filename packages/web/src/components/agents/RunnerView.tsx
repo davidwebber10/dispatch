@@ -12,6 +12,8 @@ import type { RunStep, AgentRun } from '../../api/types';
 import { fontVar } from '../../lib/fontSize';
 
 const ACTIVE = ['queued', 'starting', 'working', 'needs_input'];
+/** The run is over: its process is gone for good. (`idle` is not here: the backend still counts it as unfinished.) */
+const FINISHED = ['succeeded', 'failed', 'cancelled'];
 
 /** Live-ticking elapsed time for an in-progress run; final duration otherwise. */
 function useElapsed(run: AgentRun | null, active: boolean): number | null {
@@ -77,9 +79,10 @@ export function RunnerView({ runId, onBack }: { runId: string; onBack: () => voi
 
       {/* Body */}
       {showRaw ? (
-        run.terminalId
-          ? <TerminalTab key={run.terminalId} terminalId={run.terminalId} />
-          : <Empty>No raw terminal for this run.</Empty>
+        // A finished run's terminal is never attached: its process is gone, and the page has nothing to show there.
+        !run.terminalId ? <Empty>No raw terminal for this run.</Empty>
+          : !FINISHED.includes(run.status) ? <TerminalTab key={run.terminalId} terminalId={run.terminalId} />
+          : <Empty>This run has finished. Its steps and activity are on the run page.</Empty>
       ) : (
         <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: isMobile ? 'column' : 'row' }}>
           {/* Plan / steps */}
