@@ -237,13 +237,40 @@ describe('the reason of a failed sign-in is the one Claude Code gives', () => {
     expect((await b.login.submitCode('c#s')).error).toBe(MSG.rejected);
   });
 
-  test('a failure line that repeats the pasted code never shows it, whole or in halves', async () => {
+  test('a failure line that repeats a short pasted code keeps the fixed sentence: the code is never shown', async () => {
     const { login } = harness((_l, c) => { c.stderr.write("Couldn't log in: the code ab12#cd34 (ab12, cd34) could not be exchanged.\n"); c.exit(1); });
     await login.start({});
     const s = await login.submitCode('ab12#cd34');
-    expect(s.error).toContain(MSG.failedWith);
-    expect(s.error).not.toContain('ab12');
-    expect(s.error).not.toContain('cd34');
+    expect(s.error).toBe(MSG.rejected);
+  });
+
+  // Review round 2: nothing is replaced before the redaction, so a short half cannot break it.
+  test('a half of the code that is part of "https" does not stop the redaction of a URL query', async () => {
+    const { login } = harness((_l, c) => { c.stderr.write("Couldn't log in: request to https://example.test/path?foo=query-value-1 failed.\n"); c.exit(1); });
+    await login.start({});
+    const s = await login.submitCode('ht#zz');
+    expect(s.error).toBe(`${MSG.failedWith} request to https://example.test/path?[redacted] failed. Start it again.`);
+    expect(s.error).not.toContain('query-value-1');
+  });
+
+  test('a half of the code that is part of "accepted" still gives the fixed "not accepted" sentence', async () => {
+    const { login } = harness((_l, c) => { c.stderr.write("Couldn't log in: That code wasn't accepted. Sign in again to get a new code.\n"); c.exit(1); });
+    await login.start({});
+    expect((await login.submitCode('ac#ce')).error).toBe(MSG.rejected);
+    const b = harness((_l, c) => { c.stderr.write('Login failed: the code was not accepted\n'); c.exit(1); });
+    await b.login.start({});
+    expect((await b.login.submitCode('acce#pted')).error).toBe(MSG.rejected);
+  });
+
+  test('a real code in the failure line is cut by the redaction, and a long line is cut at 160 characters', async () => {
+    const code = 'Zk3vQ9xLm2Tn8Rw5#Hb7Yc4Jd6Pf1Sg0';
+    const { login } = harness((_l, c) => { c.stderr.write(`Couldn't log in: exchange of ${code} failed because ${'the server answered with an error and '.repeat(8)}\n`); c.exit(1); });
+    await login.start({});
+    const s = await login.submitCode(code);
+    expect(s.error).toContain('exchange of [redacted] failed');
+    expect(s.error).not.toContain('Zk3vQ9');
+    expect(s.error).not.toContain('Hb7Yc4');
+    expect(s.error!.length).toBeLessThan(MSG.failedWith.length + 190);
   });
 });
 
@@ -444,6 +471,43 @@ describe('ClaudeLoginService: a full sign-in for one account on a local install'
     expect(got).toEqual([]);
     await vi.waitFor(() => expect(fs.readdirSync(root)).toHaveLength(0));
     expect(svc.status()).toBeNull();
+  }));
+
+  // Review round 2: three attempts. The first one confirms late, after two more were dropped.
+  test('a late confirmation never makes an account when its folder is gone, however many attempts came after it', () => withPrimary(async (dir) => {
+    const svc = new ClaudeLoginService(dir, tokenPty().spawn);
+    let answer!: (v: { stdout: string; code: number }) => void;
+    let statusCalls = 0;
+    const loggedOut: string[] = [];
+    const login = new ClaudeCliLogin({
+      spawn: (() => { const c = new FakeChild((_l, ch) => ch.exit(0)); setTimeout(() => c.stdout.write(PRINTED), 2); return c as any; }) as any,
+      exec: (async (_c: string, args: string[], o: { env: NodeJS.ProcessEnv }) => {
+        if (args.join(' ') === 'auth logout') { loggedOut.push(path.basename(String(o.env.CLAUDE_CONFIG_DIR))); return { stdout: '', code: 0 }; }
+        if (++statusCalls === 1) return new Promise((r) => { answer = r; });
+        return { stdout: '{"loggedIn":false}', code: 0 };
+      }) as any,
+      env: () => ({ PATH: '/bin' }), startTimeoutMs: 1000, exchangeTimeoutMs: 1000,
+    });
+    svc.useFolderLogin(login);
+    const got: unknown[] = [];
+    svc.onAccountConfigDir = (i) => { got.push(i); };
+    const root = path.join(dir, 'claude-accounts');
+    await svc.startForAccount('A', undefined, undefined, { folder: true });
+    const a = fs.readdirSync(root)[0];
+    const submit = svc.submitCode('c#s');
+    await vi.waitFor(() => expect(answer).toBeTypeOf('function'));
+    svc.cancel();                                                            // A is dropped while it confirms
+    await svc.startForAccount('B', undefined, undefined, { folder: true });
+    svc.cancel();                                                            // B is dropped
+    await svc.startForAccount('C', undefined, undefined, { folder: true });
+    await svc.startForAccount('D', undefined, undefined, { folder: true }); // C is replaced
+    answer({ stdout: '{"loggedIn":true,"authMethod":"claude.ai"}', code: 0 });
+    await submit;
+    await vi.waitFor(() => expect(loggedOut).toContain(a));
+    expect(got).toEqual([]);
+    expect(fs.readdirSync(root)).toHaveLength(1); // D's folder only
+    expect(fs.readdirSync(root)).not.toContain(a);
+    svc.cancel();
   }));
 
   test('a code from a screen of another attempt is refused before it reaches any sign-in', () => withPrimary(async (dir) => {

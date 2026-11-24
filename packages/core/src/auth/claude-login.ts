@@ -201,9 +201,14 @@ export class ClaudeLoginService {
     // A sign-in for a new account that was cancelled or replaced while Claude Code confirmed it (a
     // local install): its folder is already gone, so there is no account. Claude Code wrote the login
     // all the same, on macOS into the keychain: sign that folder out, then remove what it made again.
-    if (!this.clean && configDir && configDir === this.droppedFolder) {
-      this.droppedFolder = null;
-      await this.folder?.logout(configDir).catch(() => undefined);
+    // The rule is about the folder, not about one remembered attempt: a completion whose folder was
+    // dropped, or is simply not there, never makes an account (review round 2: with three attempts a
+    // single remembered folder was overwritten). The sign-out uses the engine that made the login.
+    if (!this.clean && configDir && (this.droppedFolders.has(configDir) || !fs.existsSync(configDir))) {
+      this.droppedFolders.delete(configDir);
+      const engine = this.droppedEngines.get(configDir) ?? this.folder;
+      this.droppedEngines.delete(configDir);
+      await engine?.logout(configDir).catch(() => undefined);
       this.removeAttemptFolder(configDir);
       return;
     }
@@ -234,8 +239,13 @@ export class ClaudeLoginService {
   private folderTurn = false;
   /** The folder made for a NEW account by the attempt in flight. It is deleted when the attempt ends with no account. */
   private newFolder: string | null = null;
-  /** The last such folder that was deleted: a completion that arrives for it afterwards is undone, not saved. */
-  private droppedFolder: string | null = null;
+  /**
+   * Every such folder that was deleted, with the engine of its attempt: a completion that arrives for
+   * one of them afterwards is undone, not saved. An entry goes when its completion came; the newest
+   * 64 are kept, far more than the attempts that can still be confirming.
+   */
+  private droppedFolders = new Set<string>();
+  private droppedEngines = new Map<string, ClaudeCliLogin>();
 
   useFolderLogin(login: ClaudeCliLogin): void {
     this.folder = login;
@@ -257,7 +267,9 @@ export class ClaudeLoginService {
     const dir = this.newFolder;
     this.newFolder = null;
     if (!dir) return;
-    this.droppedFolder = dir;
+    this.droppedFolders.add(dir);
+    if (this.folder) this.droppedEngines.set(dir, this.folder);
+    for (const old of this.droppedFolders) { if (this.droppedFolders.size <= 64) break; this.droppedFolders.delete(old); this.droppedEngines.delete(old); }
     this.removeAttemptFolder(dir);
   }
 

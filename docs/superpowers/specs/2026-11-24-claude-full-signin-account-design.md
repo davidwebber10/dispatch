@@ -187,8 +187,8 @@ Verdict: ship with fixes. Four findings on this change, all real, all fixed with
   that arrives for a deleted folder makes no account: the folder is signed out and removed.
 - **Words from stderr could reach the page (High).** The first fix of the failure reason showed
   the last line of stderr when no known failure line was there. That line can be a stack frame
-  or an echo of the pasted code. Now only a known failure line is shown, as before this change,
-  and the pasted code, whole or in halves, is cut out of it.
+  or an echo of the pasted code. Now only a known failure line is shown, as before this change
+  (round 2 changed how the pasted code is kept out of it).
 - **A sign-out that failed still removed the account (Medium).** The folder and the account
   went, and the login stayed in the keychain. Now Dispatch asks Claude Code after the sign-out:
   a folder that is still signed in keeps its account, and the answer says so. When Claude Code
@@ -201,7 +201,25 @@ Verdict: ship with fixes. Four findings on this change, all real, all fixed with
 One more change from the review: the first-run state is taken over only for a new account, not
 at "Sign in again".
 
-## 12. Open before the release
+## 12. Review round 2 (2026-11-24)
+
+Verdict: ship with fixes. The findings of round 1 were closed, except one that this round
+widened, and one new finding came from the first fix:
+
+- **The memory of a dropped folder held one folder only (High).** With three attempts, a second
+  drop replaced the first one, and the late confirmation of the first attempt saved an account
+  with no folder. Now every dropped folder is remembered with the engine of its attempt, and the
+  rule is also about the folder itself: a completion whose folder is not there never makes an
+  account.
+- **The cut of the pasted code ran before the redaction (High).** A short half of a code that
+  is part of a word could break a pattern that the redaction knows, for example "ht" in "https",
+  and then a URL query stayed. Now nothing is replaced before the redaction, which is the same
+  redaction as before this change. A short code that the redaction does not know, and that the
+  failure line repeats, gives the fixed sentence.
+
+Both sequences of the reviewer are tests now.
+
+## 13. Open before the release
 
 1. **A real sign-in through the page**, by the owner, on an isolated daemon with the real
    `claude`: the link, the code, a thread in each mode, the connectors in that thread, the usage

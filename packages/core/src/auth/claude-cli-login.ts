@@ -328,11 +328,16 @@ export class ClaudeCliLogin {
     // echo of what was typed) are never put on the page: the caller keeps its fixed sentence.
     const m = LOGIN_FAILED_RE.exec(live.err.slice(live.errFrom)) ?? LOGIN_FAILED_RE.exec(live.err);
     if (!m) return null;
-    // The pasted code, whole or in halves, is never repeated to the page, whatever Claude Code wrote.
-    let said = m[1] ?? '';
-    for (const part of [live.code, ...live.code.split('#')]) if (part.length >= 2) said = said.split(part).join('[code]');
-    const why = redactLogText(said, 160).trim();
-    if (!why || /wasn.t accepted|not accepted|invalid (?:code|grant)/i.test(why)) return MSG.rejected;
+    // Redaction first, on the whole line, exactly as before this change: a URL keeps no query, and a
+    // pasted `code#state`, a token or a long opaque run is cut (os/box-log.ts). Nothing is replaced
+    // before it, so no shape that the redaction knows can be broken (review of #193, round 2).
+    const full = redactLogText(m[1] ?? '', Number.MAX_SAFE_INTEGER).trim();
+    if (!full || /wasn.t accepted|not accepted|invalid (?:code|grant)/i.test(full)) return MSG.rejected;
+    // A pasted code that the redaction did not know (a short one) is still never repeated: when the
+    // line holds it, whole or one half, the caller keeps its fixed sentence. Parts under 4 characters
+    // are not looked for: they are in ordinary words, and no real code is that short.
+    if ([live.code, ...live.code.split('#')].some((part) => part.length >= 4 && full.includes(part))) return null;
+    const why = full.length > 160 ? `${full.slice(0, 160)}…` : full;
     return `${MSG.failedWith} ${why} Start it again.`;
   }
 
