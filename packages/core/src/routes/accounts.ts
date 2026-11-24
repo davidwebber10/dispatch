@@ -39,6 +39,10 @@ const isProvider = (v: unknown): v is AccountProvider => typeof v === 'string' &
  *                                             account, or with `accountId` "Sign in again" for that saved
  *                                             account: its token is replaced in place
  *                                             (finish with POST /api/claude-auth/login/code)
+ *                                             `kind: "folder"` (a local install, spec 2026-11-24): the new
+ *                                             account is signed in with `claude auth login` in a folder
+ *                                             of its own and keeps its claude.ai connectors. "Sign in
+ *                                             again" follows the kind of the account.
  *   POST   /api/accounts/claude/:id/check     "Check again": read that account's usage and profile now
  *   POST   /api/accounts/codex { label }      a new Codex account folder (not signed in yet)
  *   POST   /api/accounts/codex/:id/login      sign it in (or again): `codex login --device-auth`
@@ -90,7 +94,8 @@ export function createAccountsRouter(accounts: AccountsStore, claudeLogin: Claud
       const p = need ? await Promise.race([claudeProfileOf(a.id), new Promise<null>((r) => setTimeout(() => r(null), PROFILE_WAIT_MS).unref?.())]) : null;
       return { ...a, ...(p?.email && !a.email ? { email: p.email } : {}), ...(p?.plan && !a.plan ? { plan: p.plan } : {}), ...count('claude', a.id) };
     }));
-    res.json({ ...v, claude, codex });
+    // `claudeFullSignIn`: "Add account" can offer a sign-in that keeps the claude.ai connectors (a local install).
+    res.json({ ...v, claude, codex, claudeFullSignIn: claudeLogin.offersFolderLogin === true });
   });
 
   router.patch('/:provider/:id', (req, res) => {
@@ -116,7 +121,16 @@ export function createAccountsRouter(accounts: AccountsStore, claudeLogin: Claud
     const accountId = typeof req.body?.accountId === 'string' && req.body.accountId ? req.body.accountId : undefined;
     if (accountId === 'cli') return void res.status(400).json({ error: 'the CLI login is signed in on its own computer (claude)' });
     if (accountId && !accounts.has('claude', accountId)) return void res.status(404).json({ error: 'unknown account' });
-    try { res.json(await (accountId ? claudeLogin.startForAccount(label, accountId) : claudeLogin.startForAccount(label))); } catch (err) { res.status(500).json({ error: clientMessage(err) }); }
+    // A full sign-in (spec 2026-11-24): a new account that asks for it, or "Sign in again" for an
+    // account that has a folder. The kind of an existing account wins over the request. A hosted
+    // box (the clean login) signs every account in that way by itself.
+    const wantsFolder = accountId ? accounts.claudeConfigDir(accountId) !== null : req.body?.kind === 'folder';
+    const folder = wantsFolder && !claudeLogin.usesCleanLogin;
+    if (folder && claudeLogin.offersFolderLogin !== true) return void res.status(400).json({ error: 'This Dispatch cannot make a full sign-in.' });
+    try {
+      res.json(await (folder ? claudeLogin.startForAccount(label, accountId, undefined, { folder: true })
+        : accountId ? claudeLogin.startForAccount(label, accountId) : claudeLogin.startForAccount(label)));
+    } catch (err) { res.status(500).json({ error: clientMessage(err) }); }
   });
 
   // "Check again" (W1-H): forget the profile wait and ask the gauge for a usage read now.
@@ -198,6 +212,10 @@ export function createAccountsRouter(accounts: AccountsStore, claudeLogin: Claud
           return void res.status(500).json({ error: 'The saved login was not removed: its token file could not be deleted. Check the permissions of the Dispatch data folder, then try again.' });
         }
       }
+      // An account with a login folder on a local install: Claude Code signs the folder out first. On
+      // macOS its credential is in the keychain, so deleting the folder alone would leave it there.
+      const folder = provider === 'claude' ? accounts.claudeConfigDir(id) : null;
+      if (folder) await claudeLogin.signOutAccountFolder?.(folder);
       if (!accounts.remove(provider, id)) return void res.status(404).json({ error: 'unknown account' });
       // Its threads lose the pin and run on the default from their next start (what the notice said).
       const unpinned = extras.threads?.unpin(provider, id) ?? 0;

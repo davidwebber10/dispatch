@@ -151,7 +151,12 @@ export function wireLimits(i: LimitInputs): LimitServices {
   const remote = !i.network ? {}
     : tokenless
       ? { pollCodex, codexCredits: (accountId?: string) => pollCodex.credits(accountId), probeClaude: getUsage }
-      : { pollCodex, codexCredits: (accountId?: string) => pollCodex.credits(accountId), claudeCredits: (accountId?: string) => readClaudeUsage.credits(accountId), probeClaude, readClaudeUsage };
+      : {
+        pollCodex, codexCredits: (accountId?: string) => pollCodex.credits(accountId), claudeCredits: (accountId?: string) => readClaudeUsage.credits(accountId), readClaudeUsage,
+        // An account with a login folder (a full sign-in, spec 2026-11-24) holds no token here: its
+        // figures come from Claude Code's own get_usage request, with no model turn, as on a hosted box.
+        probeClaude: (accountId?: string) => (accountId && accountId !== 'cli' && accounts.claudeConfigDir(accountId) ? getUsage(accountId) : probeClaude(accountId)),
+      };
   const usageGauge = new UsageGauge({
     db, snapshots: limitSnapshots, broadcast: (e) => broadcaster.broadcast(e as { type: string }), push: i.pushService, accountFor: limitAccount, accounts: accountRefs,
     refreshCodex, ...remote, claudeTokenStamp: (accountId) => accounts.claudeTokenStamp(accountId), ...(i.clock ? { now: i.clock } : {}),

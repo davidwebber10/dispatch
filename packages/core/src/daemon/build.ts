@@ -551,10 +551,15 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   // no token is read, kept or injected (auth/claude-cli-login.ts). A local install keeps setup-token.
   if (useCleanClaudeLogin(env)) {
     claudeLogin.useCleanLogin(new ClaudeCliLogin({ env: () => childEnv(spawnEnv.current()) }), { ownerEmail: env.DISPATCH_OWNER_EMAIL });
-    claudeLogin.onAccountConfigDir = ({ id, label, configDir, status }) => {
-      accounts.upsertClaudeConfigDir({ id, label, configDir, ...(status.email ? { email: status.email } : {}), ...(planOf(status) ? { plan: planOf(status)! } : {}) });
-    };
+  } else {
+    // A local install: one account can be signed in the same way, in a folder of its own, so that it
+    // keeps its claude.ai connectors (spec 2026-11-24). Every other sign-in stays setup-token.
+    claudeLogin.useFolderLogin(new ClaudeCliLogin({ env: () => childEnv(spawnEnv.current()) }));
   }
+  // An account signed in with a folder of its own (a hosted added account, or a local full sign-in).
+  claudeLogin.onAccountConfigDir = ({ id, label, configDir, status }) => {
+    accounts.upsertClaudeConfigDir({ id, label, configDir, ...(status.email ? { email: status.email } : {}), ...(planOf(status) ? { plan: planOf(status)! } : {}) });
+  };
   // Added Codex accounts sign in with `codex login --device-auth` under the threads' spawn env
   // (PATH with the bundled tools), so it runs the same `codex` the threads do.
   const codexLogin = new CodexLoginService({
