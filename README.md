@@ -29,7 +29,7 @@ Agents run with your full user rights and with approvals off. That is by design:
 
 - **macOS** (the daemon installs as a `launchd` agent), or **Windows 10/11 with WSL2** — run
   [`scripts/install-windows.ps1`](scripts/install-windows.ps1); see [docs/wsl2-bring-up.md](docs/wsl2-bring-up.md).
-- **Node.js 18+** and **pnpm 9+** — `node -v`, `pnpm -v`. Install pnpm with `npm i -g pnpm` or `corepack enable`.
+- **Node.js 22.13+** and **pnpm 11+** — `node -v`, `pnpm -v`. Install pnpm with `npm i -g pnpm` or `corepack enable`.
 - **git**.
 - **The agent CLIs you want to drive, installed and authenticated as the same user that runs the daemon:**
   - **Claude Code** (`claude`) — also required for [Chat](#chat)
@@ -49,7 +49,7 @@ Agents run with your full user rights and with approvals off. That is by design:
 curl -fsSL https://raw.githubusercontent.com/davidwebber10/dispatch/main/scripts/install.sh | sh
 ```
 
-This checks prerequisites (git, Node 18+, pnpm), clones Dispatch to `~/.dispatch/app`, builds it,
+This checks prerequisites (git, Node 22.13+, pnpm), clones Dispatch to `~/.dispatch/app`, builds it,
 starts the background daemon (launchd), puts `dispatch` on your `PATH`, and opens
 `http://localhost:3456`. A first-run **setup wizard** then walks you through your agents
 (Claude Code / Codex), mobile access (Tailscale), and optional secrets (Doppler). Run

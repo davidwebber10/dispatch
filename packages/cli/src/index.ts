@@ -45,6 +45,8 @@ export interface Ctx {
   apiFetch?: typeof fetch;
   /** Test seam: read all of stdin for `dispatch api --body -`. */
   readStdin?: () => string;
+  /** Test seam: the Node version the build runs on. Defaults to `process.versions.node`. */
+  nodeVersion?: string;
 }
 
 type AccessLib = typeof import('dispatch-server/access');
@@ -519,6 +521,29 @@ function toolsCliPath(ctx: Ctx): string {
 // shell: true. On macOS/Linux the binaries are real executables — no shell needed.
 const shellOf = (ctx: Ctx) => (ctx.platformId === 'win32' ? { shell: true } : {});
 
+/** The oldest Node that pnpm 11 runs on. Keep in step with `engines.node` and `.nvmrc`. */
+export const MIN_NODE = '22.13.0';
+
+/** True when `version` (e.g. "20.20.2") is at or above `min`. */
+export function nodeAtLeast(version: string, min: string = MIN_NODE): boolean {
+  const a = version.split('.').map(n => parseInt(n, 10) || 0);
+  const b = min.split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0);
+  }
+  return true;
+}
+
+/** Fail before pnpm does, with a message that says what to change. */
+export function assertNodeVersion(ctx: Ctx): void {
+  const have = ctx.nodeVersion ?? process.versions.node;
+  if (nodeAtLeast(have)) return;
+  throw new Error(
+    `Node ${MIN_NODE} or newer is required (pnpm 11 needs it). This shell runs Node ${have}. ` +
+      `Switch to Node 22 or newer (in the repo, \`fnm use\` or \`nvm use\` reads .nvmrc), then retry.`,
+  );
+}
+
 function pnpmInstall(ctx: Ctx): void {
   // Mirrors the old bash script's `CI=true pnpm install`, so fresh clones
   // (scripts/install.sh) and self-updates that bump dependencies work.
@@ -539,6 +564,7 @@ function toolsInstall(ctx: Ctx): void {
 }
 
 export function cmdBuild(ctx: Ctx): void {
+  assertNodeVersion(ctx);
   pnpmInstall(ctx);
   pnpmBuild(ctx);
   toolsInstall(ctx);
@@ -730,6 +756,7 @@ export async function cmdUpdate(ctx: Ctx, args: string[] = []): Promise<void> {
   const switchBack = args.includes('--switch-back');
   const progress = progressWriter(ctx.dataDir);
   try {
+    assertNodeVersion(ctx);
     progress.step('pull');
     const lockBefore = lockfileHash(ctx);
     await updateToLatestRelease(ctx, { switchBack });

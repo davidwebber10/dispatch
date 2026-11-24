@@ -12,7 +12,7 @@ vi.mock('child_process', () => ({
 }));
 
 import { execFileSync, spawnSync } from 'child_process';
-import { runCommand, lastLines, probeHttp, cmdBuild, cmdRun, cmdUpdate } from '../src/index.js';
+import { runCommand, lastLines, probeHttp, cmdBuild, cmdRun, cmdUpdate, nodeAtLeast } from '../src/index.js';
 
 // Give both mocks a harmless default implementation so tests that don't care about
 // child_process (routing, probe-via-injected-`probe`, etc.) keep behaving as if the
@@ -118,6 +118,25 @@ describe('lastLines', () => {
   });
   test('n=0 returns empty string', () => {
     expect(lastLines('a\nb\nc', 0)).toBe('');
+  });
+});
+
+describe('node version guard', () => {
+  test('nodeAtLeast compares major, minor and patch', () => {
+    expect(nodeAtLeast('20.20.2')).toBe(false);
+    expect(nodeAtLeast('22.12.9')).toBe(false);
+    expect(nodeAtLeast('22.13.0')).toBe(true);
+    expect(nodeAtLeast('24.14.0')).toBe(true);
+  });
+
+  test('build on an old Node stops with a clear message and runs no pnpm', () => {
+    expect(() => cmdBuild({ nodeVersion: '20.20.2' } as any)).toThrow(/Node 22\.13\.0 or newer.*Node 20\.20\.2/);
+    expect(execFileSync).not.toHaveBeenCalled();
+  });
+
+  test('update on an old Node stops before it pulls anything', async () => {
+    await expect(cmdUpdate({ nodeVersion: '20.20.2' } as any)).rejects.toThrow(/Node 22\.13\.0 or newer/);
+    expect(execFileSync).not.toHaveBeenCalled();
   });
 });
 

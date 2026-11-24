@@ -27,10 +27,10 @@ case "$(uname)" in
 esac
 if $IS_LINUX; then
   command -v git >/dev/null 2>&1 || { red "git not found — install it: sudo apt-get install -y git"; exit 1; }
-  command -v node >/dev/null 2>&1 || { red "Node.js 18+ not found — install it: sudo apt-get install -y nodejs npm  (or use nvm: https://github.com/nvm-sh/nvm), then retry."; exit 1; }
+  command -v node >/dev/null 2>&1 || { red "Node.js 22.13+ not found — install it: sudo apt-get install -y nodejs npm  (or use nvm: https://github.com/nvm-sh/nvm), then retry."; exit 1; }
 else
   command -v git >/dev/null 2>&1 || { red "git not found — install Xcode Command Line Tools: xcode-select --install"; exit 1; }
-  command -v node >/dev/null 2>&1 || { red "Node.js 18+ not found — install from https://nodejs.org and retry."; exit 1; }
+  command -v node >/dev/null 2>&1 || { red "Node.js 22.13+ not found — install from https://nodejs.org and retry."; exit 1; }
 fi
 if ! command -v pnpm >/dev/null 2>&1; then
   if command -v corepack >/dev/null 2>&1; then corepack enable >/dev/null 2>&1 || true; fi
