@@ -17,6 +17,7 @@ describe('accounts routes: a Claude account with its own login folder', () => {
   let starts: { label: string; accountId?: string; folder: boolean }[];
   let signedOut: string[];
   let order: string[];
+  let folderStatus: Record<string, { loggedIn: boolean } | null>;
 
   const appWith = (o: { offers: boolean; clean?: boolean }) => {
     const login = {
@@ -28,6 +29,7 @@ describe('accounts routes: a Claude account with its own login folder', () => {
         return { id: 's1', status: 'awaiting_code', url: 'https://claude.com/x', error: null, createdAt: '' };
       },
       signOutAccountFolder: async (configDir: string) => { order.push('sign-out'); signedOut.push(configDir); },
+      cliStatus: async (q: { configDir?: string | null }) => (q.configDir && q.configDir in folderStatus ? folderStatus[q.configDir] : null),
     };
     const app = express();
     app.use(express.json());
@@ -40,13 +42,33 @@ describe('accounts routes: a Claude account with its own login folder', () => {
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'accounts-folder-'));
     store = new AccountsStore(dir);
-    starts = []; signedOut = []; order = [];
+    starts = []; signedOut = []; order = []; folderStatus = {};
   });
   afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
 
   it('the list says whether this install offers the full sign-in', async () => {
     expect((await request(appWith({ offers: true })).get('/api/accounts').expect(200)).body.claudeFullSignIn).toBe(true);
     expect((await request(appWith({ offers: false })).get('/api/accounts').expect(200)).body.claudeFullSignIn).toBe(false);
+  });
+
+  it('an account with a folder carries the sign-in state that Claude Code gives for that folder', async () => {
+    const inDir = path.join(dir, 'claude-accounts', 'in');
+    const outDir = path.join(dir, 'claude-accounts', 'out');
+    const unknownDir = path.join(dir, 'claude-accounts', 'unknown');
+    store.upsertClaudeConfigDir({ id: 'in', label: 'In', configDir: inDir });
+    store.upsertClaudeConfigDir({ id: 'out', label: 'Out', configDir: outDir });
+    store.upsertClaudeConfigDir({ id: 'unknown', label: 'Unknown', configDir: unknownDir });
+    const saved = store.addClaude({ token: 'tok-w', label: 'Work' });
+    folderStatus = { [inDir]: { loggedIn: true }, [outDir]: { loggedIn: false } };
+    const list = (await request(appWith({ offers: true })).get('/api/accounts').expect(200)).body.claude as { id: string; kind: string; signedIn?: boolean }[];
+    const of = (id: string) => list.find((a) => a.id === id)!;
+    expect(of('in')).toMatchObject({ kind: 'folder', signedIn: true });
+    expect(of('out')).toMatchObject({ kind: 'folder', signedIn: false });
+    expect('signedIn' in of('unknown')).toBe(false);
+    expect('signedIn' in of(saved.id)).toBe(false);
+    // A hosted box keeps its list as it was: this state is for the local page.
+    const hosted = (await request(appWith({ offers: false, clean: true })).get('/api/accounts').expect(200)).body.claude as { id: string }[];
+    expect('signedIn' in hosted.find((a) => a.id === 'out')!).toBe(false);
   });
 
   it('a new account with kind "folder" starts the full sign-in; with no kind it starts the token sign-in', async () => {

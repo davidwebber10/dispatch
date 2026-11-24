@@ -92,7 +92,11 @@ export function createAccountsRouter(accounts: AccountsStore, claudeLogin: Claud
     const claude = await Promise.all(v.claude.map(async (a) => {
       const need = !a.email || !a.plan;
       const p = need ? await Promise.race([claudeProfileOf(a.id), new Promise<null>((r) => setTimeout(() => r(null), PROFILE_WAIT_MS).unref?.())]) : null;
-      return { ...a, ...(p?.email && !a.email ? { email: p.email } : {}), ...(p?.plan && !a.plan ? { plan: p.plan } : {}), ...count('claude', a.id) };
+      // An account with a login folder on a local install: Claude Code's own answer for that folder,
+      // so the page can say "Not signed in" and offer the sign-in again. No answer: nothing is said.
+      const folder = claudeLogin.offersFolderLogin === true ? accounts.claudeConfigDir(a.id) : null;
+      const st = folder ? await Promise.race([claudeLogin.cliStatus({ configDir: folder }).catch(() => null), new Promise<null>((r) => setTimeout(() => r(null), PROFILE_WAIT_MS).unref?.())]) : null;
+      return { ...a, ...(p?.email && !a.email ? { email: p.email } : {}), ...(p?.plan && !a.plan ? { plan: p.plan } : {}), ...(st ? { signedIn: st.loggedIn === true } : {}), ...count('claude', a.id) };
     }));
     // `claudeFullSignIn`: "Add account" can offer a sign-in that keeps the claude.ai connectors (a local install).
     res.json({ ...v, claude, codex, claudeFullSignIn: claudeLogin.offersFolderLogin === true });
