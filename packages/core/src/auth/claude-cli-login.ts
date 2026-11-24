@@ -39,7 +39,8 @@ export interface ClaudeAuthStatus {
 /** The printed authorize URL. The localhost one (handed to BROWSER) is never it. */
 const URL_RE = /https:\/\/claude\.(?:com|ai)\/[^\s"'<>]+/g;
 export const INVALID_CODE_TEXT = 'Invalid code. Please make sure the full code was copied.';
-export const LOGIN_FAILED_RE = /Login failed:([^\n]*)/;
+/** Claude Code's failure line. 2.1.322 said "Login failed: …"; 2.1.331 says "Couldn't log in: …" (seen 2026-11-24). */
+export const LOGIN_FAILED_RE = /(?:Login failed|Couldn['’]t log in):([^\n]*)/;
 
 /** The plain sentences a person reads. */
 export const MSG = {
@@ -129,6 +130,8 @@ interface Live {
   err: string;
   /** Where this attempt's stderr was when the last code went in. */
   errFrom: number;
+  /** The last code that went in, so that it is never repeated in a message. '' before the first one. */
+  code: string;
   exitCode: number | null;
   configDir: string | null;
   tag: unknown;
@@ -215,7 +218,7 @@ export class ClaudeCliLogin {
       return { ...session };
     }
     const live: Live = {
-      session, child, out: '', err: '', errFrom: 0, exitCode: null, configDir, tag: target.tag ?? null,
+      session, child, out: '', err: '', errFrom: 0, code: '', exitCode: null, configDir, tag: target.tag ?? null,
       timer: setTimeout(() => this.fail(live, MSG.timeout), this.sessionTimeoutMs),
     };
     live.timer.unref?.();
@@ -271,6 +274,7 @@ export class ClaudeCliLogin {
     live.session.status = 'exchanging';
     live.session.error = null;
     live.errFrom = live.err.length;
+    live.code = code;
     try { live.child.stdin.write(code + '\n'); } catch { this.fail(live, MSG.ended); return { ...live.session }; }
 
     const deadline = Date.now() + this.exchangeTimeoutMs;
@@ -320,10 +324,23 @@ export class ClaudeCliLogin {
    * words, redacted, so the person is not told that a good code was wrong.
    */
   private failureText(live: Live): string | null {
+    // Only a failure line we know is shown. Any other words on stderr (a warning, a stack frame, an
+    // echo of what was typed) are never put on the page: the caller keeps its fixed sentence.
     const m = LOGIN_FAILED_RE.exec(live.err.slice(live.errFrom)) ?? LOGIN_FAILED_RE.exec(live.err);
     if (!m) return null;
-    const why = redactLogText(m[1] ?? '', 160);
+    // Redaction first, on the whole line, exactly as before this change: a URL keeps no query, and a
+    // pasted `code#state`, a token or a long opaque run is cut (os/box-log.ts). Nothing is replaced
+    // before it, so no shape that the redaction knows can be broken (review of #193, round 2).
+    const full = redactLogText(m[1] ?? '', Number.MAX_SAFE_INTEGER).trim();
+    // The words that are shown, and that say which kind of failure it is: the first 160 characters, as
+    // before this change. Words past that point never decide the kind (review of #193, round 3).
+    const why = full.length > 160 ? `${full.slice(0, 160)}…` : full;
     if (!why || /wasn.t accepted|not accepted|invalid (?:code|grant)/i.test(why)) return MSG.rejected;
+    // A pasted code that the redaction did not know (a short one) is still never repeated: when the
+    // line holds it, whole or one half, the caller keeps its fixed sentence. Parts under 4 characters
+    // are not looked for: they are in ordinary words, and no real code is that short.
+    // The whole line is looked at here, so a code that the 160-character cut splits is found too.
+    if ([live.code, ...live.code.split('#')].some((part) => part.length >= 4 && full.includes(part))) return null;
     return `${MSG.failedWith} ${why} Start it again.`;
   }
 

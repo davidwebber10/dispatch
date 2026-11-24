@@ -234,3 +234,59 @@ describe('<AccountsSection> usage access (W1-H)', () => {
     expect(within(page).queryByTestId('usage-access-note')).toBeNull();
   });
 });
+
+// Spec 2026-11-24 (a full sign-in for a Claude account): an account can keep its claude.ai connectors.
+describe('<AccountsSection> a Claude account with a full sign-in', () => {
+  const session = { id: 'l1', status: 'awaiting_code' as const, url: 'https://claude.com/x', error: null, createdAt: 'x' };
+  const withFull = (claude: AccountsView['claude'] = view().claude): AccountsView => ({ ...view(), claude, claudeFullSignIn: true });
+
+  it('the add sheet offers both kinds, the full sign-in first and selected, and starts that one', async () => {
+    vi.spyOn(api, 'getAccounts').mockResolvedValue(withFull());
+    const start = vi.spyOn(api, 'accountsClaudeLogin').mockResolvedValue(session);
+    render(<AccountsSection />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add Claude account' }));
+    const kinds = screen.getByRole('radiogroup', { name: 'Kind of sign-in' });
+    const full = within(kinds).getByRole('radio', { name: /Full sign-in/ });
+    expect(full).toBeChecked();
+    expect(kinds).toHaveTextContent('Keeps the claude.ai connectors of this account');
+    expect(kinds).toHaveTextContent('It runs the model and has no claude.ai connectors');
+    fireEvent.change(screen.getByLabelText('Account name'), { target: { value: 'Team' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Log in to the new Claude account' }));
+    await waitFor(() => expect(start).toHaveBeenCalledWith('Team', undefined, 'folder'));
+  });
+
+  it('"Model only" starts the sign-in that Dispatch keeps', async () => {
+    vi.spyOn(api, 'getAccounts').mockResolvedValue(withFull());
+    const start = vi.spyOn(api, 'accountsClaudeLogin').mockResolvedValue(session);
+    render(<AccountsSection />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add Claude account' }));
+    fireEvent.click(screen.getByRole('radio', { name: /Model only/ }));
+    fireEvent.change(screen.getByLabelText('Account name'), { target: { value: 'Side' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Log in to the new Claude account' }));
+    await waitFor(() => expect(start).toHaveBeenCalledWith('Side'));
+  });
+
+  it('a daemon that does not offer the full sign-in shows no choice', async () => {
+    render(<AccountsSection />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add Claude account' }));
+    expect(screen.queryByRole('radiogroup', { name: 'Kind of sign-in' })).toBeNull();
+  });
+
+  it('an account with a full sign-in says that it has the connectors of that account', async () => {
+    vi.spyOn(api, 'getAccounts').mockResolvedValue(withFull([...view().claude, { id: 'f1', label: 'Team', isCli: false, kind: 'folder', addedAt: '2026-11-24T00:00:00Z', signedIn: true }]));
+    render(<AccountsSection />);
+    const page = await openAccount('Claude: Team', 'claude', 'f1');
+    expect(within(page).getByTestId('account-connectors')).toHaveTextContent('Has the claude.ai connectors of this account.');
+    expect(within(page).queryByRole('button', { name: 'Sign in again to Team' })).toBeNull();
+  });
+
+  it('a signed-out full sign-in says so in the list and offers the sign-in for that account', async () => {
+    vi.spyOn(api, 'getAccounts').mockResolvedValue(withFull([...view().claude, { id: 'f1', label: 'Team', isCli: false, kind: 'folder', addedAt: '2026-11-24T00:00:00Z', signedIn: false }]));
+    const start = vi.spyOn(api, 'accountsClaudeLogin').mockResolvedValue(session);
+    render(<AccountsSection />);
+    expect(await screen.findByRole('button', { name: 'Claude: Team' })).toHaveTextContent('Not signed in');
+    const page = await openAccount('Claude: Team', 'claude', 'f1');
+    fireEvent.click(within(page).getByRole('button', { name: 'Sign in again to Team' }));
+    await waitFor(() => expect(start).toHaveBeenCalledWith('Team', 'f1'));
+  });
+});

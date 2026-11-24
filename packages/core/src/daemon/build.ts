@@ -34,6 +34,7 @@ import { ClaudeLoginService } from '../auth/claude-login.js';
 import { CodexLoginService } from '../auth/codex-login.js';
 import { AccountsStore, adoptClaudeLoginToken, genericClaudeSignInTarget, type AccountProvider } from '../auth/accounts.js';
 import { claudeLoginSources, makeBoxClaudeAuthenticated, makeClaudeSignedIn, setClaudeSignedInSource } from '../auth/claude-login-sources.js';
+import { seedAccountClaudeState } from '../auth/claude-account-state.js';
 import type { KeyRegistry } from '../auth/principals.js';
 import type { AccessGate, GateDeps } from '../auth/access-gate.js';
 import type { PairCodes } from '../auth/pair-code.js';
@@ -551,10 +552,21 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   // no token is read, kept or injected (auth/claude-cli-login.ts). A local install keeps setup-token.
   if (useCleanClaudeLogin(env)) {
     claudeLogin.useCleanLogin(new ClaudeCliLogin({ env: () => childEnv(spawnEnv.current()) }), { ownerEmail: env.DISPATCH_OWNER_EMAIL });
-    claudeLogin.onAccountConfigDir = ({ id, label, configDir, status }) => {
-      accounts.upsertClaudeConfigDir({ id, label, configDir, ...(status.email ? { email: status.email } : {}), ...(planOf(status) ? { plan: planOf(status)! } : {}) });
-    };
+  } else {
+    // A local install: one account can be signed in the same way, in a folder of its own, so that it
+    // keeps its claude.ai connectors (spec 2026-11-24). Every other sign-in stays setup-token.
+    claudeLogin.useFolderLogin(new ClaudeCliLogin({ env: () => childEnv(spawnEnv.current()) }));
   }
+  // An account signed in with a folder of its own (a hosted added account, or a local full sign-in).
+  const localInstall = !useCleanClaudeLogin(env);
+  claudeLogin.onAccountConfigDir = ({ id, label, configDir, status }) => {
+    // A local install: the new folder takes over "the first run is done" and the trusted project
+    // folders of this computer, so its first interactive thread does not open on Claude Code's
+    // first-run screen (auth/claude-account-state.ts). A hosted box has its own image state.
+    // Only for a NEW account: "Sign in again" must not change what the account already says.
+    if (localInstall && !accounts.has('claude', id)) seedAccountClaudeState(configDir);
+    accounts.upsertClaudeConfigDir({ id, label, configDir, ...(status.email ? { email: status.email } : {}), ...(planOf(status) ? { plan: planOf(status)! } : {}) });
+  };
   // Added Codex accounts sign in with `codex login --device-auth` under the threads' spawn env
   // (PATH with the bundled tools), so it runs the same `codex` the threads do.
   const codexLogin = new CodexLoginService({

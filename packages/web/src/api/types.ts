@@ -604,7 +604,7 @@ export type UsageAccessState = 'ok' | 'sign-in-needed' | 'not-available' | 'rate
 export interface Account { id: string; label: string; email?: string; plan?: string; isCli: boolean; /** `saved`: a sign-in that Dispatch keeps; it has no claude.ai connectors. Absent on an older daemon. */ kind?: 'cli' | 'saved' | 'folder'; addedAt: string | null; signedIn?: boolean; threadCount?: number; usageAccess?: { state: UsageAccessState; lastOkAt: number | null } }
 /** A thread pinned to an account (the delete notice lists them). */
 export interface AccountThread { id: string; label: string; sessionId: string }
-export interface AccountsView { claude: Account[]; codex: Account[]; defaults: Record<AccountProvider, string> }
+export interface AccountsView { claude: Account[]; codex: Account[]; defaults: Record<AccountProvider, string>; /** A local daemon that can sign a Claude account in with a folder of its own, which keeps its claude.ai connectors (spec 2026-11-24). */ claudeFullSignIn?: boolean }
 
 /** Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md): one row of GET /api/plugins. */
 export interface PluginInstall { marketplace: string; version: string; sha256: string; installedAt: string; commit?: string }

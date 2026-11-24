@@ -57,6 +57,8 @@ export function AccountsSection() {
   const [codexSignIn, setCodexSignIn] = useState<string | null>(null);
   // The Claude account whose "Sign in again" login shows now (W1-H).
   const [claudeSignIn, setClaudeSignIn] = useState<string | null>(null);
+  // The kind of a NEW Claude account, where the daemon offers the choice (spec 2026-11-24).
+  const [claudeKind, setClaudeKind] = useState<'folder' | 'saved'>('folder');
   const [checking, setChecking] = useState(false);
   const checkUsage = async (id: string) => {
     setChecking(true);
@@ -150,19 +152,36 @@ export function AccountsSection() {
             {a.plan && <SettingsRow label="Plan" value={a.plan} />}
             {/* What a thread on this login can reach (one source for the Claude login, spec 2026-11-23):
                 a sign-in that Dispatch saved runs the model only. An older daemon sends no kind: no line. */}
-            {provider === 'claude' && (a.kind === 'saved' || a.kind === 'cli') && (
+            {provider === 'claude' && (a.kind === 'saved' || a.kind === 'cli' || (a.kind === 'folder' && view.claudeFullSignIn === true)) && (
               <SettingsRow label="claude.ai connectors" hint={
                 <span data-testid="account-connectors">
                   {a.kind === 'saved'
                     ? 'No claude.ai connectors. Threads on this login cannot use your mail, calendar or chat connectors.'
+                    : a.kind === 'folder' ? 'Has the claude.ai connectors of this account.'
                     : 'Has the claude.ai connectors of this computer’s Claude login.'}
                 </span>} />
+            )}
+            {provider === 'claude' && a.kind === 'folder' && a.signedIn !== undefined && (
+              <SettingsRow label="Sign-in" control={a.signedIn ? <StatusMark tone="accent">Signed in</StatusMark> : <StatusMark tone="yellow">Not signed in</StatusMark>} />
             )}
             {provider === 'codex' && !a.isCli && a.signedIn !== undefined && (
               <SettingsRow label="Sign-in" control={a.signedIn ? <StatusMark tone="accent">Signed in</StatusMark> : <StatusMark tone="yellow">Not signed in</StatusMark>} />
             )}
             <SettingsRow label="Threads on it" value={a.threadCount ? threadsLabel(a.threadCount) : 'None'} />
           </SettingsGroup>
+
+          {provider === 'claude' && a.kind === 'folder' && a.signedIn === false && (
+            <SettingsGroup title="Sign in">
+              <SettingsRow label="Sign in to Claude" hint="This account is signed out. Sign in again to use it."
+                control={claudeSignIn !== a.id
+                  ? <Button aria-label={`Sign in again to ${a.label}`} onClick={() => setClaudeSignIn(a.id)} variant="primary" size="sm" icon={<SignIn size={14} weight="bold" />}>Sign in</Button>
+                  : undefined}>
+                {claudeSignIn === a.id && (
+                  <ClaudeLogin autoStart buttonLabel="Sign in again" start={() => api.accountsClaudeLogin(a.label, a.id)} onDone={() => { setClaudeSignIn(null); useSignInRecovered.getState().mark('claude', a.id); void load(); }} />
+                )}
+              </SettingsRow>
+            </SettingsGroup>
+          )}
 
           {provider === 'codex' && !a.isCli && a.signedIn === false && (
             <SettingsGroup title="Sign in">
@@ -264,8 +283,27 @@ export function AccountsSection() {
                 placeholder={adding === 'claude' ? 'Name, like Work or Personal (optional)' : 'Name, like Work or Personal'}
                 style={{ ...fieldFor(isMobile), width: '100%', boxSizing: 'border-box' }} />
             )}
+            {adding === 'claude' && view?.claudeFullSignIn === true && (
+              <div role="radiogroup" aria-label="Kind of sign-in" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {([
+                  ['folder', 'Full sign-in', 'Keeps the claude.ai connectors of this account (mail, calendar, chat). Claude Code keeps the login in a folder of its own.'],
+                  ['saved', 'Model only', 'A sign-in that Dispatch keeps. It runs the model and has no claude.ai connectors.'],
+                ] as const).map(([kind, title, text]) => (
+                  <label key={kind} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', cursor: 'pointer' }}>
+                    <input type="radio" name="claude-account-kind" aria-label={title} checked={claudeKind === kind} onChange={() => setClaudeKind(kind)} style={{ marginTop: 3 }} />
+                    <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <span style={{ fontSize: fontVar(13), fontWeight: 600, color: 'var(--color-text-primary)' }}>{title}</span>
+                      <span style={noteText}>{text}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
             {adding === 'claude' ? (
-              <ClaudeLogin buttonLabel="Log in to the new Claude account" start={() => api.accountsClaudeLogin(label)} onDone={() => { setAdding(null); setLabel(''); void load(); }} />
+              // `key`: another kind is another sign-in, so a link from the first kind is not kept.
+              <ClaudeLogin key={claudeKind} buttonLabel="Log in to the new Claude account"
+                start={() => (view?.claudeFullSignIn === true && claudeKind === 'folder' ? api.accountsClaudeLogin(label, undefined, 'folder') : api.accountsClaudeLogin(label))}
+                onDone={() => { setAdding(null); setLabel(''); void load(); }} />
             ) : codexSignIn ? (
               <CodexLogin accountId={codexSignIn} onDone={codexSignInEnded} onCancel={codexSignInEnded} />
             ) : (

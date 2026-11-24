@@ -3,7 +3,7 @@ import path from 'path';
 import * as pty from 'node-pty';
 import { v4 as uuid } from 'uuid';
 import type { ClaudeCliLogin, ClaudeAuthStatus } from './claude-cli-login.js';
-import { prepareAccountConfigDir } from './claude-config-dirs.js';
+import { accountConfigDir, prepareAccountConfigDir } from './claude-config-dirs.js';
 
 /**
  * Headless Claude login for surfaces that have no terminal.
@@ -195,22 +195,122 @@ export class ClaudeLoginService {
   /** A hosted added account signed in (its own config dir). The daemon adds or updates the account. */
   onAccountConfigDir: ((info: { id: string; label: string; configDir: string; status: ClaudeAuthStatus }) => void | Promise<void>) | null = null;
 
+  /** A sign-in with `claude auth login` ended signed in: an account folder is reported, then every listener. */
+  private readonly accountSignedIn = async ({ configDir, tag, status }: { configDir: string | null; tag: unknown; status: ClaudeAuthStatus }): Promise<void> => {
+    const t = tag as { kind: 'primary' } | { kind: 'account'; id: string; label: string } | null;
+    // A sign-in for a new account that was cancelled or replaced while Claude Code confirmed it (a
+    // local install): its folder is already gone, so there is no account. Claude Code wrote the login
+    // all the same, on macOS into the keychain: sign that folder out, then remove what it made again.
+    // The rule is about the folder, not about one remembered attempt: a completion whose folder was
+    // dropped, or is simply not there, never makes an account (review round 2: with three attempts a
+    // single remembered folder was overwritten). The sign-out uses the engine that made the login.
+    if (!this.clean && configDir && (this.droppedFolders.has(configDir) || !fs.existsSync(configDir))) {
+      this.droppedFolders.delete(configDir);
+      const engine = this.droppedEngines.get(configDir) ?? this.folder;
+      this.droppedEngines.delete(configDir);
+      await engine?.logout(configDir).catch(() => undefined);
+      this.removeAttemptFolder(configDir);
+      return;
+    }
+    // The account exists now: its folder is no longer the folder of an attempt.
+    if (configDir && configDir === this.newFolder) this.newFolder = null;
+    if (t && t.kind === 'account' && configDir) await this.onAccountConfigDir?.({ id: t.id, label: t.label, configDir, status });
+    this.onChangeCb?.();
+  };
+
   useCleanLogin(login: ClaudeCliLogin, opts: { ownerEmail?: string | null } = {}): void {
     this.clean = { login, ownerEmail: opts.ownerEmail?.trim() || null };
-    login.onLoggedIn = async ({ configDir, tag, status }) => {
-      const t = tag as { kind: 'primary' } | { kind: 'account'; id: string; label: string } | null;
-      if (t && t.kind === 'account' && configDir) await this.onAccountConfigDir?.({ id: t.id, label: t.label, configDir, status });
-      this.onChangeCb?.();
-    };
+    login.onLoggedIn = this.accountSignedIn;
     // After the build: the env provider can name services that do not exist yet (found in a box run).
     setImmediate(() => { void login.authStatus().then(() => this.onChangeCb?.()); });
   }
 
   get usesCleanLogin(): boolean { return this.clean !== null; }
 
-  /** `claude auth status` of the primary login (clean login only; cached briefly). */
+  // --- a full sign-in for ONE account on a local install (spec 2026-11-24) ---
+  /**
+   * A local install keeps `claude setup-token` for its ordinary sign-ins. An account can instead be
+   * signed in with Claude Code's own `claude auth login` in a folder of its own, as on a hosted box:
+   * that login keeps the claude.ai connectors of the account, which a setup-token token cannot fetch.
+   * Dispatch holds no token for such an account.
+   */
+  private folder: ClaudeCliLogin | null = null;
+  /** The attempt in flight, or the last one, is a folder sign-in: its status, its code and a cancel go there. */
+  private folderTurn = false;
+  /** The folder made for a NEW account by the attempt in flight. It is deleted when the attempt ends with no account. */
+  private newFolder: string | null = null;
+  /**
+   * Every such folder that was deleted, with the engine of its attempt: a completion that arrives for
+   * one of them afterwards is undone, not saved. An entry goes when its completion came; the newest
+   * 64 are kept, far more than the attempts that can still be confirming.
+   */
+  private droppedFolders = new Set<string>();
+  private droppedEngines = new Map<string, ClaudeCliLogin>();
+
+  useFolderLogin(login: ClaudeCliLogin): void {
+    this.folder = login;
+    login.onLoggedIn = this.accountSignedIn;
+  }
+
+  /** This install can sign an account in with a folder of its own, next to the token sign-in. */
+  get offersFolderLogin(): boolean { return this.clean === null && this.folder !== null; }
+
+  private endFolderTurn(): void {
+    if (!this.folderTurn) return;
+    this.folderTurn = false;
+    this.folder?.cancel();
+    this.dropNewFolder();
+  }
+
+  /** The attempt for a new account ended with no account: its folder goes. Only a folder under `claude-accounts`. */
+  private dropNewFolder(): void {
+    const dir = this.newFolder;
+    this.newFolder = null;
+    if (!dir) return;
+    this.droppedFolders.add(dir);
+    if (this.folder) this.droppedEngines.set(dir, this.folder);
+    for (const old of this.droppedFolders) { if (this.droppedFolders.size <= 64) break; this.droppedFolders.delete(old); this.droppedEngines.delete(old); }
+    this.removeAttemptFolder(dir);
+  }
+
+  private removeAttemptFolder(dir: string): void {
+    if (path.basename(path.dirname(dir)) !== 'claude-accounts') return;
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* an empty folder that stays is harmless */ }
+  }
+
+  /**
+   * A step of a folder attempt answered. An attempt that ended in an error leaves no folder for a
+   * new account. `mine` is the folder of THAT attempt: an answer that comes after another attempt
+   * took over must not delete the other attempt's folder (review of #193).
+   */
+  private afterFolderStep(session: LoginSession, mine: string | null): LoginSession {
+    if (session.status === 'error' && mine !== null && this.newFolder === mine) this.dropNewFolder();
+    return session;
+  }
+
+  /**
+   * Sign an account folder out with Claude Code's own command, before the folder is deleted: on macOS
+   * the credential is in the keychain, not in the folder. The clean login keeps its own way (the
+   * credential is a file in the folder).
+   */
+  async signOutAccountFolder(configDir: string): Promise<void> {
+    if (this.clean || !this.folder) return;
+    await this.folder.logout(configDir);
+    // The sign-out command hides its own failure. Ask: a folder that is still signed in keeps its
+    // account, so the person can try again. No answer at all means Claude Code cannot be run, and
+    // then nothing can be signed out: the removal goes on.
+    const st = await this.folder.authStatus(configDir, { fresh: true });
+    if (st?.loggedIn === true) throw new Error('Claude Code could not sign this account out. Try again, or run `claude auth logout` for it in a terminal.');
+  }
+
+  /**
+   * `claude auth status`, cached briefly. The clean login: the primary login, or an account folder.
+   * A local install: an account folder only (the login of the computer has its own check, setup/detect.ts).
+   */
   async cliStatus(o: { fresh?: boolean; configDir?: string | null } = {}): Promise<ClaudeAuthStatus | null> {
-    return this.clean ? this.clean.login.authStatus(o.configDir ?? null, o) : null;
+    if (this.clean) return this.clean.login.authStatus(o.configDir ?? null, o);
+    if (o.configDir && this.folder) return this.folder.authStatus(o.configDir, o);
+    return null;
   }
 
   /** A thread reported an auth error: ask Claude Code again at the next read (clean login only). */
@@ -281,6 +381,11 @@ export class ClaudeLoginService {
   // --- login flow ---------------------------------------------------------
   status(): LoginSession | null {
     if (this.clean) return this.clean.login.status();
+    if (this.folderTurn && this.folder) {
+      // An attempt that ended by itself (a timeout, a CLI that exited) is seen here by the page's poll.
+      const s = this.folder.status();
+      return s ? this.afterFolderStep(s, this.newFolder) : null;
+    }
     const session = this.live?.session ?? this.finished;
     return session ? { ...session } : null;
   }
@@ -296,6 +401,7 @@ export class ClaudeLoginService {
    */
   async start(): Promise<LoginSession> {
     if (this.clean) return this.clean.login.start({ email: this.clean.ownerEmail, tag: PRIMARY_TAG });
+    this.endFolderTurn();
     const target = this.genericTarget?.() ?? null;
     return this.startLogin(target ? target.label : null, target?.accountId ?? null, target ? { kind: target.accountId ? 'existing' : 'new', label: target.label } : undefined);
   }
@@ -304,15 +410,28 @@ export class ClaudeLoginService {
    * The same flow, but the captured token becomes a NEW account with this label (onAccountToken),
    * or, with `accountId`, replaces the token of that saved account ("Sign in again").
    */
-  async startForAccount(label: string, accountId?: string, dataDirForAccounts?: string): Promise<LoginSession> {
-    if (this.clean) {
-      // A hosted added account: its own config dir, shared parts linked to the primary (claude-config-dirs.ts).
-      const id = accountId || uuid().slice(0, 8);
+  async startForAccount(label: string, accountId?: string, dataDirForAccounts?: string, opts: { /** A full sign-in in a folder of the account (a local install; the clean login always is one). */ folder?: boolean } = {}): Promise<LoginSession> {
+    if (this.clean || opts.folder) {
+      const login = this.clean?.login ?? this.folder;
+      if (!login) throw new Error('This Dispatch cannot make a full sign-in. Update Dispatch, or use the sign-in that Dispatch keeps.');
+      // One sign-in at a time: a token attempt that waits for its code ends here.
+      if (!this.clean) this.cancelTokenAttempt();
+      // The account's own config dir, shared parts linked to the primary (claude-config-dirs.ts).
       const base = dataDirForAccounts ?? this.dataDir;
+      // A new id is never the id of a folder that was dropped and whose late completion can still come:
+      // that completion would undo this sign-in (review of #193, round 3).
+      let id = accountId || uuid().slice(0, 8);
+      while (!accountId && this.droppedFolders.has(accountConfigDir(base, id))) id = uuid().slice(0, 8);
       const configDir = prepareAccountConfigDir(base, id);
       const tag = this.accountTag(id, label.trim() || 'Claude account');
-      return this.clean.login.start({ configDir, tag });
+      if (this.clean) return login.start({ configDir, tag });
+      // A local install. One attempt at a time: the folder of an earlier attempt for a new account goes.
+      if (configDir !== this.newFolder) this.dropNewFolder();
+      this.folderTurn = true;
+      if (!accountId) this.newFolder = configDir;
+      return this.afterFolderStep(await login.start({ configDir, tag }), accountId ? null : configDir);
     }
+    this.endFolderTurn();
     return this.startLogin(label.trim() || 'Claude account', accountId || null);
   }
 
@@ -394,8 +513,15 @@ export class ClaudeLoginService {
    * Submit the code the user copied after authorising, and resolve once a token
    * has been captured (or the attempt fails).
    */
-  async submitCode(code: string): Promise<LoginSession> {
+  async submitCode(code: string, attemptId?: string): Promise<LoginSession> {
+    // A screen that still shows an attempt which another one replaced (a second tab): its code must
+    // reach no sign-in at all. A page that sends no id (an older one) goes on as before.
+    if (attemptId && this.status()?.id !== attemptId) throw Object.assign(new Error('no login in progress'), { code: 'no_session' });
     if (this.clean) return this.clean.login.submitCode(code);
+    if (this.folderTurn && this.folder) {
+      const mine = this.newFolder;
+      return this.afterFolderStep(await this.folder.submitCode(code), mine);
+    }
     const live = this.live;
     // Structured so the UI can offer "start again" instead of surfacing a raw 400.
     // Reachable whenever the daemon restarted while the user was away authorising.
@@ -501,6 +627,12 @@ export class ClaudeLoginService {
   /** Abandon any in-flight attempt. Safe to call when nothing is running. */
   cancel(): void {
     if (this.clean) { this.clean.login.cancel(); return; }
+    this.endFolderTurn();
+    this.cancelTokenAttempt();
+  }
+
+  /** End the `claude setup-token` attempt, when one is in flight, and forget the last one. */
+  private cancelTokenAttempt(): void {
     this.finished = null;
     if (!this.live) return;
     clearInterval(this.live.watch);

@@ -217,7 +217,8 @@ export const api = {
   claudeLoginStart: () => req<ClaudeLoginSession>('/api/claude-auth/login', { method: 'POST' }),
   /** End the sign-in that waits for a code (the person chose another way). */
   claudeLoginCancel: () => req<void>('/api/claude-auth/login/cancel', { method: 'POST' }),
-  claudeLoginCode: (code: string) => req<ClaudeLoginSession>('/api/claude-auth/login/code', { method: 'POST', body: body({ code }) }),
+  /** `id`: the attempt the screen shows, so a code from a stale screen reaches no other sign-in. */
+  claudeLoginCode: (code: string, id?: string) => req<ClaudeLoginSession>('/api/claude-auth/login/code', { method: 'POST', body: body({ code, ...(id ? { id } : {}) }) }),
   endlessState: () => req<EndlessState>('/api/endless/state'),
   endlessSearch: (q: string, project: string | null) =>
     req<{ results: EndlessSearchHit[] }>(`/api/endless/search?q=${encodeURIComponent(q)}${project ? `&project=${encodeURIComponent(project)}` : ''}`),
@@ -540,7 +541,8 @@ export const api = {
   refreshOsConnections: () => req<OsConnections>('/api/os/connections/refresh', { method: 'POST' }),
   getOsTools: () => req<OsToolsList>('/api/os/tools'),
   /** A new Claude account; with `accountId`, "Sign in again" for that saved account (its token is replaced in place). */
-  accountsClaudeLogin: (label: string, accountId?: string) => req<ClaudeLoginSessionT>('/api/accounts/claude/login', { method: 'POST', body: body({ label, ...(accountId ? { accountId } : {}) }) }),
+  /** `kind: 'folder'`: a full sign-in for a NEW account, in a folder of its own (it keeps the claude.ai connectors). */
+  accountsClaudeLogin: (label: string, accountId?: string, kind?: 'folder') => req<ClaudeLoginSessionT>('/api/accounts/claude/login', { method: 'POST', body: body({ label, ...(accountId ? { accountId } : {}), ...(kind ? { kind } : {}) }) }),
   /** "Check again": the daemon reads that Claude account's usage and profile now, whatever its wait. */
   accountsCheckUsage: (id: string) => req<{ ok: boolean }>(`/api/accounts/claude/${encodeURIComponent(id)}/check`, { method: 'POST' }),
   accountsAddCodex: (label: string) => req<{ id: string; label: string }>('/api/accounts/codex', { method: 'POST', body: body({ label }) }),
