@@ -140,6 +140,34 @@ describe('node version guard', () => {
   });
 });
 
+describe('which node builds', () => {
+  const pnpmEnv = () => vi.mocked(execFileSync).mock.calls
+    .filter(c => c[0] === 'pnpm').map(c => (c[2] as { env: NodeJS.ProcessEnv }).env);
+
+  test('pnpm runs on the daemon node, not the shell node that .nvmrc picked', () => {
+    // The shell runs Node 22 (fnm use-on-cd). The daemon was installed on Node 24 and restarts on it.
+    const daemon = { installedNode: () => '/fnm/node-versions/v24.14.0/installation/bin/node' };
+    cmdBuild({ daemon, nodePath: '/fnm/node-versions/v22.23.3/installation/bin/node', nodeVersion: '24.14.0' } as any);
+    const envs = pnpmEnv();
+    expect(envs).toHaveLength(2);
+    for (const env of envs) expect(env.PATH!.startsWith('/fnm/node-versions/v24.14.0/installation/bin:')).toBe(true);
+    // The tools installer uses it too.
+    expect(vi.mocked(execFileSync).mock.calls.some(c => c[0] === '/fnm/node-versions/v24.14.0/installation/bin/node')).toBe(true);
+  });
+
+  test('without a recorded daemon node it falls back to the CLI node', () => {
+    cmdBuild({ daemon: {}, nodePath: '/opt/node22/bin/node', nodeVersion: '22.23.3' } as any);
+    for (const env of pnpmEnv()) expect(env.PATH!.startsWith('/opt/node22/bin:')).toBe(true);
+  });
+
+  test('a daemon node below the minimum stops the build, whatever the shell runs', () => {
+    const daemon = { installedNode: () => '/old/node20/bin/node' };
+    expect(() => cmdBuild({ daemon, nodePath: '/new/node24/bin/node', nodeVersion: '20.20.2' } as any))
+      .toThrow(/daemon's node \(\/old\/node20\/bin\/node\) is Node 20\.20\.2/);
+    expect(pnpmEnv()).toHaveLength(0);
+  });
+});
+
 describe('cmdBuild', () => {
   test('runs `pnpm install` (with CI=true) before `pnpm -r run build`', () => {
     const calls: Array<{ cmd: string; args: string[] }> = [];

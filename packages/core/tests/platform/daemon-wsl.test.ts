@@ -225,3 +225,10 @@ test('uninstall stops the verified daemon before removing its install record', (
   expect(killed).toEqual([4242]);
   expect(files['/fake/.dispatch/daemon.json']).toBeUndefined();
 });
+
+test('installedNode returns the node that install recorded, and null before any install', () => {
+  const { daemon } = harness();
+  expect(daemon.installedNode!()).toBeNull();
+  daemon.install({ ...OPTS, nodePath: '/fnm/v24.14.0/bin/node' });
+  expect(daemon.installedNode!()).toBe('/fnm/v24.14.0/bin/node');
+});

@@ -45,7 +45,7 @@ export interface Ctx {
   apiFetch?: typeof fetch;
   /** Test seam: read all of stdin for `dispatch api --body -`. */
   readStdin?: () => string;
-  /** Test seam: the Node version the build runs on. Defaults to `process.versions.node`. */
+  /** Test seam: the Node version the build runs on. Defaults to asking the build node itself. */
   nodeVersion?: string;
 }
 
@@ -534,30 +534,52 @@ export function nodeAtLeast(version: string, min: string = MIN_NODE): boolean {
   return true;
 }
 
+/**
+ * The node that builds the native modules (better-sqlite3 compiles for one Node ABI). It must be the node the
+ * daemon starts with: `restart` reuses the one `install` recorded, not the shell's. A shell can differ (fnm and
+ * nvm switch to .nvmrc inside the repo), so use the recorded one, and fall back to this CLI's own node.
+ */
+export function buildNode(ctx: Ctx): string {
+  return ctx.daemon?.installedNode?.() || ctx.nodePath || process.execPath;
+}
+
+function buildEnv(ctx: Ctx, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, ...extra };
+  const node = buildNode(ctx);
+  // An absolute path only: a bare name (a test double) must not put '.' on PATH.
+  if (path.isAbsolute(node)) env.PATH = `${path.dirname(node)}${path.delimiter}${env.PATH ?? ''}`;
+  return env;
+}
+
 /** Fail before pnpm does, with a message that says what to change. */
 export function assertNodeVersion(ctx: Ctx): void {
-  const have = ctx.nodeVersion ?? process.versions.node;
-  if (nodeAtLeast(have)) return;
+  const node = buildNode(ctx);
+  let have = ctx.nodeVersion;
+  if (!have) {
+    try { have = String(execFileSync(node, ['-p', 'process.versions.node'], { encoding: 'utf8' }) ?? '').trim(); }
+    catch { have = process.versions.node; }
+  }
+  if (!have || nodeAtLeast(have)) return;
   throw new Error(
-    `Node ${MIN_NODE} or newer is required (pnpm 11 needs it). This shell runs Node ${have}. ` +
-      `Switch to Node 22 or newer (in the repo, \`fnm use\` or \`nvm use\` reads .nvmrc), then retry.`,
+    `Node ${MIN_NODE} or newer is required (pnpm 11 needs it). The daemon's node (${node}) is Node ${have}. ` +
+      `Reinstall with a newer node: switch to Node 22 or newer, run \`dispatch install\`, then retry.`,
   );
 }
 
 function pnpmInstall(ctx: Ctx): void {
   // Mirrors the old bash script's `CI=true pnpm install`, so fresh clones
   // (scripts/install.sh) and self-updates that bump dependencies work.
-  execFileSync('pnpm', ['install'], { stdio: 'inherit', env: { ...process.env, CI: 'true' }, ...shellOf(ctx) });
+  execFileSync('pnpm', ['install'], { stdio: 'inherit', env: buildEnv(ctx, { CI: 'true' }), ...shellOf(ctx) });
 }
 
 function pnpmBuild(ctx: Ctx): void {
-  execFileSync('pnpm', ['-r', 'run', 'build'], { stdio: 'inherit', ...shellOf(ctx) });
+  execFileSync('pnpm', ['-r', 'run', 'build'], { stdio: 'inherit', env: buildEnv(ctx), ...shellOf(ctx) });
 }
 
 /** Best-effort: install the bundled CLI tools. Never fails the build or the update. */
 function toolsInstall(ctx: Ctx): void {
   try {
-    execFileSync(ctx.nodePath ?? process.execPath, [toolsCliPath(ctx), 'install'], { stdio: 'inherit' });
+    execFileSync(buildNode(ctx), [toolsCliPath(ctx), 'install'], { stdio: 'inherit' });
   } catch {
     console.error('Some tools failed to install (continuing).');
   }
