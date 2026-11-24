@@ -276,3 +276,52 @@ token.
 
 The reviewer's last verdict was NO-SHIP on the commit before these fixes. No third round was
 run: none of the round 2 findings was High.
+
+### Isolated check before the release (2026-11-24)
+
+The owner asked for a proof on an isolated daemon before the release. Each install below ran
+twice with the same steps: once on the released build (4.12.2) and once on this branch. The
+`claude` command was a stand-in that records a label for the login it was given. The macOS
+`security` command was a stand-in too, so no real login was read.
+
+**The install with the CLI login as the default (signed in), two saved sign-ins, and the old
+token file present:**
+
+| Process | 4.12.2 | This branch |
+| --- | --- | --- |
+| Thread with no account | the CLI login | the CLI login |
+| Thread on a saved sign-in | that sign-in | that sign-in |
+| Scheduled run, "run now" | the CLI login | the CLI login |
+| Title of a thread on a saved sign-in | the old token file | that sign-in |
+| Title of a thread with no account | the old token file | the CLI login |
+| Chat turn | the old token file | the CLI login |
+| Usage probe | the old token file, one probe | one probe per account, each on its own login |
+| Sign-in check of the setup pages | the old token file | the CLI login |
+| Shell tab | sees the old token | sees no Claude token |
+
+The update changed neither `accounts.json` nor the old token file. No token text reached a
+daemon log.
+
+**Other installs:**
+
+- **No accounts file, the old token file only, the CLI login signed out** (a sign-in through
+  the Chat card only). Both builds: the old file becomes the account "Dispatch login" and the
+  default, and a thread, a title and a Chat turn get it. Nothing changes for this install.
+- **An accounts file with no Claude default, the old token file, the CLI login signed out.**
+  This is the one install that the update changes for the worse. On 4.12.2 a thread already
+  got the signed-out CLI login, but Chat and titles worked through the old file. On this branch
+  Chat fails with "Not logged in" and shows the sign-in card. The old file is listed as the
+  account "Dispatch login", and one click in Settings, Accounts makes it the default. The card
+  does not offer that account by itself: a possible follow-up.
+- **A token in the daemon's own environment.** On 4.12.2 Chat, titles and the probe of the CLI
+  login used it. On this branch no process got it.
+
+**The sign-in card, driven in a browser** (the stand-in played `claude setup-token`): a Chat
+turn failed with no login, the card named the two ways, the code went in, the sign-in landed in
+a new account "Dispatch login, (date)", and the default did not change. After **Make default**
+a new thread and a Chat turn got the new sign-in. The old token file was not written. The New
+Thread window showed its sign-in gate on the signed-out install and no gate on the signed-in
+one.
+
+**What this check cannot prove:** a sign-in with the real service, the claude.ai connectors of a
+real login, a hosted box, and Windows or WSL. The first two need one run on a real install.
