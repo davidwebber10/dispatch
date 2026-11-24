@@ -176,3 +176,33 @@ describe('terminal socket compression', () => {
     } finally { delete process.env.DISPATCH_WS_DEFLATE; }
   });
 });
+
+
+// ---- A finished run is viewed, never restarted ----
+describe('attaching to a dead terminal', () => {
+  function deadFakes(config: Record<string, unknown>) {
+    const { pty, ws, sent } = fakes();
+    let alive = false;
+    (pty as any).isAlive = () => alive;
+    const relaunchTerminal = vi.fn(() => { alive = true; return null; });
+    const sessionService = {
+      getTerminal: () => ({ id: 't1', type: 'claude-code', config }),
+      relaunchTerminal,
+    } as any;
+    return { pty, ws, sent, relaunchTerminal, sessionService };
+  }
+
+  test('a finished runner terminal is not relaunched, so its saved prompt is not run again', () => {
+    const { pty, ws, relaunchTerminal, sessionService } = deadFakes({ runner: true, runnerPrompt: 'refresh the board' });
+    handleTerminalConnection(ws, req('/api/terminals/t1/ws'), pty, sessionService);
+    expect(relaunchTerminal).not.toHaveBeenCalled();
+    expect((ws as any).close).toHaveBeenCalledWith(1011, expect.stringMatching(/not running/i));
+  });
+
+  test('an ordinary dead thread still revives on attach (resume, no first prompt)', () => {
+    const { pty, ws, relaunchTerminal, sessionService } = deadFakes({});
+    handleTerminalConnection(ws, req('/api/terminals/t1/ws'), pty, sessionService);
+    expect(relaunchTerminal).toHaveBeenCalledWith('t1');
+    expect((ws as any).close).not.toHaveBeenCalled();
+  });
+});

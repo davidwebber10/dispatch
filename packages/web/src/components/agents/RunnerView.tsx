@@ -77,9 +77,10 @@ export function RunnerView({ runId, onBack }: { runId: string; onBack: () => voi
 
       {/* Body */}
       {showRaw ? (
-        run.terminalId
-          ? <TerminalTab key={run.terminalId} terminalId={run.terminalId} />
-          : <Empty>No raw terminal for this run.</Empty>
+        // A finished run's terminal is never attached: its process is gone, and the page has nothing to show there.
+        !run.terminalId ? <Empty>No raw terminal for this run.</Empty>
+          : active ? <TerminalTab key={run.terminalId} terminalId={run.terminalId} />
+          : <Empty>This run has finished. Its steps and activity are on the run page.</Empty>
       ) : (
         <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: isMobile ? 'column' : 'row' }}>
           {/* Plan / steps */}
