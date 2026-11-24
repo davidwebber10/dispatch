@@ -161,7 +161,11 @@ export function setProviderProbeEnv(env: Record<string, string>): void {
 async function probeSignedIn(name: ProviderName, bin: string): Promise<boolean | 'unknown' | null> {
   const probe = AUTH_PROBES[name];
   try {
-    const { stdout, stderr } = await exec(bin, probe.args, { timeout: 5000, env: childEnv(probeEnv) });
+    // For Claude this answers "is the login of this machine signed in": a token in the daemon's own
+    // environment must not answer for it (spec 2026-11-23). An added account is checked by its own
+    // token or folder (auth/claude-login-sources.ts, claudeSignedIn).
+    const env = childEnv(probeEnv, name === 'claude' ? { CLAUDE_CODE_OAUTH_TOKEN: '' } : undefined);
+    const { stdout, stderr } = await exec(bin, probe.args, { timeout: 5000, env });
     return probe.read(`${stdout}\n${stderr}`);
   } catch (err) {
     // A non-zero exit is how some CLIs say "not signed in", and its message is still on

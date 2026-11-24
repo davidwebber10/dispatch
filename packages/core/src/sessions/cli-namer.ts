@@ -3,6 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { detectProvider, resolveBin, type ProviderName } from '../setup/detect.js';
+import { claudeSignedIn } from '../auth/claude-login-sources.js';
 import { TITLE_SYSTEM_PROMPT, titleUserMessage, cleanTitle } from './model-namer.js';
 import { codexHome } from '../platform/codex-home.js';
 
@@ -45,7 +46,8 @@ export function pickCodexTitleModel(cachePath: string = codexModelsCachePath()):
 const CLAUDE_TIMEOUT_MS = 10_000;
 const CODEX_TIMEOUT_MS = 15_000;
 
-export type TitleGenerator = (conversationText: string) => Promise<string | null>;
+/** `ctx.accountId`: the Claude account of the thread that is named (none: the default account). */
+export type TitleGenerator = (conversationText: string, ctx?: { accountId?: string }) => Promise<string | null>;
 
 export interface RunResult { code: number | null; stdout: string }
 /** Runs a command with stdin; resolves (never rejects) once it exits or is killed at the timeout. */
@@ -68,16 +70,19 @@ export const runCommand: CommandRunner = (bin, args, { stdin, env, cwd, timeoutM
 });
 
 export interface CliNamerDeps {
-  /** The env a thread is spawned with (overlaid on the daemon's own), so the CLI signs in as a thread does. */
-  env: () => Record<string, string>;
+  /**
+   * The whole env of the one-shot CLI call. For Claude it carries the login of `accountId` (none:
+   * the default Claude account), so a title is made on the account of its thread (spec 2026-11-23).
+   */
+  env: (accountId?: string) => Record<string, string>;
   /** Injectable for tests. */
   run?: CommandRunner;
   /** Injectable for tests: the CLI's path, or null when it is not installed. */
   bin?: (name: ProviderName) => Promise<string | null>;
   /** Injectable for tests: which Codex model to run. */
   codexModel?: () => string;
-  /** Injectable for tests: true / 'unknown' tries the CLI, false skips it. */
-  signedIn?: (name: ProviderName) => Promise<boolean | 'unknown'>;
+  /** Injectable for tests: true / 'unknown' tries the CLI, false skips it. For Claude it answers for `accountId`. */
+  signedIn?: (name: ProviderName, accountId?: string) => Promise<boolean | 'unknown'>;
 }
 
 /** An empty directory to run in, so neither CLI picks up a project's CLAUDE.md / AGENTS.md. */
@@ -87,23 +92,25 @@ export function scratchDir(): string {
   return dir;
 }
 
-export async function usable(name: ProviderName, deps: CliNamerDeps): Promise<string | null> {
+/** The CLI's path when it is installed and the account it would run on is signed in (Claude: `accountId`, none = the default). */
+export async function usable(name: ProviderName, deps: CliNamerDeps, accountId?: string): Promise<string | null> {
   const bin = await (deps.bin ?? resolveBin)(name);
   if (!bin) return null;
-  const signedIn = await (deps.signedIn ?? (async (n) => (await detectProvider(n)).signedIn))(name).catch(() => 'unknown' as const);
+  const ask = deps.signedIn ?? (async (n: ProviderName, id?: string) => (n === 'claude' ? claudeSignedIn(id) : (await detectProvider(n)).signedIn));
+  const signedIn = await ask(name, accountId).catch(() => 'unknown' as const);
   return signedIn === false ? null : bin;
 }
 
 export function claudeTitleGenerator(deps: CliNamerDeps): TitleGenerator {
-  return async (conversationText) => {
-    const bin = await usable('claude', deps);
+  return async (conversationText, ctx) => {
+    const bin = await usable('claude', deps, ctx?.accountId);
     if (!bin) return null;
     const args = [
       '-p', '--model', CLAUDE_TITLE_MODEL, '--system-prompt', TITLE_SYSTEM_PROMPT,
       '--tools', '', '--strict-mcp-config', '--setting-sources', '', '--disable-slash-commands',
       '--no-session-persistence', '--effort', 'low', '--output-format', 'text',
     ];
-    const r = await (deps.run ?? runCommand)(bin, args, { stdin: titleUserMessage(conversationText), env: deps.env(), cwd: scratchDir(), timeoutMs: CLAUDE_TIMEOUT_MS });
+    const r = await (deps.run ?? runCommand)(bin, args, { stdin: titleUserMessage(conversationText), env: deps.env(ctx?.accountId), cwd: scratchDir(), timeoutMs: CLAUDE_TIMEOUT_MS });
     return r.code === 0 ? cleanTitle(r.stdout.trim()) : null;
   };
 }
@@ -132,9 +139,9 @@ export function codexTitleGenerator(deps: CliNamerDeps): TitleGenerator {
 
 /** Try each generator in order; the first title wins. A throw counts as no title. */
 export function firstTitle(generators: TitleGenerator[]): TitleGenerator {
-  return async (conversationText) => {
+  return async (conversationText, ctx) => {
     for (const g of generators) {
-      const title = await g(conversationText).catch(() => null);
+      const title = await g(conversationText, ctx).catch(() => null);
       if (title) return title;
     }
     return null;

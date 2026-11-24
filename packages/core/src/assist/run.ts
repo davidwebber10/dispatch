@@ -129,9 +129,9 @@ export function createAssistRunner(deps: AssistRunnerDeps): AssistRunner {
   const envFor = (h: 'claude' | 'codex', accountId: string): Record<string, string> => ({ ...deps.cli.env(), ...(deps.accountEnv?.(h, accountId) ?? {}) });
 
   async function viaClaude(req: AssistRequest): Promise<AssistResult | null> {
-    const bin = await usable('claude', deps.cli);
-    if (!bin) return null;
     const accountId = accountOf('claude', req);
+    const bin = await usable('claude', deps.cli, accountId);
+    if (!bin) return null;
     const args = [
       '-p', '--model', req.model ?? ASSIST_CLAUDE_MODEL,
       ...(req.system ? ['--system-prompt', req.system] : []),

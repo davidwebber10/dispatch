@@ -2,6 +2,7 @@ import type { Router } from 'express';
 import { policyRouter } from '../auth/route-policy.js';
 import type { ClaudeLoginService } from '../auth/claude-login.js';
 import { clientMessage } from '../http/client-message.js';
+import { claudeSignedIn } from '../auth/claude-login-sources.js';
 
 /**
  * Terminal-free Claude login, for the hosted OS surface (design doc §11.2).
@@ -25,7 +26,10 @@ export function createClaudeAuthRouter(service: ClaudeLoginService): Router {
         account: st?.loggedIn ? { email: st.email ?? null, plan: st.planTier || st.subscriptionType || null, orgName: st.orgName ?? null } : null,
       });
     }
-    res.json({ authenticated: service.isAuthenticated(), session: service.status() });
+    // Local: "is the default Claude account signed in", the account Chat and new threads run on
+    // (spec 2026-11-23). Before, this was "an old saved token exists", which said nothing about them.
+    const signedIn = await claudeSignedIn().catch(() => 'unknown' as const);
+    res.json({ authenticated: signedIn === true, session: service.status() });
   });
 
   router.post('/login', async (_req, res) => {

@@ -11,7 +11,7 @@ import { FakeSummarizer, settle } from './fake-summarizer.js';
 import { FakeManager, texts } from './fake-manager.js';
 import { KeyRegistry } from '../../src/auth/principals.js';
 
-function setup(opts: { keys?: KeyRegistry; waitMs?: number; failLogOn?: string; readImage?: (file: string) => { mimeType: string; data: string } | null; onEmit?: (e: EndlessEvent) => void; toolsMcpConfigPath?: () => string } = {}) {
+function setup(opts: { loginEnv?: () => Record<string, string>; keys?: KeyRegistry; waitMs?: number; failLogOn?: string; readImage?: (file: string) => { mimeType: string; data: string } | null; onEmit?: (e: EndlessEvent) => void; toolsMcpConfigPath?: () => string } = {}) {
   const db = new Database(':memory:');
   initSchema(db);
   const store = new EndlessStore(db);
@@ -28,7 +28,7 @@ function setup(opts: { keys?: KeyRegistry; waitMs?: number; failLogOn?: string; 
     store, views, compactor, manager: fake.asManager(), chatDir: '/chat', mcpConfigPath: '/chat/memory.mcp.json', toolsMcpConfigPath: opts.toolsMcpConfigPath,
     systemPrompt: () => 'SYS', statusBlock: (p) => `<status>\nnow: X; project ${p ?? 'none'}\n</status>`,
     projectName: (id) => (id ? `name-${id}` : null), log, emit: (e) => { events.push(e); opts.onEmit?.(e); },
-    readImage: opts.readImage ?? (() => ({ mimeType: 'image/png', data: 'AAAA' })), waitMs: opts.waitMs ?? 50, graceMs: 10, keys: opts.keys ? () => opts.keys : undefined,
+    readImage: opts.readImage ?? (() => ({ mimeType: 'image/png', data: 'AAAA' })), waitMs: opts.waitMs ?? 50, graceMs: 10, keys: opts.keys ? () => opts.keys : undefined, loginEnv: opts.loginEnv,
   });
   return { store, views, compactor, summarizer, fake, events, log, runner };
 }
@@ -76,6 +76,23 @@ describe('TurnRunner', () => {
     expect(parts[3]).toBe('[image]');
     expect(parts[4]).toBe('Attached file (read with the Read tool):\n- /chat/media/1-1-abcd1234-report.pdf');
     await finish(t);
+  });
+
+  // Spec 2026-11-23 (one source for the Claude login): Chat runs on the default Claude account.
+  it('a turn runs on the login of the default Claude account, read again at each turn', async () => {
+    let login: Record<string, string> = { CLAUDE_CODE_OAUTH_TOKEN: '' }; // the CLI login is the default
+    const t = setup({ loginEnv: () => login });
+    t.runner.send({ text: 'a', project: null, media: [] });
+    await settle();
+    await finish(t);
+    login = { CLAUDE_CODE_OAUTH_TOKEN: 'tok-team' }; // the owner made a token account the default
+    t.runner.send({ text: 'b', project: null, media: [] });
+    await settle();
+    await finish(t);
+    expect(t.fake.spawned[0].opts.env!.CLAUDE_CODE_OAUTH_TOKEN).toBe('');
+    expect(t.fake.spawned[1].opts.env!.CLAUDE_CODE_OAUTH_TOKEN).toBe('tok-team');
+    // The fixed context settings stay, whatever the login adds.
+    expect(Object.keys(t.fake.spawned[1].opts.env!).length).toBeGreaterThan(1);
   });
 
   it('spawns a fresh opus session in the fixed folder for every project, with the replaced system prompt', async () => {

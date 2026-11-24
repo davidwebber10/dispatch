@@ -11,6 +11,11 @@ export function inheritedEnv(env: NodeJS.ProcessEnv = process.env): Record<strin
   // A thread key or a box token that reached the daemon's own environment must never ride into a
   // thread, a probe or a tool that the daemon starts (per-thread keys, spec 6.3).
   for (const name of ['DISPATCH_BOX_TOKEN', 'OS_BOX_TOKEN', 'DISPATCH_AUTH', 'DISPATCH_AUTH_FILE']) delete out[name];
+  // A Claude token in the daemon's own environment is not a login for its children: a Claude process
+  // gets its login from the account overlay (auth/claude-login-sources.ts), which always sets this
+  // variable. Without the overlay a process runs on the login of the machine, never on a token that
+  // happened to be in the daemon's shell (one source for the Claude login, spec 2026-11-23).
+  delete out.CLAUDE_CODE_OAUTH_TOKEN;
   return out;
 }
 

@@ -26,6 +26,38 @@ const openAccount = async (name: string, provider: string, id: string) => {
   return screen.findByTestId(`account-detail-${provider}-${id}`);
 };
 
+// Spec 2026-11-23 (one source for the Claude login), section 4: what the owner can tell apart.
+describe('<AccountsSection> connectors and what the default covers', () => {
+  it('says that a saved sign-in has no claude.ai connectors and that the CLI login has them', async () => {
+    vi.spyOn(api, 'getAccounts').mockResolvedValue({
+      ...view(),
+      claude: [{ id: 'cli', label: 'CLI login (this computer)', isCli: true, kind: 'cli', addedAt: null }, { id: 'w1', label: 'Work', isCli: false, kind: 'saved', addedAt: '2026-11-06T00:00:00Z' }],
+    });
+    render(<AccountsSection />);
+    const work = await openAccount('Claude: Work', 'claude', 'w1');
+    expect(within(work).getByTestId('account-connectors')).toHaveTextContent('No claude.ai connectors. Threads on this login cannot use your mail, calendar or chat connectors.');
+  });
+
+  it('the CLI login says it has the connectors of this computer; an older daemon that sends no kind shows no line', async () => {
+    vi.spyOn(api, 'getAccounts').mockResolvedValue({
+      ...view(),
+      claude: [{ id: 'cli', label: 'CLI login (this computer)', isCli: true, kind: 'cli', addedAt: null }, { id: 'w1', label: 'Work', isCli: false, addedAt: '2026-11-06T00:00:00Z' }],
+    });
+    const { unmount } = render(<AccountsSection />);
+    const cli = await openAccount('Claude: CLI login (this computer)', 'claude', 'cli');
+    expect(within(cli).getByTestId('account-connectors')).toHaveTextContent('Has the claude.ai connectors of this computer’s Claude login.');
+    unmount();
+    render(<AccountsSection />);
+    const work = await openAccount('Claude: Work', 'claude', 'w1');
+    expect(within(work).queryByTestId('account-connectors')).toBeNull();
+  });
+
+  it('the page says what follows the default account', async () => {
+    render(<AccountsSection />);
+    expect(await screen.findByText(/New threads, scheduled jobs, Chat and thread titles use the default account/)).toBeInTheDocument();
+  });
+});
+
 describe('<AccountsSection>', () => {
   it('lists every account as a row under its harness: email and plan on one line, Default as the value, the sign-in state', async () => {
     render(<AccountsSection />);

@@ -32,7 +32,8 @@ import { RolesService } from '../roles/service.js';
 import { AuthRequestService } from '../auth/service.js';
 import { ClaudeLoginService } from '../auth/claude-login.js';
 import { CodexLoginService } from '../auth/codex-login.js';
-import { AccountsStore, adoptClaudeLoginToken, type AccountProvider } from '../auth/accounts.js';
+import { AccountsStore, adoptClaudeLoginToken, genericClaudeSignInTarget, type AccountProvider } from '../auth/accounts.js';
+import { claudeLoginSources, makeBoxClaudeAuthenticated, makeClaudeSignedIn, setClaudeSignedInSource } from '../auth/claude-login-sources.js';
 import type { KeyRegistry } from '../auth/principals.js';
 import type { AccessGate, GateDeps } from '../auth/access-gate.js';
 import type { PairCodes } from '../auth/pair-code.js';
@@ -415,7 +416,13 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     catch { return null; }
   };
   const accounts = new AccountsStore(dataDir);
-  const titleCliDeps = { env: () => childEnv(spawnEnv.current()) };
+  // THE source of a Claude login for every process that is not a thread (spec 2026-11-23): the
+  // account overlay on the base env. Titles, assist, Chat and the probes all take it from here.
+  const claudeLogins = claudeLoginSources(accounts, () => spawnEnv.current());
+  const titleCliDeps = { env: (accountId?: string) => claudeLogins.processEnv(accountId) };
+  const threadConfig = (terminalId: string): Record<string, unknown> | null => {
+    try { return JSON.parse(terminalsDb.getById(db, terminalId)?.config || '{}'); } catch { return null; }
+  };
   /** Every account assist may sign in as, the default of each harness first; OpenRouter last, when a key is set. */
   const assistSignedIn = async (): Promise<{ harness: AssistHarness; accountId: string }[]> => {
     const out: { harness: AssistHarness; accountId: string }[] = [];
@@ -423,7 +430,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
       const ids = accounts.list(h).map((a) => a.id);
       const def = accounts.defaultId(h);
       // The CLI's own login (`cli`) needs the CLI signed in; an added account needs the CLI installed and its own login.
-      const cliOk = (await usable(h, titleCliDeps).catch(() => null)) !== null;
+      const cliOk = (await usable(h, titleCliDeps, 'cli').catch(() => null)) !== null;
       const installed = (await usable(h, { ...titleCliDeps, signedIn: async () => true }).catch(() => null)) !== null;
       for (const id of [def, ...ids.filter((x) => x !== def)]) {
         const ok = id === 'cli' ? cliOk : installed && (h === 'claude' ? !!accounts.claudeToken(id) : accounts.codexSignedIn(id));
@@ -446,7 +453,12 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
         pickAuto: async () => pickHarness(limits.usageGauge.summary(), await assistSignedIn()),
       });
   const threadAutoNamer = new ThreadAutoNamer(db, broadcaster, network
-    ? { getApiKey: resolveOpenRouterKey, cliTitle: firstTitle([claudeTitleGenerator(titleCliDeps), codexTitleGenerator(titleCliDeps)]) }
+    ? {
+      getApiKey: resolveOpenRouterKey,
+      // A title is made on the Claude account of its thread (owner decision 2, spec 2026-11-23).
+      cliTitle: (text, terminalId) => firstTitle([claudeTitleGenerator(titleCliDeps), codexTitleGenerator(titleCliDeps)])(
+        text, { accountId: claudeLogins.accountOf(threadConfig(terminalId)) }),
+    }
     : {});
 
   // ── Threads: SessionService, agents, roles, delivery, status ────────────────
@@ -510,6 +522,8 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   const endless = new EndlessService({
     ledger: ledgerService,
     db, broadcaster, manager: endlessManager,
+    // Chat runs on the default Claude account (owner decision 1, spec 2026-11-23), read at each turn.
+    claudeLoginEnv: () => claudeLogins.overlay(),
     chatDir: agentDirFor(dataDir, 'chat'),
     home: os.homedir(),
     // A turn the user starts gets the servers a thread gets from Dispatch (owner, 2026-11-13: "all
@@ -569,11 +583,30 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   // versions becomes the account `saved`; a login started for a new account lands here, and the
   // profile call fills in its email, account id and plan.
   accounts.migrateSavedClaudeToken(claudeLogin.getToken());
+  // "Is this Claude account signed in", for the account a process will run on (spec 2026-11-23).
+  // A token account: a token is stored. A hosted account: Claude Code's own status in its folder.
+  // The CLI login: the CLI's own answer, and never the old saved token (it is no longer a login
+  // of its own: the migration above made it an account).
+  const claudeAccountSignedIn = makeClaudeSignedIn({
+    accounts, usesCleanLogin: () => claudeLogin.usesCleanLogin,
+    cliStatus: (o) => claudeLogin.cliStatus(o ?? {}),
+    machine: async () => (await detectProvider('claude')).signedIn,
+  });
+  setClaudeSignedInSource(claudeAccountSignedIn);
+  const boxAuthenticated = makeBoxClaudeAuthenticated({
+    usesCleanLogin: () => claudeLogin.usesCleanLogin, cleanAuthenticated: () => claudeLogin.isAuthenticated(),
+    signedIn: () => claudeAccountSignedIn(),
+  });
   claudeLogin.onAccountToken = async (token, label, accountId) => {
     // Profile first, so signing an existing account in again updates it (adoptClaudeLoginToken).
     // With an account id ("Sign in again", W1-H) that account's token is replaced in place.
-    await adoptClaudeLoginToken(accounts, token, label, fetchClaudeProfile, accountId);
+    const account = await adoptClaudeLoginToken(accounts, token, label, fetchClaudeProfile, accountId);
+    // The page shows the account and, when it is not the default, asks before the default changes.
+    return { id: account.id, label: account.label, isDefault: accounts.defaultId('claude') === account.id };
   };
+  // A sign-in from the generic card lands in an account too (spec 2026-11-23): the old single
+  // file is not written any more, so no login exists that the Accounts page does not show.
+  claudeLogin.genericTarget = () => genericClaudeSignInTarget(accounts);
 
   // ── Secrets, integrations, tools and the spawn env ──────────────────────────
   // Doppler secrets: token-backed connection + per-spawn injection (DOPPLER_* env +
@@ -609,18 +642,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   setCompanyModelSource({
     access: () => osConnections.modelAccess(),
     proxy: () => osConnections.modelProxy(),
-    personalClaudeSignedIn: async (config) => {
-      const wanted = typeof config.accountId === 'string' && config.accountId ? config.accountId : accounts.defaultId('claude');
-      const id = accounts.has('claude', wanted) ? wanted : accounts.defaultId('claude');
-      if (id !== 'cli') {
-        const dir = accounts.claudeConfigDir(id);
-        if (dir) return (await claudeLogin.cliStatus({ configDir: dir }).catch(() => null))?.loggedIn === true;
-        return accounts.claudeToken(id) !== null;
-      }
-      if (claudeLogin.usesCleanLogin) return (await claudeLogin.cliStatus().catch(() => null))?.loggedIn === true;
-      if (claudeLogin.isAuthenticated()) return true;
-      return (await detectProvider('claude').catch(() => null))?.signedIn === true;
-    },
+    personalClaudeSignedIn: async (config) => (await claudeAccountSignedIn(claudeLogins.accountOf(config))) === true,
   });
   profileRef = profileNow;
   const hostContext = () => liveHostContext(bootHostContext, { profile: profileNow(), osPublicUrl: osConnections.snapshot().osPublicUrl });
@@ -713,7 +735,8 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   app.locals.pendingQuestions = { get: (id: string) => pendingQuestionsDb.get(db, id) };
   // Per-box state projection for the OS control plane (design §4.4.5); started by the timers.
   const boxHeartbeat = new HeartbeatService(db, () => ({
-    authenticated: claudeLogin.isAuthenticated(),
+    // Token mode: the sign-in is an account now, so the old single file no longer says it (review of #189).
+    authenticated: boxAuthenticated(),
     toolsReachable: osConnections.snapshot().reachable,
     usage7d: usage.total(7),
     usageByModel7d: usage.byModel(7),

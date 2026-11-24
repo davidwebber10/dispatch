@@ -19,6 +19,71 @@ describe('isClaudeAuthError', () => {
   ])('%s → %s', (text, want) => { expect(isClaudeAuthError(text)).toBe(want); });
 });
 
+// Spec 2026-11-23 (one source for the Claude login), section 3: the generic card.
+describe('ClaudeLogin: a sign-in that makes a Dispatch login', () => {
+  const made = { id: 'a1', label: 'Dispatch login, Nov 23', isDefault: false };
+  const start = () => vi.spyOn(api, 'claudeLoginStart').mockResolvedValue(session({ landsIn: { kind: 'new', label: made.label } }));
+  const signIn = async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Log in to Claude' }));
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Login code' }), { target: { value: 'abc' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit code' }));
+  };
+
+  it('says before the code is pasted what the two ways are', async () => {
+    start();
+    render(<ClaudeLogin onDone={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Log in to Claude' }));
+    const note = await screen.findByTestId('claude-login-two-ways');
+    expect(note).toHaveTextContent('Run claude in a terminal and sign in there to keep your claude.ai connectors');
+    expect(note).toHaveTextContent('Or sign in here. This makes a Dispatch login, which has no claude.ai connectors');
+  });
+
+  it('asks before the default changes; Make default sets it and then finishes', async () => {
+    start();
+    vi.spyOn(api, 'claudeLoginCode').mockResolvedValue(session({ status: 'complete', url: null, account: made }));
+    const setDefault = vi.spyOn(api, 'accountsSetDefault').mockResolvedValue({ claude: 'a1', codex: 'cli' });
+    const onDone = vi.fn();
+    render(<ClaudeLogin onDone={onDone} />);
+    await signIn();
+    expect(await screen.findByText(/Use this login for new threads and Chat\?/)).toBeInTheDocument();
+    expect(onDone).not.toHaveBeenCalled();
+    expect(setDefault).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Make default' }));
+    await waitFor(() => expect(setDefault).toHaveBeenCalledWith('claude', 'a1'));
+    await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
+  });
+
+  it('Not now finishes and leaves the default as it is', async () => {
+    start();
+    vi.spyOn(api, 'claudeLoginCode').mockResolvedValue(session({ status: 'complete', url: null, account: made }));
+    const setDefault = vi.spyOn(api, 'accountsSetDefault');
+    const onDone = vi.fn();
+    render(<ClaudeLogin onDone={onDone} />);
+    await signIn();
+    fireEvent.click(await screen.findByRole('button', { name: 'Not now' }));
+    await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
+    expect(setDefault).not.toHaveBeenCalled();
+  });
+
+  it('a sign-in that lands in the default account, or one started for a named account, asks nothing', async () => {
+    vi.spyOn(api, 'claudeLoginStart').mockResolvedValue(session({ landsIn: { kind: 'existing', label: 'Team' } }));
+    vi.spyOn(api, 'claudeLoginCode').mockResolvedValue(session({ status: 'complete', url: null, account: { id: 't1', label: 'Team', isDefault: true } }));
+    const onDone = vi.fn();
+    const { unmount } = render(<ClaudeLogin onDone={onDone} />);
+    await signIn();
+    await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
+    expect(screen.queryByTestId('claude-login-two-ways')).toBeNull();
+    unmount();
+    // The Accounts page adds an account on purpose: the new one is not the default, and no question follows.
+    vi.spyOn(api, 'claudeLoginCode').mockResolvedValue(session({ status: 'complete', url: null, account: made }));
+    const named = vi.fn();
+    render(<ClaudeLogin onDone={named} start={async () => session()} />);
+    await signIn();
+    await waitFor(() => expect(named).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole('button', { name: 'Make default' })).toBeNull();
+  });
+});
+
 describe('ClaudeLogin', () => {
   it('starts a login, links the Claude page, sends the pasted code, and calls onDone when complete', async () => {
     const start = vi.spyOn(api, 'claudeLoginStart').mockResolvedValue(session());

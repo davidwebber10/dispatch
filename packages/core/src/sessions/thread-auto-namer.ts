@@ -36,7 +36,7 @@ export interface ThreadAutoNamerOptions {
    * Titles from the user's signed-in CLIs, tried BEFORE OpenRouter (cli-namer.ts: Claude
    * Haiku, then Codex). Null from it falls through to the OpenRouter key path above.
    */
-  cliTitle?: (conversationText: string) => Promise<string | null>;
+  cliTitle?: (conversationText: string, terminalId: string) => Promise<string | null>;
 }
 
 /**
@@ -53,7 +53,7 @@ export class ThreadAutoNamer {
   private readonly readFile: (p: string) => Promise<string>;
   private readonly getApiKey?: () => Promise<string | null>;
   private readonly generateModelName: (apiKey: string, conversationText: string) => Promise<string | null>;
-  private readonly cliTitle?: (conversationText: string) => Promise<string | null>;
+  private readonly cliTitle?: (conversationText: string, terminalId: string) => Promise<string | null>;
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private disposed = false;
   private readonly inFlight = new Set<string>();
@@ -179,7 +179,7 @@ export class ThreadAutoNamer {
       let late: Promise<string | null> | undefined;
       if (this.getApiKey || this.cliTitle) {
         const modelName = (async () => {
-          const fromCli = this.cliTitle ? cleanName((await this.cliTitle(raw).catch(() => null)) ?? '') : null;
+          const fromCli = this.cliTitle ? cleanName((await this.cliTitle(raw, terminalId).catch(() => null)) ?? '') : null;
           if (fromCli || this.disposed || !this.getApiKey) return fromCli;
           const key = await this.getApiKey();
           if (!key || this.disposed) return null;

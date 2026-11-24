@@ -81,6 +81,8 @@ export interface EndlessServiceOptions {
    */
   toolSpecs?: () => McpServerSpec[];
   summarizer?: Summarizer;
+  /** The login of the default Claude account, as environment variables: Chat turns and compactions run on it. */
+  claudeLoginEnv?: () => Record<string, string>;
   keys?: KeyRegistry;
   limits?: ViewLimits;
   timeZone?: string;
@@ -148,6 +150,7 @@ export class EndlessService {
       manager: o.manager, chatDir: o.chatDir, mcpConfigPath: this.mcpConfigPath,
       openRouterKey: o.openRouterKey ?? (async () => null), onUsage: (u) => this.note('compactions', u),
       keys: () => this.keys,
+      loginEnv: o.claudeLoginEnv,
     });
     this.compactor = new Compactor({
       store: this.store, views: this.views, summarizer,
@@ -166,6 +169,7 @@ export class EndlessService {
       readImage,
       onUsage: (u) => this.note('turns', u),
       keys: () => this.keys,
+      loginEnv: o.claudeLoginEnv,
       settings: () => {
         const c = this.chatSettings();
         return { model: c.model ?? undefined, effort: c.effort ?? undefined };

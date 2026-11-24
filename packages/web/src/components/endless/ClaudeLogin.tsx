@@ -32,7 +32,21 @@ const btn: React.CSSProperties = { flexShrink: 0, padding: '5px 12px', borderRad
  * then retries the failed turn.
  */
 export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to Claude', autoStart = false }: { onDone: () => void; start?: () => Promise<{ id?: string; url: string | null; error: string | null }>; buttonLabel?: string; /** Start at once (the caller's own button already asked to sign in). */ autoStart?: boolean }) {
-  const [phase, setPhase] = useState<'idle' | 'starting' | 'code' | 'sending'>('idle');
+  const [phase, setPhase] = useState<'idle' | 'starting' | 'code' | 'sending' | 'ask'>('idle');
+  // The generic card only (no `start` of its own): where the sign-in lands, and the account it made.
+  const [landsIn, setLandsIn] = useState<{ kind: 'new' | 'existing'; label: string } | null>(null);
+  const [made, setMade] = useState<{ id: string; label: string } | null>(null);
+  const [askError, setAskError] = useState<string | null>(null);
+
+  /**
+   * The sign-in is complete. A generic sign-in that made an account which is not the default asks
+   * before the default changes (one source for the Claude login, spec 2026-11-23): an update or a
+   * sign-in never moves new threads to another login by itself.
+   */
+  const finish = (session: { account?: { id: string; label: string; isDefault: boolean } } | null | undefined) => {
+    if (!startFlow && session?.account && !session.account.isDefault) { setMade(session.account); setPhase('ask'); return; }
+    onDone();
+  };
   const [url, setUrl] = useState<string | null>(null);
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -46,6 +60,7 @@ export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to
       const s = await (startFlow ?? api.claudeLoginStart)();
       if (!s.url) throw new Error(s.error ?? 'Claude did not give a login link');
       attemptId.current = s.id;
+      setLandsIn(startFlow ? null : (s as { landsIn?: { kind: 'new' | 'existing'; label: string } }).landsIn ?? null);
       setUrl(s.url); urlRef.current = s.url;
       setPhase('code');
     } catch (err) {
@@ -71,7 +86,7 @@ export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to
       api.claudeAuthStatus().then(({ session }) => {
         if (stopped) return;
         const mine = session && (!attemptId.current || session.id === attemptId.current);
-        if (mine && session.status === 'complete') { stopped = true; setPhase('sending'); onDone(); return; }
+        if (mine && session.status === 'complete') { stopped = true; setPhase('sending'); finish(session); return; }
         // After a refused code the CLI's new link can come late: show the one the daemon holds now.
         if (mine && session.status === 'awaiting_code' && session.url && session.url !== urlRef.current) { urlRef.current = session.url; setUrl(session.url); setCode(''); }
         if (!mine || session.status === 'error') {
@@ -94,7 +109,7 @@ export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to
     setPhase('sending');
     try {
       const s = await api.claudeLoginCode(c);
-      if (s.status === 'complete') { onDone(); return; }
+      if (s.status === 'complete') { finish(s); return; }
       setError(s.error ?? 'The login did not finish. Try the code again.');
       // A refused code makes the CLI start a new sign-in: the link is new, the old code is dead.
       if (s.url && s.url !== urlRef.current) { setUrl(s.url); urlRef.current = s.url; setCode(''); }
@@ -102,13 +117,34 @@ export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to
     } catch (err) {
       // The login may have finished just before this code arrived.
       const session = (await api.claudeAuthStatus().catch(() => null))?.session;
-      if (session?.status === 'complete' && (!attemptId.current || session.id === attemptId.current)) { onDone(); return; }
+      if (session?.status === 'complete' && (!attemptId.current || session.id === attemptId.current)) { finish(session); return; }
       // The attempt is gone (a 400 with no session to resume): start again.
       setError(plainLoginError(err));
       setUrl(null);
       setPhase('idle');
     }
   };
+
+  if (phase === 'ask' && made) {
+    const makeDefault = async () => {
+      setAskError(null);
+      try { await api.accountsSetDefault('claude', made.id); onDone(); }
+      catch { setAskError('Could not change the default. You can set it in Settings, Accounts.'); }
+    };
+    return (
+      <div data-testid="claude-login-ask-default" style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
+        <span style={{ fontSize: fontVar(13), color: 'var(--color-text-primary)' }}>Signed in. The login is saved as “{made.label}”.</span>
+        <span style={{ fontSize: fontVar(12.5), color: 'var(--color-text-secondary)' }}>
+          Use this login for new threads and Chat? It has no claude.ai connectors (mail, calendar, chat). Your default account stays as it is unless you choose this.
+        </span>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button type="button" onClick={() => void makeDefault()} style={btn}>Make default</button>
+          <button type="button" onClick={() => onDone()} style={btn}>Not now</button>
+        </div>
+        {askError && <span style={{ fontSize: fontVar(12.5), color: 'var(--color-status-red)' }}>{askError}</span>}
+      </div>
+    );
+  }
 
   if (phase === 'idle' || phase === 'starting') {
     return (
@@ -123,6 +159,12 @@ export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
+      {landsIn?.kind === 'new' && (
+        <div data-testid="claude-login-two-ways" style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: fontVar(12.5), color: 'var(--color-text-secondary)' }}>
+          <span>Your computer’s Claude login is signed out. Run <code>claude</code> in a terminal and sign in there to keep your claude.ai connectors (mail, calendar, chat).</span>
+          <span>Or sign in here. This makes a Dispatch login, which has no claude.ai connectors.</span>
+        </div>
+      )}
       <a href={url ?? undefined} target="_blank" rel="noreferrer" style={{ color: 'var(--color-accent)', fontWeight: 600, fontSize: fontVar(13.5) }}>
         Open the Claude login page ↗
       </a>

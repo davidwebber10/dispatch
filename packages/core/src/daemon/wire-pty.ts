@@ -86,7 +86,8 @@ export function wireSpawnEnv(i: SpawnEnvInputs): SpawnEnv {
       ...i.shimEnv(),
       // Not a secret: the address that a thread key may be sent to. The key itself is never here.
       ...(api ? { DISPATCH_API: api } : {}),
-      ...claudeLogin.getSpawnEnv(),
+      // No Claude login here (spec 2026-11-23, "One source for the Claude login"): a Claude process
+      // gets its login from the account overlay (auth/claude-login-sources.ts), never from this base.
       ...osConnections.getSpawnEnv(),
       ...secretsService.getBaseSpawnEnv(),
       ...getToolsSpawnEnv({ base: i.toolsBase }),

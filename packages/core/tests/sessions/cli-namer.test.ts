@@ -8,6 +8,33 @@ import {
 } from '../../src/sessions/cli-namer.js';
 
 const env = () => ({ PATH: '/bin' });
+
+// Spec 2026-11-23 (owner decision 2): a title is made on the Claude account of its thread.
+describe('the account of a title', () => {
+  it('the Claude title runs with the login of the account it is given, and asks if that account is signed in', async () => {
+    const seen: { env: Record<string, string> }[] = [];
+    const asked: (string | undefined)[] = [];
+    const run = async (_bin: string, _args: string[], opts: { env: Record<string, string> }) => { seen.push({ env: opts.env }); return { code: 0, stdout: 'A title\n' }; };
+    const gen = claudeTitleGenerator({
+      env: (accountId?: string) => ({ PATH: '/bin', CLAUDE_CODE_OAUTH_TOKEN: accountId === 'team' ? 'tok-team' : '' }),
+      run: run as never, bin: async () => '/bin/claude',
+      signedIn: async (_n, accountId) => { asked.push(accountId); return accountId !== 'gone'; },
+    });
+    expect(await gen('fix the login', { accountId: 'team' })).toBe('A title');
+    expect(await gen('fix the login')).toBe('A title');
+    expect(seen.map((s) => s.env.CLAUDE_CODE_OAUTH_TOKEN)).toEqual(['tok-team', '']);
+    expect(await gen('fix the login', { accountId: 'gone' })).toBeNull(); // signed out: no call is made
+    expect(seen).toHaveLength(2);
+    expect(asked).toEqual(['team', undefined, 'gone']);
+  });
+
+  it('the first generator that answers wins, and each gets the account', async () => {
+    const got: (string | undefined)[] = [];
+    const title = await firstTitle([async (_t, ctx) => { got.push(ctx?.accountId); return null; }, async (_t, ctx) => { got.push(ctx?.accountId); return 'Second'; }])('x', { accountId: 'team' });
+    expect(title).toBe('Second');
+    expect(got).toEqual(['team', 'team']);
+  });
+});
 const installed = async (n: string) => `/usr/local/bin/${n}`;
 const signedIn = async () => true as const;
 

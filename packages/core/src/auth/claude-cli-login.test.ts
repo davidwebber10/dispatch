@@ -150,7 +150,6 @@ describe('ClaudeLoginService on the clean login', () => {
     const { login } = harness(() => {});
     svc.useCleanLogin(login, { ownerEmail: 'p@example.com' });
     expect(svc.getToken()).toBeNull();
-    expect(svc.getSpawnEnv()).toEqual({});
     await svc.cliStatus({ fresh: true });
     expect(svc.isAuthenticated()).toBe(true);
     fs.rmSync(dir, { recursive: true, force: true });
