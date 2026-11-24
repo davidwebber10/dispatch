@@ -27,7 +27,10 @@ test('the Raw tab of a finished run does not attach to its terminal (an attach c
   }
 });
 
-test('the Raw tab of a live run still shows its terminal', () => {
-  open('working');
-  expect(screen.getByTestId('raw-terminal')).toHaveTextContent('t1');
+test('the Raw tab of an unfinished run (including idle) still shows its terminal', () => {
+  for (const status of ['queued', 'starting', 'working', 'needs_input', 'idle']) {
+    const { unmount } = open(status);
+    expect(screen.getByTestId('raw-terminal')).toHaveTextContent('t1');
+    unmount();
+  }
 });
