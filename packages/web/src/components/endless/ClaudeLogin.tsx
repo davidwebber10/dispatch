@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../api/client';
+import type { Account } from '../../api/types';
 import { fontVar, fontVarInput } from '../../lib/fontSize';
 
 /** A turn error that a new Claude login fixes (expired OAuth, no login, a bad key). */
@@ -31,12 +32,34 @@ const btn: React.CSSProperties = { flexShrink: 0, padding: '5px 12px', borderRad
  * The daemon keeps the token and gives it to Chat and to every Claude thread; `onDone`
  * then retries the failed turn.
  */
-export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to Claude', autoStart = false }: { onDone: () => void; start?: () => Promise<{ id?: string; url: string | null; error: string | null }>; buttonLabel?: string; /** Start at once (the caller's own button already asked to sign in). */ autoStart?: boolean }) {
+export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to Claude', autoStart = false, offerSaved = false }: {
+  onDone: () => void; start?: () => Promise<{ id?: string; url: string | null; error: string | null }>; buttonLabel?: string;
+  /** Start at once (the caller's own button already asked to sign in). */ autoStart?: boolean;
+  /**
+   * Offer a saved sign-in that the install already has, when the default account is the login of the
+   * computer. For a card whose failure the default account decides (Chat): the person makes that
+   * sign-in the default and does not sign in a second time.
+   */
+  offerSaved?: boolean;
+}) {
   const [phase, setPhase] = useState<'idle' | 'starting' | 'code' | 'sending' | 'ask'>('idle');
   // The generic card only (no `start` of its own): where the sign-in lands, and the account it made.
   const [landsIn, setLandsIn] = useState<{ kind: 'new' | 'existing'; label: string } | null>(null);
   const [made, setMade] = useState<{ id: string; label: string } | null>(null);
   const [askError, setAskError] = useState<string | null>(null);
+  // The saved sign-ins to offer (`offerSaved`). Empty until the daemon answered, and when it could not.
+  const [savedLogins, setSavedLogins] = useState<Account[]>([]);
+  const [savedError, setSavedError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!offerSaved || startFlow) return;
+    let stopped = false;
+    api.getAccounts().then((v) => {
+      if (stopped || v?.defaults?.claude !== 'cli') return;
+      setSavedLogins((v.claude ?? []).filter((a) => a.kind === 'saved').slice(0, 3));
+    }).catch(() => { /* no offer: the sign-in below still works */ });
+    return () => { stopped = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [offerSaved]);
 
   /**
    * The sign-in is complete. A generic sign-in that made an account which is not the default asks
@@ -125,6 +148,26 @@ export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to
     }
   };
 
+  const useSaved = async (a: Account) => {
+    setSavedError(null);
+    try { await api.accountsSetDefault('claude', a.id); }
+    catch { setSavedError('Could not change the default. You can set it in Settings, Accounts.'); return; }
+    // A sign-in that waits for a code is not needed any more. Its end must not stop the retry.
+    if (phase === 'code' || phase === 'sending') await api.claudeLoginCancel().catch(() => { /* it ends by itself */ });
+    onDone();
+  };
+  const savedOffer = savedLogins.length > 0 && phase !== 'ask' ? (
+    <div data-testid="claude-login-use-saved" style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: fontVar(12.5), color: 'var(--color-text-secondary)' }}>
+      <span>Dispatch already has a saved sign-in. Make it the default to use it for new threads and Chat. It has no claude.ai connectors (mail, calendar, chat).</span>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {savedLogins.map((a) => (
+          <button key={a.id} type="button" onClick={() => void useSaved(a)} style={btn}>Make “{a.label}” the default</button>
+        ))}
+      </div>
+      {savedError && <span style={{ color: 'var(--color-status-red)' }}>{savedError}</span>}
+    </div>
+  ) : null;
+
   if (phase === 'ask' && made) {
     const makeDefault = async () => {
       setAskError(null);
@@ -149,7 +192,8 @@ export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to
   if (phase === 'idle' || phase === 'starting') {
     return (
       <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 6 }}>
-        <button type="button" onClick={() => void start()} disabled={phase === 'starting'} style={btn}>
+        {savedOffer}
+        <button type="button" onClick={() => void start()} disabled={phase === 'starting'} style={{ ...btn, alignSelf: 'flex-start' }}>
           {phase === 'starting' ? 'Starting login…' : buttonLabel}
         </button>
         {error && <span style={{ fontSize: fontVar(12.5), color: 'var(--color-status-red)', wordBreak: 'break-word' }}>{error}</span>}
@@ -165,6 +209,7 @@ export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to
           <span>Or sign in here. This makes a Dispatch login, which has no claude.ai connectors.</span>
         </div>
       )}
+      {savedOffer}
       <a href={url ?? undefined} target="_blank" rel="noreferrer" style={{ color: 'var(--color-accent)', fontWeight: 600, fontSize: fontVar(13.5) }}>
         Open the Claude login page ↗
       </a>

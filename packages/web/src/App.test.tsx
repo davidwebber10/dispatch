@@ -114,3 +114,29 @@ test('the pending fields no longer exist on the UI store', () => {
   const s = useUI.getState() as unknown as Record<string, unknown>;
   expect(Object.keys(s).filter((k) => k.startsWith('pending') || k.startsWith('clear'))).toEqual([]);
 });
+
+// A launch fetch that failed (Tailscale still waking) leaves the saved list; the first socket open retries it.
+test('a failed launch project load is retried when the events socket first opens', async () => {
+  const sockets: { onopen: (() => void) | null }[] = [];
+  vi.stubGlobal('WebSocket', class {
+    onopen: any = null; onclose: any = null; onmessage: any = null;
+    constructor() { sockets.push(this); }
+    send() {} close() {}
+  });
+  let up = false;
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (String(url).endsWith('/api/sessions')) {
+      if (!up) throw new TypeError('Failed to fetch');
+      return { ok: true, status: 200, json: async () => [{ id: 'fresh', name: 'Fresh', workingDir: '/tmp/f', status: 'idle' }] };
+    }
+    return { ok: true, status: 200, json: async () => [] };
+  }));
+  useProjects.setState({ sessions: [{ id: 'saved', name: 'Saved' } as any], activeId: null });
+  render(<App />);
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/api\/sessions$/), expect.anything()));
+  await new Promise((r) => setTimeout(r, 50)); // the launch request has failed
+  expect(useProjects.getState().sessions.map((s) => s.id)).toEqual(['saved']);
+  up = true;
+  act(() => { sockets[0].onopen?.(); });
+  await waitFor(() => expect(useProjects.getState().sessions.map((s) => s.id)).toEqual(['fresh']));
+});

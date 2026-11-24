@@ -27,10 +27,19 @@ case "$(uname)" in
 esac
 if $IS_LINUX; then
   command -v git >/dev/null 2>&1 || { red "git not found — install it: sudo apt-get install -y git"; exit 1; }
-  command -v node >/dev/null 2>&1 || { red "Node.js 18+ not found — install it: sudo apt-get install -y nodejs npm  (or use nvm: https://github.com/nvm-sh/nvm), then retry."; exit 1; }
+  command -v node >/dev/null 2>&1 || { red "Node.js 22.13+ not found — install it: sudo apt-get install -y nodejs npm  (or use nvm: https://github.com/nvm-sh/nvm), then retry."; exit 1; }
 else
   command -v git >/dev/null 2>&1 || { red "git not found — install Xcode Command Line Tools: xcode-select --install"; exit 1; }
-  command -v node >/dev/null 2>&1 || { red "Node.js 18+ not found — install from https://nodejs.org and retry."; exit 1; }
+  command -v node >/dev/null 2>&1 || { red "Node.js 22.13+ not found — install from https://nodejs.org and retry."; exit 1; }
+fi
+# pnpm 11 needs Node 22.13 or newer. Check before bootstrapping it, so an old Node fails here and not inside pnpm.
+NODE_VER="$(node -p 'process.versions.node' 2>/dev/null || true)"
+NODE_MAJOR="${NODE_VER%%.*}"; NODE_REST="${NODE_VER#*.}"; NODE_MINOR="${NODE_REST%%.*}"
+case "$NODE_MAJOR" in ''|*[!0-9]*) NODE_MAJOR=0; NODE_MINOR=0 ;; esac
+case "$NODE_MINOR" in ''|*[!0-9]*) NODE_MINOR=0 ;; esac
+if [ "$NODE_MAJOR" -lt 22 ] || { [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -lt 13 ]; }; then
+  red "Node 22.13 or newer is required (pnpm 11 needs it). Found Node ${NODE_VER:-unknown}. Install a newer Node, then retry."
+  exit 1
 fi
 if ! command -v pnpm >/dev/null 2>&1; then
   if command -v corepack >/dev/null 2>&1; then corepack enable >/dev/null 2>&1 || true; fi

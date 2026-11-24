@@ -163,6 +163,9 @@ export function createWslDaemon(d: WslDaemonDeps): DaemonController {
       const opts = JSON.parse(d.readFile(optsFile())) as DaemonInstallOptions;
       d.spawnDetached(opts.nodePath, [opts.entry], { env: { ...d.env, ...opts.env, PORT: String(opts.port) }, logDir: opts.logDir });
     },
+    installedNode() {
+      try { return (JSON.parse(d.readFile(optsFile())) as DaemonInstallOptions).nodePath || null; } catch { return null; }
+    },
     status() { const pid = readPid(); return pid && alive(pid) ? { loaded: true, pid } : { loaded: false }; },
   };
 }

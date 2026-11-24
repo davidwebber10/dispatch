@@ -129,6 +129,17 @@ export async function preflightUpdate(repoDir: string, gitExec?: GitExec, opts: 
   return { ok: true, move };
 }
 
+/**
+ * The updater's environment: this daemon's own node first on PATH. The daemon-wide PATH is the login
+ * shell's and is left alone, so threads get the person's tools. The updater builds native modules, and
+ * they must be built for the Node the daemon runs on.
+ */
+export function updaterEnv(env: NodeJS.ProcessEnv, execPath: string): NodeJS.ProcessEnv {
+  const dir = path.dirname(execPath);
+  const rest = (env.PATH ?? '').split(path.delimiter).filter((d) => d && d !== dir);
+  return { ...env, PATH: [dir, ...rest].join(path.delimiter) };
+}
+
 /** Keep build diagnostics, and notify clients if the detached updater fails before restart. */
 export function applyUpdate(repoDir: string, onFailure?: (reason: string) => void, opts?: { switchBack?: boolean }): void {
   const logDir = platform.logDir();
@@ -147,6 +158,7 @@ export function applyUpdate(repoDir: string, onFailure?: (reason: string) => voi
     fs.writeSync(log, `\n[dispatch] Update started ${new Date().toISOString()}\n`);
     const child = spawn(path.join(repoDir, 'bin', 'dispatch'), ['update', ...(opts?.switchBack ? ['--switch-back'] : [])], {
       cwd: repoDir,
+      env: updaterEnv(process.env, process.execPath),
       detached: true,
       stdio: ['ignore', log, log],
     });

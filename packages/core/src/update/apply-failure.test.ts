@@ -11,7 +11,7 @@ vi.mock('../platform/index.js', () => ({
 }));
 vi.mock('child_process', async (orig) => ({ ...(await orig<typeof import('child_process')>()), spawn: (...a: any[]) => { h.spawned = a; return h.child; } }));
 
-import { applyUpdate } from './apply.js';
+import { applyUpdate, updaterEnv } from './apply.js';
 import { EventEmitter } from 'node:events';
 
 beforeEach(() => {
@@ -50,5 +50,19 @@ describe('applyUpdate argv', () => {
   it('adds --switch-back only when the caller says so', () => {
     applyUpdate('/repo', () => {}, { switchBack: true });
     expect(h.spawned[1]).toEqual(['update', '--switch-back']);
+  });
+});
+
+describe('applyUpdate node', () => {
+  it('spawns the updater with the daemon node first on PATH, whatever the daemon PATH says', () => {
+    applyUpdate('/repo', () => {});
+    const env = h.spawned[2].env as NodeJS.ProcessEnv;
+    expect(env.PATH!.split(path.delimiter)[0]).toBe(path.dirname(process.execPath));
+  });
+
+  it('updaterEnv moves the node dir to the front once and keeps the rest in order', () => {
+    const env = updaterEnv({ PATH: '/fnm/shim/bin:/usr/bin:/d/v24/bin:/bin', HOME: '/h' }, '/d/v24/bin/node');
+    expect(env.PATH).toBe('/d/v24/bin:/fnm/shim/bin:/usr/bin:/bin');
+    expect(env.HOME).toBe('/h');
   });
 });

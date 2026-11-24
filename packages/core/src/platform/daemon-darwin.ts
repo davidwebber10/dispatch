@@ -107,6 +107,12 @@ export function createDarwinDaemon(
       // 2-5. Bootout the old instance (if any) and bootstrap the new plist.
       bootstrapAndVerify();
     },
+    installedNode() {
+      try {
+        const m = /<key>ProgramArguments<\/key>\s*<array>\s*<string>([^<]+)<\/string>/.exec(fs.readFileSync(plistPath, 'utf-8'));
+        return m ? m[1] : null;
+      } catch { return null; }
+    },
     uninstall() {
       try { runWithDomainFallback(run, uid, ['bootout', `__DOMAIN__/${LABEL}`]); }
       catch { /* ignore — may already be unloaded */ }

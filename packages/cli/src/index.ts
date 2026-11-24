@@ -45,6 +45,8 @@ export interface Ctx {
   apiFetch?: typeof fetch;
   /** Test seam: read all of stdin for `dispatch api --body -`. */
   readStdin?: () => string;
+  /** Test seam: the Node version the build runs on. Defaults to asking the build node itself. */
+  nodeVersion?: string;
 }
 
 type AccessLib = typeof import('dispatch-server/access');
@@ -519,28 +521,121 @@ function toolsCliPath(ctx: Ctx): string {
 // shell: true. On macOS/Linux the binaries are real executables — no shell needed.
 const shellOf = (ctx: Ctx) => (ctx.platformId === 'win32' ? { shell: true } : {});
 
+/** The oldest Node that pnpm 11 runs on. Keep in step with `engines.node` and `.nvmrc`. */
+export const MIN_NODE = '22.13.0';
+
+/** True when `version` (e.g. "20.20.2") is at or above `min`. */
+export function nodeAtLeast(version: string, min: string = MIN_NODE): boolean {
+  const a = version.split('.').map(n => parseInt(n, 10) || 0);
+  const b = min.split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0);
+  }
+  return true;
+}
+
+/**
+ * The node that builds the native modules (better-sqlite3 and node-pty compile for one Node ABI). It must be the
+ * node the daemon starts with: `restart` reuses the one `install` recorded, not the shell's. A shell can differ
+ * (fnm and nvm switch to .nvmrc inside the repo). `recorded` is false on a fresh install, where there is no
+ * daemon yet and this CLI's own node is the one that will be recorded.
+ */
+export function buildNode(ctx: Ctx): { node: string; recorded: boolean } {
+  const rec = ctx.daemon?.installedNode?.();
+  if (rec) return { node: rec, recorded: true };
+  return { node: ctx.nodePath || process.execPath, recorded: false };
+}
+
+function buildEnv(ctx: Ctx, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, ...extra };
+  const { node } = buildNode(ctx);
+  // An absolute path only: a bare name (a test double) must not put '.' on PATH.
+  if (path.isAbsolute(node)) env.PATH = `${path.dirname(node)}${path.delimiter}${env.PATH ?? ''}`;
+  return env;
+}
+
+/** The version the build node reports. Throws when the binary is missing or will not run. */
+function probeNodeVersion(node: string): string {
+  const out = String(execFileSync(node, ['-p', 'process.versions.node'], { encoding: 'utf8', timeout: 10000 }) ?? '').trim();
+  if (!/^\d+\.\d+\.\d+/.test(out)) throw new Error(`unexpected output "${out}"`);
+  return out;
+}
+
+/** Fail before pnpm does, with a message that says what to change. Fails closed: a node that cannot run is an error. */
+export function assertNodeVersion(ctx: Ctx): void {
+  const { node, recorded } = buildNode(ctx);
+  // This process is that node: no need to ask it.
+  let have = ctx.nodeVersion ?? (node === process.execPath ? process.versions.node : undefined);
+  if (!have) {
+    try { have = probeNodeVersion(node); } catch (err) {
+      const why = err instanceof Error ? err.message.split('\n')[0] : String(err);
+      throw new Error(recorded
+        ? `The daemon's node (${node}) is missing or cannot run (${why}). Restore a working Node ${MIN_NODE} or newer at that path, then retry.`
+        : `Could not run node (${node}): ${why}. Dispatch needs Node ${MIN_NODE} or newer.`);
+    }
+  }
+  if (nodeAtLeast(have)) return;
+  throw new Error(recorded
+    ? `Node ${MIN_NODE} or newer is required (pnpm 11 needs it). The daemon's node (${node}) is Node ${have}. ` +
+      `Run \`dispatch install\` under Node ${MIN_NODE} or newer, then \`dispatch build\`, then \`dispatch restart\`.`
+    : `Node ${MIN_NODE} or newer is required (pnpm 11 needs it). This shell runs Node ${have}. ` +
+      `Switch to Node 22 or newer (in the repo, \`fnm use\` or \`nvm use\` reads .nvmrc), then retry.`);
+}
+
+/** Native dependencies, and the check that each loads. Run under the daemon's node, from the package that owns them. */
+const NATIVE_DEPS: Array<{ pkg: string; probe: string }> = [
+  { pkg: 'better-sqlite3', probe: "new (require('better-sqlite3'))(':memory:').close()" },
+  { pkg: 'node-pty', probe: "require('node-pty')" },
+];
+
+function nativeLoads(ctx: Ctx, probe: string): boolean {
+  try {
+    execFileSync(buildNode(ctx).node, ['-e', probe], {
+      stdio: 'ignore', env: buildEnv(ctx), cwd: path.join(ctx.repoRoot ?? process.cwd(), 'packages', 'core'),
+    });
+    return true;
+  } catch { return false; }
+}
+
+/**
+ * An unchanged lockfile skips `pnpm install`, so a native module built for another Node stays put. Check each
+ * one loads under the daemon's node. If not, rebuild it with that node first on PATH, then check again.
+ */
+export function ensureNativeModules(ctx: Ctx): void {
+  for (const { pkg, probe } of NATIVE_DEPS) {
+    if (nativeLoads(ctx, probe)) continue;
+    console.log(`${pkg} does not load under ${buildNode(ctx).node}; rebuilding it.`);
+    execFileSync('pnpm', ['-r', 'rebuild', pkg], { stdio: 'inherit', env: buildEnv(ctx), ...shellOf(ctx) });
+    if (!nativeLoads(ctx, probe)) {
+      throw new Error(`${pkg} still does not load under ${buildNode(ctx).node} after a rebuild. Run \`pnpm -r rebuild ${pkg}\` with that node first on PATH and read the error.`);
+    }
+  }
+}
+
 function pnpmInstall(ctx: Ctx): void {
   // Mirrors the old bash script's `CI=true pnpm install`, so fresh clones
   // (scripts/install.sh) and self-updates that bump dependencies work.
-  execFileSync('pnpm', ['install'], { stdio: 'inherit', env: { ...process.env, CI: 'true' }, ...shellOf(ctx) });
+  execFileSync('pnpm', ['install'], { stdio: 'inherit', env: buildEnv(ctx, { CI: 'true' }), ...shellOf(ctx) });
 }
 
 function pnpmBuild(ctx: Ctx): void {
-  execFileSync('pnpm', ['-r', 'run', 'build'], { stdio: 'inherit', ...shellOf(ctx) });
+  execFileSync('pnpm', ['-r', 'run', 'build'], { stdio: 'inherit', env: buildEnv(ctx), ...shellOf(ctx) });
 }
 
 /** Best-effort: install the bundled CLI tools. Never fails the build or the update. */
 function toolsInstall(ctx: Ctx): void {
   try {
-    execFileSync(ctx.nodePath ?? process.execPath, [toolsCliPath(ctx), 'install'], { stdio: 'inherit' });
+    execFileSync(buildNode(ctx).node, [toolsCliPath(ctx), 'install'], { stdio: 'inherit', env: buildEnv(ctx) });
   } catch {
     console.error('Some tools failed to install (continuing).');
   }
 }
 
 export function cmdBuild(ctx: Ctx): void {
+  assertNodeVersion(ctx);
   pnpmInstall(ctx);
   pnpmBuild(ctx);
+  ensureNativeModules(ctx);
   toolsInstall(ctx);
 }
 
@@ -730,6 +825,7 @@ export async function cmdUpdate(ctx: Ctx, args: string[] = []): Promise<void> {
   const switchBack = args.includes('--switch-back');
   const progress = progressWriter(ctx.dataDir);
   try {
+    assertNodeVersion(ctx);
     progress.step('pull');
     const lockBefore = lockfileHash(ctx);
     await updateToLatestRelease(ctx, { switchBack });
@@ -745,6 +841,7 @@ export async function cmdUpdate(ctx: Ctx, args: string[] = []): Promise<void> {
     }
     progress.step('build');
     pnpmBuild(ctx);
+    ensureNativeModules(ctx);
     progress.step('tools');
     toolsInstall(ctx);
     progress.step('restart');

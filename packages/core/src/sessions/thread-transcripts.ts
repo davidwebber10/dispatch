@@ -21,13 +21,19 @@ import { threadHarnessCapabilities } from './harness-capabilities.js';
  * `claude` runs) — adopting it made a coordinator resume the USER'S conversation (Control
  * Plane rendered their terminal history; their terminal resume showed coordinator turns).
  * 0 files = nothing to recover; 2+ = ambiguous (unchanged rule, see recoverSessionId).
+ * A transcript that is the stored session of another thread is never adopted.
  */
 export function pickRecoverableSession(
   files: { id: string; birth: number }[],
   terminalCreatedAtMs: number,
+  /** The transcript is already the session of ANOTHER thread: it is never this thread's. */
+  ownedByAnother: (id: string) => boolean = () => false,
 ): string | null {
   if (files.length !== 1) return null;
-  return files[0].birth >= terminalCreatedAtMs - 60_000 ? files[0].id : null;
+  if (files[0].birth < terminalCreatedAtMs - 60_000) return null;
+  // Two threads made within the slack in a project with one transcript (seen 2026-11-24): the
+  // second adopted the first one's session and showed its conversation.
+  return ownedByAnother(files[0].id) ? null : files[0].id;
 }
 
 /**
@@ -194,7 +200,11 @@ export class ThreadTranscripts {
     const terminal = terminalsDb.getById(this.db, terminalId);
     const createdAtMs = terminal ? Date.parse(terminal.created_at) : NaN;
     if (!Number.isFinite(createdAtMs)) return null; // no terminal row → nothing to attribute to
-    const id = pickRecoverableSession(files, createdAtMs);
+    // Another Claude Code thread, archived or not. A row of another harness with the same id is not an
+    // owner of a Claude transcript. Known limit: a thread whose stored session id was cleared no
+    // longer counts as the owner, so inside the 60 s slack its transcript can still be adopted.
+    const owner = this.db.prepare("SELECT 1 FROM terminals WHERE external_id = ? AND id != ? AND type = 'claude-code' LIMIT 1");
+    const id = pickRecoverableSession(files, createdAtMs, (sid) => owner.get(sid, terminalId) !== undefined);
     if (!id) return null;
     try { terminalsDb.updateExternalId(this.db, terminalId, id); } catch { /* best effort */ }
     return id;
