@@ -14,8 +14,8 @@ authenticated so Dispatch can spawn them.
 
 ```bash
 uname -s            # expect: Darwin (macOS). The daemon is launchd-based.
-node -v             # need >= 18
-pnpm -v             # need >= 9  (install: npm i -g pnpm  OR  corepack enable)
+node -v             # need >= 22.13
+pnpm -v             # need >= 11 (install: npm i -g pnpm  OR  corepack enable)
 git --version
 ```
 

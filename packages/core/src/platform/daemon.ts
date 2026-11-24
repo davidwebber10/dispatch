@@ -19,4 +19,6 @@ export interface DaemonController {
   stop(): void;
   restart(): void;
   status(): DaemonStatus;
+  /** The node binary the installed daemon starts with (what `install` recorded), or null when unknown. */
+  installedNode?(): string | null;
 }

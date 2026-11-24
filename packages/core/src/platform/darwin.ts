@@ -10,24 +10,36 @@ import { isLoopbackAddress, isLoopbackHost } from '../files/reveal.js';
 /** Absolute path to the Tailscale CLI bundled inside the macOS app. */
 const TAILSCALE_BIN = '/Applications/Tailscale.app/Contents/MacOS/Tailscale';
 
+type LoginRunner = (cmd: string, args: string[], opts: { encoding: 'utf-8'; timeout: number; stdio: ['ignore', 'pipe', 'ignore']; cwd: string }) => string | Buffer;
+
+/**
+ * The PATH a login shell builds, as the shell gives it.
+ *
+ * The shell runs from the home directory, not the repo: a version manager's cd hook (fnm use-on-cd,
+ * nvm) reads the repo's .nvmrc and would put another Node first. The PATH is otherwise left alone, so
+ * every thread keeps the tools (`claude`, `codex`, `pnpm`) the person's own shell would give it.
+ * The updater pins the daemon's Node itself (update/apply.ts).
+ */
+export function resolveLoginPathWith(run: LoginRunner, envShell: string | undefined, home: string): string | undefined {
+  try {
+    const shell = envShell || '/bin/zsh';
+    const out = run(
+      shell,
+      ['-ilc', 'echo -n "__DISPATCH_PATH_START__${PATH}__DISPATCH_PATH_END__"'],
+      { encoding: 'utf-8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'], cwd: home },
+    );
+    const m = String(out).match(/__DISPATCH_PATH_START__(.*?)__DISPATCH_PATH_END__/s);
+    const p = m?.[1]?.trim();
+    return p && p.length > 0 ? p : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export const darwin: Platform = {
   id: 'darwin',
   defaultShell: () => ({ command: process.env.SHELL || '/bin/zsh', args: [] }),
-  resolveLoginPath: () => {
-    try {
-      const shell = process.env.SHELL || '/bin/zsh';
-      const out = execFileSync(
-        shell,
-        ['-ilc', 'echo -n "__DISPATCH_PATH_START__${PATH}__DISPATCH_PATH_END__"'],
-        { encoding: 'utf-8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] },
-      );
-      const m = String(out).match(/__DISPATCH_PATH_START__(.*?)__DISPATCH_PATH_END__/s);
-      const p = m?.[1]?.trim();
-      return p && p.length > 0 ? p : undefined;
-    } catch {
-      return undefined;
-    }
-  },
+  resolveLoginPath: () => resolveLoginPathWith(execFileSync, process.env.SHELL, os.homedir()),
   dataDir: () => path.join(os.homedir(), '.dispatch'),
   logDir: () => path.join(os.homedir(), 'Library', 'Logs', 'dispatch'),
   resolveCommand: (name) => {
