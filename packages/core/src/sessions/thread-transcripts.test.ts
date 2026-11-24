@@ -78,6 +78,12 @@ describe('ThreadTranscripts', () => {
     terminalsDb.create(db, { id: 'second', sessionId: 's1', type: 'claude-code', label: 'second' });
     expect(transcripts.recoverSessionId('second', projectsDir())).toBeNull();
     expect(terminalsDb.getById(db, 'second')?.external_id ?? null).toBeNull();
+    // An archived thread still owns its session.
+    db.prepare("UPDATE terminals SET archived_at = '2026-11-24T00:00:00.000Z' WHERE id = 'first'").run();
+    expect(transcripts.recoverSessionId('second', projectsDir())).toBeNull();
+    // A thread of another harness with the same id owns no Claude transcript.
+    db.prepare("UPDATE terminals SET type = 'codex' WHERE id = 'first'").run();
+    expect(transcripts.recoverSessionId('second', projectsDir())).toBe('first-session');
     // The rule for one file only: with no owner known, the file is adopted as before.
     expect(pickRecoverableSession([{ id: 'x', birth: Date.now() }], Date.now(), () => false)).toBe('x');
     expect(pickRecoverableSession([{ id: 'x', birth: Date.now() }], Date.now(), () => true)).toBeNull();

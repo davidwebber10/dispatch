@@ -200,7 +200,10 @@ export class ThreadTranscripts {
     const terminal = terminalsDb.getById(this.db, terminalId);
     const createdAtMs = terminal ? Date.parse(terminal.created_at) : NaN;
     if (!Number.isFinite(createdAtMs)) return null; // no terminal row → nothing to attribute to
-    const owner = this.db.prepare('SELECT 1 FROM terminals WHERE external_id = ? AND id != ? LIMIT 1');
+    // Another Claude Code thread, archived or not. A row of another harness with the same id is not an
+    // owner of a Claude transcript. Known limit: a thread whose stored session id was cleared no
+    // longer counts as the owner, so inside the 60 s slack its transcript can still be adopted.
+    const owner = this.db.prepare("SELECT 1 FROM terminals WHERE external_id = ? AND id != ? AND type = 'claude-code' LIMIT 1");
     const id = pickRecoverableSession(files, createdAtMs, (sid) => owner.get(sid, terminalId) !== undefined);
     if (!id) return null;
     try { terminalsDb.updateExternalId(this.db, terminalId, id); } catch { /* best effort */ }
