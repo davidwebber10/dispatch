@@ -266,3 +266,84 @@ describe('the person reads plain words, never the API call', () => {
     } finally { vi.useRealTimers(); }
   });
 });
+
+// The isolated check of 2026-11-24: an install whose default is the signed-out login of the computer
+// can already hold a saved sign-in. Chat's card offers it, so the person need not sign in again.
+describe('ClaudeLogin: a saved sign-in that the install already has', () => {
+  const cli = { id: 'cli', label: 'CLI login (this computer)', isCli: true, kind: 'cli' as const, addedAt: null };
+  const saved = { id: 'saved', label: 'Dispatch login', isCli: false, kind: 'saved' as const, addedAt: '2026-11-21T00:00:00.000Z' };
+  const accounts = (claude: unknown[], def = 'cli') =>
+    vi.spyOn(api, 'getAccounts').mockResolvedValue({ claude, codex: [], defaults: { claude: def, codex: 'cli' } } as never);
+
+  it('offers it, makes it the default, and finishes', async () => {
+    accounts([cli, saved]);
+    const setDefault = vi.spyOn(api, 'accountsSetDefault').mockResolvedValue({ claude: 'saved', codex: 'cli' });
+    const onDone = vi.fn();
+    render(<ClaudeLogin offerSaved onDone={onDone} />);
+    const offer = await screen.findByTestId('claude-login-use-saved');
+    expect(offer).toHaveTextContent('Dispatch already has a saved sign-in');
+    expect(offer).toHaveTextContent('no claude.ai connectors');
+    fireEvent.click(screen.getByRole('button', { name: 'Make “Dispatch login” the default' }));
+    await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
+    expect(setDefault).toHaveBeenCalledWith('claude', 'saved');
+  });
+
+  it('keeps the offer while the sign-in waits for a code, and ends that sign-in when the offer is taken', async () => {
+    accounts([cli, saved]);
+    vi.spyOn(api, 'claudeLoginStart').mockResolvedValue(session({ landsIn: { kind: 'new', label: 'Dispatch login, Nov 24' } }));
+    vi.spyOn(api, 'accountsSetDefault').mockResolvedValue({ claude: 'saved', codex: 'cli' });
+    const cancel = vi.spyOn(api, 'claudeLoginCancel').mockResolvedValue(undefined as never);
+    const onDone = vi.fn();
+    render(<ClaudeLogin offerSaved onDone={onDone} />);
+    await screen.findByTestId('claude-login-use-saved');
+    fireEvent.click(screen.getByRole('button', { name: 'Log in to Claude' }));
+    await screen.findByRole('textbox', { name: 'Login code' });
+    fireEvent.click(screen.getByRole('button', { name: 'Make “Dispatch login” the default' }));
+    await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks the daemon nothing and offers nothing when the caller did not ask for the offer', async () => {
+    const get = accounts([cli, saved]);
+    render(<ClaudeLogin onDone={vi.fn()} />);
+    await act(async () => { await Promise.resolve(); });
+    expect(get).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('claude-login-use-saved')).toBeNull();
+  });
+
+  it('offers nothing when the default is not the login of the computer', async () => {
+    const get = accounts([cli, saved, { ...saved, id: 't1', label: 'Team' }], 't1');
+    render(<ClaudeLogin offerSaved onDone={vi.fn()} />);
+    await waitFor(() => expect(get).toHaveBeenCalled());
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.queryByTestId('claude-login-use-saved')).toBeNull();
+  });
+
+  it('offers nothing when there is no saved sign-in, or only a login folder', async () => {
+    const get = accounts([cli, { id: 'f1', label: 'Second', isCli: false, kind: 'folder', addedAt: '' }]);
+    render(<ClaudeLogin offerSaved onDone={vi.fn()} />);
+    await waitFor(() => expect(get).toHaveBeenCalled());
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.queryByTestId('claude-login-use-saved')).toBeNull();
+  });
+
+  it('says so when the default cannot change, and keeps the sign-in button', async () => {
+    accounts([cli, saved]);
+    vi.spyOn(api, 'accountsSetDefault').mockRejectedValue(new Error('PUT /api/accounts/claude/default failed: 500'));
+    const onDone = vi.fn();
+    render(<ClaudeLogin offerSaved onDone={onDone} />);
+    await screen.findByTestId('claude-login-use-saved');
+    fireEvent.click(screen.getByRole('button', { name: 'Make “Dispatch login” the default' }));
+    expect(await screen.findByText('Could not change the default. You can set it in Settings, Accounts.')).toBeInTheDocument();
+    expect(onDone).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Log in to Claude' })).toBeEnabled();
+  });
+
+  it('a failed read of the accounts leaves the card as it was', async () => {
+    vi.spyOn(api, 'getAccounts').mockRejectedValue(new Error('offline'));
+    render(<ClaudeLogin offerSaved onDone={vi.fn()} />);
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.queryByTestId('claude-login-use-saved')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Log in to Claude' })).toBeEnabled();
+  });
+});
