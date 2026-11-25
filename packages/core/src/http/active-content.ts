@@ -24,5 +24,10 @@ export function isActiveContent(mime: string): boolean {
  */
 export function setFileHeaders(res: Response, mime: string, sandboxPolicy = 'sandbox'): void {
   res.setHeader('X-Content-Type-Options', 'nosniff');
+  // The app shows an HTML page or a pdf in an <iframe> of its own origin (the file viewer). The global
+  // X-Frame-Options: DENY (auth/security-headers.ts) forbade that frame, so the page opened white (owner,
+  // 2026-11-25). The app may frame it; no other site may. An HTML page still runs in its sandbox, in an
+  // opaque origin with no access to the app.
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   if (isActiveContent(mime)) res.setHeader('Content-Security-Policy', sandboxPolicy);
 }
