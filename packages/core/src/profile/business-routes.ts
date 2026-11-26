@@ -249,6 +249,7 @@ export const BUSINESS_ROUTES: Readonly<Record<string, BusinessRow>> = {
   [`GET ${P}/settings`]: allow(AGENT),
   [`PUT ${P}/settings`]: allow(AGENT),
   [`POST ${P}/files`]: allow(AGENT), // a thread hands the person a file of its own project (the Inbox)
+  [`POST ${P}/files/text`]: allow(AGENT), // the Inbox `preview` tool's kind=code: the daemon reads one file of the thread's own project
   [`GET ${P}/files/:fileId`]: allow(),
   [`DELETE ${P}/files/:fileId`]: allow(AGENT),
   [`GET ${P}/export`]: pluginChange('plugin.export'),

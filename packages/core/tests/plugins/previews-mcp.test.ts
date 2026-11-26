@@ -95,7 +95,7 @@ describe('the Previews plugin MCP server', () => {
     expect((await callPreview({ text: 'just text' })).parsed).toMatchObject({ ok: true, files: [] });
     const none = await callPreview({});
     expect(none.isError).toBe(true);
-    expect(none.text).toMatch(/needs text or at least one path/);
+    expect(none.text).toMatch(/needs `text` or at least one file in `paths`/);
   });
 
   // Drops (2026-11-11): one tool, a `kind`, its fields on the document.
@@ -123,6 +123,29 @@ describe('the Previews plugin MCP server', () => {
     fs.writeFileSync(path.join(proj, 'rows.csv'), 'a,b\n1,2\n');
     const t2 = await callPreview({ kind: 'table', paths: ['rows.csv'] });
     expect(docOf(t2.parsed.id)).toMatchObject({ kind: 'table', title: 'rows.csv' });
+    // kind=code with ONE file and no text (a box agent's call, 2026-11): the file is read as the snippet.
+    fs.writeFileSync(path.join(proj, 'add.ts'), 'export const add = (a: number, b: number) => a + b;\n');
+    const code = await callPreview({ kind: 'code', paths: ['add.ts'] });
+    expect(code.isError).toBe(false);
+    expect(docOf(code.parsed.id)).toMatchObject({ kind: 'code', language: 'ts', text: 'export const add = (a: number, b: number) => a + b;\n', files: [], title: 'add.ts' });
+    // The daemon reads it with its own path policy: a hidden file, a hard link and an outside file are refused.
+    fs.writeFileSync(path.join(proj, '.env'), 'API_KEY=abc');
+    const env = await callPreview({ kind: 'code', paths: ['.env'] });
+    expect(env.isError).toBe(true);
+    expect(env.text).toMatch(/code: This file is hidden/);
+    expect(env.text).not.toContain('API_KEY');
+    fs.linkSync(path.join(outside, 'secret.txt'), path.join(proj, 'linked.ts'));
+    const linked = await callPreview({ kind: 'code', paths: ['linked.ts'] });
+    expect(linked.isError).toBe(true);
+    expect(linked.text).toMatch(/more than one name/);
+    expect(linked.text).not.toContain('top secret');
+    const out = await callPreview({ kind: 'code', paths: [path.join(outside, 'secret.txt')] });
+    expect(out.text).toMatch(/outside the project folder/);
+    const noCode = await callPreview({ kind: 'code' });
+    expect(noCode.isError).toBe(true);
+    expect(noCode.text).toMatch(/code needs `text` \(the snippet\), or exactly one file in `paths`/);
+    expect(tool.description).toMatch(/`code` → `text` \(the snippet\), or exactly ONE file in `paths`/);
+    expect(tool.inputSchema.properties.paths.description).toMatch(/kind=code: ONE source file/);
     // No kind: no `kind` key, as before.
     const plain = await callPreview({ text: 'plain' });
     expect('kind' in docOf(plain.parsed.id)).toBe(false);

@@ -7,11 +7,12 @@ import { fileURLToPath } from 'node:url';
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const kinds = await import(path.join(REPO, 'packages/plugins/previews/mcp/kinds.mjs')) as {
   KINDS: string[];
-  checkArgs(a: unknown): { kind: string | null; text: string | null; paths: string[]; fields: Record<string, unknown>; defaultTitle: string | null };
+  checkArgs(a: unknown): { kind: string | null; text: string | null; paths: string[]; fields: Record<string, unknown>; defaultTitle: string | null; codeFile: string | null };
+  codeText(file: string, body: unknown): string;
   expireSecret<T extends Record<string, unknown>>(doc: T, now?: number): T | null;
   SECRET_TTL_MS: number;
 };
-const { checkArgs, expireSecret, KINDS, SECRET_TTL_MS } = kinds;
+const { checkArgs, codeText, expireSecret, KINDS, SECRET_TTL_MS } = kinds;
 const err = (a: unknown) => { try { checkArgs(a); } catch (e) { return (e as Error).message; } return null; };
 
 describe('preview kinds: the checks of the tool arguments', () => {
@@ -23,7 +24,7 @@ describe('preview kinds: the checks of the tool arguments', () => {
 
   it('no kind: as before (text and/or paths), and the kind is not stored', () => {
     expect(checkArgs({ text: 'hello' })).toMatchObject({ kind: null, text: 'hello', paths: [], fields: {} });
-    expect(err({})).toMatch(/needs text or at least one path/);
+    expect(err({})).toMatch(/needs `text` or at least one file in `paths`/);
   });
 
   it('command: one per line of text, or a list; blank lines go; cwd is kept', () => {
@@ -49,13 +50,44 @@ describe('preview kinds: the checks of the tool arguments', () => {
     for (const bad of ['javascript:alert(1)', 'file:///etc/passwd', 'ftp://x.y', 'not a url', 'data:text/html,hi']) {
       expect(err({ kind: 'link', url: bad }), bad).toMatch(/url must be an http:\/\/ or https:\/\/ address/);
     }
-    expect(err({ kind: 'link' })).toMatch(/link needs a `url`/);
+    expect(err({ kind: 'link' })).toMatch(/link needs `url` \(an http:\/\/ or https:\/\/ address\)/);
   });
 
   it('code: text with an optional language', () => {
     expect(checkArgs({ kind: 'code', text: 'const a = 1;', language: 'ts' }).fields).toEqual({ language: 'ts' });
-    expect(err({ kind: 'code' })).toMatch(/code needs `text`/);
+    expect(err({ kind: 'code' })).toMatch(/code needs `text` \(the snippet\), or exactly one file in `paths`/);
+    expect(err({ kind: 'code', paths: ['a.ts', 'b.ts'] })).toMatch(/code needs `text` \(the snippet\), or exactly one file in `paths`/);
     expect(err({ kind: 'code', text: 'x', language: 'no spaces allowed' })).toMatch(/language/);
+  });
+
+  it('code: one file in `paths` (no text) is named as `codeFile` for the daemon to read; this module reads no file', () => {
+    const args = { kind: 'code', paths: ['src/add.py'] };
+    const a = checkArgs(args);
+    expect(a).toMatchObject({ kind: 'code', text: null, paths: [], codeFile: 'src/add.py', fields: { language: 'python' }, defaultTitle: 'add.py' });
+    expect(args.paths).toEqual(['src/add.py']); // the caller's arguments are not changed
+    expect(checkArgs({ kind: 'code', paths: ['/abs/x.go'], language: 'golang' }).fields).toEqual({ language: 'golang' });
+    expect(checkArgs({ kind: 'code', paths: ['notes'] }).fields).toEqual({});
+    // Text wins over a path: the path stays an attachment, as before, and nothing is read.
+    expect(checkArgs({ kind: 'code', text: 'x = 1', paths: ['src/add.py'] })).toMatchObject({ text: 'x = 1', paths: ['src/add.py'], codeFile: null, defaultTitle: 'Code' });
+    expect(checkArgs({ text: 'plain' }).codeFile).toBeNull();
+    // The daemon's answer is checked as `text` is.
+    expect(codeText('a.ts', { text: 'const a = 1;' })).toBe('const a = 1;');
+    expect(() => codeText('a.ts', { text: '  \n' })).toThrow(/"a.ts" is empty; pass the snippet in `text`/);
+    expect(() => codeText('a.ts', {})).toThrow(/is empty/);
+    expect(() => codeText('a.ts', { text: 'x'.repeat(64 * 1024 + 1) })).toThrow(/text too long/);
+  });
+
+  it('every refusal names the field to pass', () => {
+    expect(err({ kind: 'link' })).toMatch(/`url`/);
+    expect(err({ kind: 'secret' })).toMatch(/`text`/);
+    expect(err({ kind: 'steps' })).toMatch(/needs `steps`/);
+    expect(err({ kind: 'diff' })).toMatch(/diff needs `text` \(a unified diff\)/);
+    expect(err({ kind: 'doc' })).toMatch(/doc needs `text` \(markdown\)/);
+    expect(err({ kind: 'text' })).toMatch(/text needs `text`/);
+    expect(err({ kind: 'images' })).toMatch(/images needs `paths`/);
+    expect(err({ kind: 'files' })).toMatch(/files needs `paths`/);
+    expect(err({ kind: 'table' })).toMatch(/CSV `text` or one .csv or .json file/);
+    expect(err({ kind: 'command' })).toMatch(/`text` or `commands`/);
   });
 
   it('secret: text only, never in the title or the note, never as a default title', () => {

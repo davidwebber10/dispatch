@@ -44,6 +44,8 @@ const EXPECTED_KEY_ROUTES: string[] = [
   'GET /api/plugins/:id/settings',
   'PUT /api/plugins/:id/settings',
   'POST /api/plugins/:id/files',
+  // The Inbox `preview` tool's kind=code with one path (2026-11-26): the daemon reads the file for the thread.
+  'POST /api/plugins/:id/files/text',
   // Inbox → Send a secret (2026-11-12): a thread uses a secret the owner sent it, by its ID (the daemon writes it).
   'POST /api/plugins/previews/secrets/use',
   'GET /api/skills',

@@ -9,7 +9,7 @@ import * as sessionsDb from '../db/sessions.js';
 import * as terminalsDb from '../db/terminals.js';
 import * as messageSourceDb from '../db/message-source.js';
 import { getProvider } from '../providers/registry.js';
-import { dispatchClaudeSettings } from '../providers/claude-code.js';
+import { dispatchClaudeSettings, businessClaudeEnv } from '../providers/claude-code.js';
 import { PTYManager } from '../pty/manager.js';
 import type { KeyHandle, KeyRegistry } from '../auth/principals.js';
 import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
@@ -119,6 +119,9 @@ export function hostedClaudeEnv(type: string, hosted: boolean = isHostedBox()): 
   if (type === 'opencode') return { ...OPENCODE_HOSTED_ENV };
   return {};
 }
+
+// The business auto-compact window lives beside the other Claude settings Dispatch pins (providers/claude-code.ts).
+export { BUSINESS_AUTO_COMPACT_WINDOW, businessClaudeEnv } from '../providers/claude-code.js';
 
 /** What ThreadSpawner needs. Every field is required. */
 export interface ThreadSpawnerDeps {
@@ -354,7 +357,7 @@ export class ThreadSpawner {
     // (new, resume, relaunch), and the per-process keys below can never be shadowed by it.
     const loginEnv = terminal.type === 'shell' ? (this.wiring.accountEnv?.(terminal.type, config) ?? {})
       : claudeLoginEnv(terminal.type, config, this.wiring.accountEnv?.(terminal.type, config) ?? {}, { daemonApi: this.wiring.daemonApi, key: sk && !sk.keyFile ? sk.key : null });
-    const spawnEnv: Record<string, string> = { ...loginEnv, ...hostedClaudeEnv(terminal.type), ...(terminal.type === 'claude-code' ? { MCP_TIMEOUT: dispatchClaudeSettings().env.MCP_TIMEOUT } : {}), [TERMINAL_ID_ENV_VAR]: terminalId };
+    const spawnEnv: Record<string, string> = { ...loginEnv, ...hostedClaudeEnv(terminal.type), ...businessClaudeEnv(terminal.type), ...(terminal.type === 'claude-code' ? { MCP_TIMEOUT: dispatchClaudeSettings().env.MCP_TIMEOUT } : {}), [TERMINAL_ID_ENV_VAR]: terminalId };
     if (grokHomeDir) spawnEnv.GROK_HOME = grokHomeDir;
     // The key travels in the environment of this one process, never in argv and never in the shared
     // default env. The Codex CLI view writes its environment to a snapshot file, so it gets the path
@@ -751,7 +754,7 @@ export class ThreadSpawner {
       // thread always runs on the CLI login; an added Codex account is for CLI-mode threads.
       env: terminal.type === 'codex'
         ? {}
-        : { ...claudeLoginEnv(terminal.type, config, this.wiring.accountEnv?.(terminal.type, config) ?? {}, { daemonApi: this.wiring.daemonApi, key: sk?.key ?? null }), ...hostedClaudeEnv(terminal.type), [TERMINAL_ID_ENV_VAR]: terminal.id, ...(sk ? { DISPATCH_AUTH: sk.key } : {}), ...(opencodeEnv ?? {}) },
+        : { ...claudeLoginEnv(terminal.type, config, this.wiring.accountEnv?.(terminal.type, config) ?? {}, { daemonApi: this.wiring.daemonApi, key: sk?.key ?? null }), ...hostedClaudeEnv(terminal.type), ...businessClaudeEnv(terminal.type), [TERMINAL_ID_ENV_VAR]: terminal.id, ...(sk ? { DISPATCH_AUTH: sk.key } : {}), ...(opencodeEnv ?? {}) },
       // A hosted Claude Code thread: the box logs the servers its init frame names and warns about any
       // it did not pass (os/hosted-mcp-policy.ts).
       ...(isHostedBox() && terminal.type === 'claude-code' ? { mcpExpected: specs.map((s) => s.name) } : {}),

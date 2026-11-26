@@ -17,7 +17,7 @@ import { platform } from '../platform/index.js';
 import * as sessionsDb from '../db/sessions.js';
 import { PATH_REFUSALS } from '../files/path-policy.js';
 import { pathPolicyFor } from '../files/path-policy-default.js';
-import { checkProjectFile, ProjectFileError, PROJECT_FILE_MIME, sendProjectFile } from '../plugins/files.js';
+import { checkProjectFile, ProjectFileError, PROJECT_FILE_MIME, readProjectCodeFile, sendProjectFile } from '../plugins/files.js';
 import { INBOX_PLUGIN } from './inbox.js';
 import { currentProfile } from '../os/profile.js';
 import { boxLog } from '../os/box-log.js';
@@ -471,6 +471,25 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
       }
     }
     res.status(201).json(ref);
+  });
+
+  // The Inbox `preview` tool's kind=code with one file in `paths` (2026-11-26): the text of ONE source file of the
+  // thread's own project, read here with the daemon's path policy and credential checks (plugins/files.ts
+  // readProjectCodeFile), never by the plugin's own process. A thread only (its project is its own).
+  router.post('/plugins/:id/files/text', dataWrite, async (req, res) => {
+    if (!known(req, res)) return;
+    let principal: ReturnType<typeof principalOf> | null = null;
+    try { principal = principalOf(req); } catch { principal = null; }
+    if (principal?.kind !== 'thread') return void res.status(403).json({ error: 'Only a thread reads a file of its own project here.' });
+    const sessionId = scopeOf(req).caller(principal.terminalId)?.sessionId ?? null;
+    const session = sessionId ? sessionsDb.getById(db, sessionId) : null;
+    if (!session) return void res.status(400).json({ error: 'bad_body', message: 'The thread has no project.' });
+    try {
+      res.json(await readProjectCodeFile(session.working_dir, (req.body ?? {}).path, { policy: filePolicy, secretRoots: secretRoots() }));
+    } catch (e) {
+      if (e instanceof ProjectFileError) return void res.status(e.status).json({ error: e.message });
+      res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+    }
   });
 
   // The bytes, for the owner only. Re-checked against the project's CURRENT folder: a project moved

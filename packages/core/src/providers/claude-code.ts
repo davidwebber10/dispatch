@@ -1,3 +1,4 @@
+import { currentProfile } from '../os/profile.js';
 import { claudeMeasurements } from '../analytics/normalize.js';
 import { normalizeClaude } from '../status/events.js';
 import { DEFAULT_TELEMETRY } from './telemetry.js';
@@ -64,17 +65,46 @@ export const MCP_STARTUP_TIMEOUT_MS = 30_000;
 export const TRANSCRIPT_RETENTION_DAYS = 3650;
 
 /**
+ * The auto-compact window of a business person's Claude Code thread, in tokens. Claude Code compacts
+ * the conversation when its context reaches this size. Without it, a model with a native 1M window
+ * compacts only at about 967K tokens: one hosted business thread grew to about 870K tokens, with
+ * model calls of 7-10 minutes (one hit a 601 s timeout), and a full cache rewrite after each idle stop.
+ * 350K keeps a thread well clear of that and still holds a long working conversation.
+ *
+ * `CLAUDE_CODE_AUTO_COMPACT_WINDOW` is Claude Code's supported variable for this: it takes precedence
+ * over `/autocompact`, `--autocompact` and the `autoCompactWindow` setting, and Claude Code caps it at
+ * the model's own context window (so a 200K model is not affected). `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`
+ * is a percentage of that window, so it would move with the model; a token count does not.
+ * See https://code.claude.com/docs/en/model-config#set-the-auto-compact-window and
+ * https://code.claude.com/docs/en/env-vars.
+ */
+export const BUSINESS_AUTO_COMPACT_WINDOW = 350_000;
+
+/**
+ * The environment a business person's Claude Code thread adds (see BUSINESS_AUTO_COMPACT_WINDOW): in the
+ * process env AND in the inline `--settings` env (dispatchClaudeSettings), so a user or project
+ * `.claude/settings.json` `env` cannot raise it again.
+ * A developer profile, a local install and every other harness: nothing, so their threads compact as before.
+ */
+export function businessClaudeEnv(type: string, profile: string = currentProfile()): Record<string, string> {
+  if (profile !== 'business' || type !== 'claude-code') return {};
+  return { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(BUSINESS_AUTO_COMPACT_WINDOW) };
+}
+
+/**
  * What Dispatch sets for every Claude thread it starts, on top of the user's own settings:
  *  - env.MCP_TIMEOUT: a server that never connects waits at most this long (DISPATCH_MCP_TIMEOUT_MS
  *    on the daemon changes it). Dispatch's value wins over the user's settings.json: the user's file is
  *    one value for every use of Claude, while a Dispatch thread has nobody watching it.
+ *  - env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, for a business person only (businessClaudeEnv): pinned here too,
+ *    because a settings file's `env` would otherwise replace the process env's value.
  *  - cleanupPeriodDays: long-lived threads keep their transcripts (the CLI's default deletes at 30 days).
  *    Any claude run can do the cleanup, so the daemon also writes this to the user's settings.json at boot
  *    (claude-retention.ts); this copy covers the threads Dispatch starts.
  */
-export function dispatchClaudeSettings(env: NodeJS.ProcessEnv = process.env): { env: { MCP_TIMEOUT: string }; cleanupPeriodDays: number } {
+export function dispatchClaudeSettings(env: NodeJS.ProcessEnv = process.env, profile: string = currentProfile()): { env: { MCP_TIMEOUT: string; CLAUDE_CODE_AUTO_COMPACT_WINDOW?: string }; cleanupPeriodDays: number } {
   const n = Number(env.DISPATCH_MCP_TIMEOUT_MS);
-  return { env: { MCP_TIMEOUT: String(Number.isFinite(n) && n >= 1000 ? Math.floor(n) : MCP_STARTUP_TIMEOUT_MS) }, cleanupPeriodDays: TRANSCRIPT_RETENTION_DAYS };
+  return { env: { MCP_TIMEOUT: String(Number.isFinite(n) && n >= 1000 ? Math.floor(n) : MCP_STARTUP_TIMEOUT_MS), ...businessClaudeEnv('claude-code', profile) }, cleanupPeriodDays: TRANSCRIPT_RETENTION_DAYS };
 }
 
 export const claudeCodeProvider: SessionProvider = {
