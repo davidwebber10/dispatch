@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ClaudeStructuredSessionManager } from '../structured/manager.js';
-import { approvalsFor, acpSmartAllows, isSafeCommand, opencodeSmartPermission, claudeSmartSettings, approvalTitle } from './approvals.js';
+import { approvalsFor, acpSmartAllows, isSafeCommand, opencodeSmartPermission, claudeSmartSettings, claudeSmartAllowRules, approvalTitle } from './approvals.js';
 import { claudeCodeProvider as claudeCode } from '../providers/claude-code.js';
 import { describeReviewAction } from '../structured/codex-manager.js';
 import { setCurrentOsServerNames, resetCurrentOsServerNames } from './os-servers.js';
@@ -201,5 +201,24 @@ describe('smart approvals — rules and wiring', () => {
     expect(describeReviewAction({ type: 'command', command: 'rm -rf build', cwd: '/p', source: 'shell' })).toEqual({ toolName: 'Bash', detail: 'rm -rf build' });
     expect(describeReviewAction({ type: 'networkAccess', target: 'https://x', host: 'x', protocol: 'https', port: 443 }).toolName).toBe('WebFetch');
     expect(approvalTitle('mcp__gmail__send')).toBe('Wants to send an email');
+  });
+});
+
+describe('claudeSmartAllowRules', () => {
+  test('connect of every company system, list/refresh of the connections server, nothing else', () => {
+    const rules = claudeSmartAllowRules([
+      { name: 'own', },
+      { name: 'connections', osSystem: 'os' },
+      { name: 'crm', osSystem: 'crm' },
+      { name: 'os-mail', osSystem: 'mail' },
+    ]);
+    expect(rules).toEqual(['mcp__connections__list', 'mcp__connections__refresh', 'mcp__crm__connect', 'mcp__os-mail__connect']);
+    expect(claudeSmartAllowRules([{ name: 'own' }])).toEqual([]);
+  });
+
+  test('settings carry allow and ask side by side; either alone; null when both are empty', () => {
+    expect(JSON.parse(claudeSmartSettings(['mcp__mail__send'], ['mcp__crm__connect'])!).permissions).toEqual({ allow: ['mcp__crm__connect'], ask: ['mcp__mail__send'] });
+    expect(JSON.parse(claudeSmartSettings([], ['mcp__crm__connect'])!).permissions).toEqual({ allow: ['mcp__crm__connect'] });
+    expect(claudeSmartSettings([], [])).toBeNull();
   });
 });

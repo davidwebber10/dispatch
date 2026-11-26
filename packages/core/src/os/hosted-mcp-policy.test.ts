@@ -79,6 +79,13 @@ describe('the MCP servers of a hosted thread, per profile', () => {
             ],
           },
         ],
+        "permissions": {
+          "allow": [
+            "mcp__acumatica__connect",
+            "mcp__connections__list",
+            "mcp__connections__refresh",
+          ],
+        },
       }
     `);
   });
@@ -150,6 +157,17 @@ describe('the business drop-in on disk', () => {
     expect(applyBusinessDropIn({ allowManagedMcpServersOnly: true, allowedMcpServers: [{ serverCommand: ['node', '/a.js'] }] }, p, me, me)).toBeNull();
     expect(JSON.parse(fs.readFileSync(path.join(p.dir, BUSINESS_DROPIN_FILE), 'utf8')).allowedMcpServers)
       .toEqual([{ serverCommand: ['node', '/a.js'] }, { serverUrl: 'http://127.0.0.1:1/*' }]);
+  });
+
+  test('the drop-in carries the smart allow rules (connect, connections list/refresh) and a second spawn keeps the first rules', () => {
+    const doc = businessDropIn(hostedServerSpecs(composed(), 'business'));
+    expect(doc.permissions).toEqual({ allow: ['mcp__acumatica__connect', 'mcp__connections__list', 'mcp__connections__refresh'] });
+    const p = layout();
+    expect(applyBusinessDropIn({ allowManagedMcpServersOnly: true, allowedMcpServers: [], permissions: { allow: ['mcp__crm__connect'] } }, p, me, me)).toBeNull();
+    expect(applyBusinessDropIn({ allowManagedMcpServersOnly: true, allowedMcpServers: [], permissions: { allow: ['mcp__os-crm__connect'], ask: ['mcp__crm__send'] } }, p, me, me)).toBeNull();
+    expect(applyBusinessDropIn({ allowManagedMcpServersOnly: true, allowedMcpServers: [], permissions: { allow: ['mcp__crm__connect'] } }, p, me, me)).toBeNull();
+    expect(JSON.parse(fs.readFileSync(path.join(p.dir, BUSINESS_DROPIN_FILE), 'utf8')).permissions)
+      .toEqual({ allow: ['mcp__crm__connect', 'mcp__os-crm__connect'], ask: ['mcp__crm__send'] });
   });
 
   test('refused: not root, a folder others may write, a link that leads elsewhere', () => {

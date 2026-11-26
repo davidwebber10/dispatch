@@ -4,7 +4,8 @@
 //   auto   every tool runs (today's plain chat thread)
 //   ask    every gated tool waits for the person (today's supervised membrane)
 //   smart  the harness's own risk judgement lets routine work run, and asks or blocks the rest:
-//          Claude Code  --permission-mode auto (its classifier) + `ask` rules; every can_use_tool
+//          Claude Code  --permission-mode auto (its classifier) + `ask` rules + `allow` rules for the
+//                       box's own card-only tools (claudeSmartAllowRules); every can_use_tool
 //                       that still arrives is surfaced; a classifier block becomes a card
 //          Codex        approvalPolicy on-request + workspace-write + approvalsReviewer auto_review;
 //                       a reviewer denial becomes a card, a high-risk request a pending approval
@@ -16,7 +17,7 @@
 // `smart` is the default for a new thread under the BUSINESS profile; the developer default is
 // unchanged. The setting lives in the thread's config as `approvals`.
 import path from 'node:path';
-import { currentOsServerNames } from './os-servers.js';
+import { currentOsServerNames, OS_SELF_SYSTEM } from './os-servers.js';
 
 export type Approvals = 'auto' | 'ask' | 'smart';
 export const APPROVALS: readonly Approvals[] = ['auto', 'ask', 'smart'];
@@ -41,14 +42,44 @@ export function approvalsFor(config: Record<string, unknown>, profile: 'business
  * EXTEND HERE: company-system WRITE tools (e.g. `mcp__gmail__send`) once OS marks them; an
  * `ask` rule forces a can_use_tool request even in auto mode (measured 2026-11-11), and MCP
  * annotations (readOnlyHint/destructiveHint) change nothing.
+ * WHERE THEY APPLY: on a business box the image's policy sets `allowManagedPermissionRulesOnly`, so
+ * Claude Code ignores rules from `--settings`; there these rules take effect only through the managed
+ * business drop-in (os/hosted-mcp-policy.ts businessDropIn, which reads this function). `--settings`
+ * carries them for every other smart thread (a local install, a hosted developer).
  */
 export function claudeSmartAskRules(extra: readonly string[] = []): string[] {
   return [...extra];
 }
 
+/** The box's own company-system tools that only show a card or read the connection state. */
+const CONNECT_TOOL_NAME = 'connect';
+export const CONNECTIONS_STATE_TOOLS: readonly string[] = ['list', 'refresh'];
+
+/**
+ * Claude Code `permissions.allow` rules in smart mode: the box's own tools that never read or write a
+ * person's data, so auto mode's classifier cannot refuse them (2026-11-26: it refused a `connect`
+ * call as "Unauthorized Access", and the person never got the Connect card). An allow rule resolves
+ * before the classifier in auto mode; MCP rules are not among the broad rules auto mode drops
+ * (code.claude.com/docs/en/permission-modes).
+ *   - `mcp__<server>__connect` of every company system: it only asks OS to show the Connect card.
+ *   - `mcp__<connections>__list` and `__refresh`: the connection state (which systems are connected).
+ * `servers`: the thread's OS servers as spawned (name after collisions, and their system).
+ * EXTEND HERE only with tools that touch no person's data; a system's data tools stay with the classifier.
+ */
+export function claudeSmartAllowRules(servers: readonly { name: string; osSystem?: string }[]): string[] {
+  const rules: string[] = [];
+  for (const s of servers) {
+    if (!s.osSystem) continue;
+    if (s.osSystem === OS_SELF_SYSTEM) rules.push(...CONNECTIONS_STATE_TOOLS.map((t) => `mcp__${s.name}__${t}`));
+    else rules.push(`mcp__${s.name}__${CONNECT_TOOL_NAME}`);
+  }
+  return [...new Set(rules)];
+}
+
 /** The inline `--settings` JSON for smart mode, or null when there is no rule to add. */
-export function claudeSmartSettings(rules: readonly string[]): string | null {
-  return rules.length ? JSON.stringify({ permissions: { ask: rules } }) : null;
+export function claudeSmartSettings(rules: readonly string[], allow: readonly string[] = []): string | null {
+  if (!rules.length && !allow.length) return null;
+  return JSON.stringify({ permissions: { ...(allow.length ? { allow } : {}), ...(rules.length ? { ask: rules } : {}) } });
 }
 
 /** Shell commands smart mode lets run without asking (Grok/OpenCode). First word(s), no shell operators. */
