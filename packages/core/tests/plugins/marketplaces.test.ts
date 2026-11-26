@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { MarketplaceService, gitErrorLine, isMarketplaceUrl } from '../../src/plugins/marketplaces.js';
+import { execFileSync } from 'node:child_process';
+import { MarketplaceService, ghCredentialArgs, gitErrorLine, gitNeedsLogin, isMarketplaceUrl } from '../../src/plugins/marketplaces.js';
 import { makeMarket } from './market-fixture.js';
 
 /** Marketplaces are git repositories (docs/superpowers/specs/2026-11-07-plugins-design.md, section 7.1). */
@@ -93,6 +94,54 @@ describe('MarketplaceService', () => {
     expect(gitErrorLine(https)).toBe("fatal: could not read Username for 'https://github.com': terminal prompts disabled");
     expect(gitErrorLine('fatal: repository \'x\' does not exist\n')).toBe("fatal: repository 'x' does not exist");
     expect(gitErrorLine('')).toBe('git failed');
+  });
+
+  // Seen on 2026-11-25: the person was signed in with the GitHub CLI, with ssh as its git protocol, so
+  // git had no login for https. The clone of a private https marketplace failed with "could not read
+  // Username", and the hint said to sign in with `gh auth login`, which the person already had done.
+  it('the second try of an https marketplace asks the GitHub CLI, and only it, for that host; ssh and a path have no second try', () => {
+    expect(ghCredentialArgs('https://github.com/org/plugins.git')).toEqual(['-c', 'credential.helper=', '-c', 'credential.https://github.com.helper=!gh auth git-credential']);
+    expect(ghCredentialArgs('https://git.example.com:8443/org/plugins.git')[3]).toBe('credential.https://git.example.com:8443.helper=!gh auth git-credential');
+    expect(ghCredentialArgs('git@github.com:org/plugins.git')).toEqual([]);
+    expect(ghCredentialArgs('ssh://git@github.com/org/plugins.git')).toEqual([]);
+    expect(ghCredentialArgs('/srv/git/plugins.git')).toEqual([]);
+    expect(ghCredentialArgs('https://bad host/org/plugins.git')).toEqual([]);
+    expect(ghCredentialArgs('https://github.com.helper=x -c core.sshCommand=y/org')).toEqual([]);
+  });
+
+  it('only a failure that says git found no login gets a second try', () => {
+    expect(gitNeedsLogin("fatal: could not read Username for 'https://github.com': terminal prompts disabled")).toBe(true);
+    expect(gitNeedsLogin("remote: Invalid username or token.\nfatal: Authentication failed for 'https://github.com/x/y.git/'")).toBe(true);
+    expect(gitNeedsLogin("fatal: repository 'https://github.com/x/y.git/' not found")).toBe(false);
+    expect(gitNeedsLogin('fatal: unable to access: Could not resolve host: github.com')).toBe(false);
+    expect(gitNeedsLogin('')).toBe(false);
+  });
+
+  it('with those arguments git gets the login from the GitHub CLI, and no other helper is asked to keep it', () => {
+    const bin = path.join(tmp, 'bin');
+    fs.mkdirSync(bin, { recursive: true });
+    // A stand-in for `gh`: it answers `gh auth git-credential get` as the real one does.
+    fs.writeFileSync(path.join(bin, 'gh'), '#!/bin/sh\n[ "$1 $2 $3" = "auth git-credential get" ] && printf "username=x-access-token\\npassword=from-gh\\n"\n', { mode: 0o755 });
+    // The person's own helper, as the macOS keychain helper of Apple's git is: it has no login, and
+    // it keeps every login that git hands it. It writes down each call.
+    const calls = path.join(tmp, 'own-helper-calls');
+    fs.writeFileSync(path.join(bin, 'git-credential-own'), `#!/bin/sh\necho "$1" >> "${calls}"\ncat > /dev/null\n`, { mode: 0o755 });
+    const home = path.join(tmp, 'home');
+    fs.mkdirSync(home, { recursive: true });
+    fs.writeFileSync(path.join(home, '.gitconfig'), '[credential]\n\thelper = own\n');
+    const env = { PATH: `${bin}:${process.env.PATH}`, HOME: home, GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' };
+    const git = (extra: string[], verb: string, input: string) => execFileSync('git', [...extra, 'credential', verb], { input, env, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+    const args = ghCredentialArgs('https://github.com/org/plugins.git');
+    const got = git(args, 'fill', 'protocol=https\nhost=github.com\n\n');
+    expect(got).toContain('password=from-gh');
+    // What git does after a login worked: it hands the login to its helpers to keep.
+    git(args, 'approve', got);
+    expect(fs.existsSync(calls)).toBe(false); // the own helper was never called: nothing is stored
+    // Without the arguments the same helper IS asked and IS handed the login: the measured side effect.
+    git([], 'approve', got);
+    expect(fs.readFileSync(calls, 'utf8')).toContain('store');
+    // Another host is not asked through the GitHub CLI: git has no login and refuses, as before.
+    expect(() => git(args, 'fill', 'protocol=https\nhost=gitlab.com\n\n')).toThrow(/could not read Username|terminal prompts disabled/);
   });
 
   it('a URL with a user or a token before the host is refused (no credential is ever stored)', () => {
