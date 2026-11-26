@@ -17,7 +17,7 @@ import { readCodexSessionModel } from './codex-sessions.js';
 import { platform } from '../platform/index.js';
 import { maxLiveThreadsPerProject } from '../caps.js';
 import { systemPromptFor, modelFor } from '../overseer/prompts.js';
-import { approvalsFor, claudeSmartAskRules, claudeSmartSettings } from '../os/approvals.js';
+import { approvalsFor, claudeSmartAllowRules, claudeSmartAskRules, claudeSmartSettings } from '../os/approvals.js';
 import { osServerNames } from '../os/os-servers.js';
 import { currentProfile } from '../os/profile.js';
 import { businessMayDrive, NOT_A_CHAT } from '../profile/business-gate.js';
@@ -596,7 +596,7 @@ export class ThreadSpawner {
       // toolset is the enforcement; the policy deny remains as a backstop.
       // A Claude overseer loads only its own memory folder (overseer memory scope spec, Unit 1).
       const autoMemoryDirectory = this.overseerMemoryFor(terminal, config, workDir, coordinatorFolders);
-      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: [persona, recap].filter(Boolean).join('\n\n') || undefined, resumeSessionId, model: resolvedModel, effort: terminal.type === 'claude-code' ? effortFor(config) : undefined, grokPluginDir, disallowedTools: companyDisallowedTools(terminal.type, config, disallowedToolsFor(config)), autoMemoryDirectory, ...(smartForCommand ? { smartApprovals: { settings: claudeSmartSettings(claudeSmartAskRules()) } } : {}) });
+      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: [persona, recap].filter(Boolean).join('\n\n') || undefined, resumeSessionId, model: resolvedModel, effort: terminal.type === 'claude-code' ? effortFor(config) : undefined, grokPluginDir, disallowedTools: companyDisallowedTools(terminal.type, config, disallowedToolsFor(config)), autoMemoryDirectory, ...(smartForCommand ? { smartApprovals: { settings: claudeSmartSettings(claudeSmartAskRules(), claudeSmartAllowRules(specs)) } } : {}) });
       if (!built) throw new Error('structured transport not supported for this provider');
       sc = built;
     }
