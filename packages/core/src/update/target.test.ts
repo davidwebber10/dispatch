@@ -71,6 +71,12 @@ describe('eligibleReleases', () => {
   it('ignores tags that are not plain vX.Y.Z, even when published and on main', async () => {
     expect((await eligibleReleases([release('v1.4.0-rc1'), release('nightly')], await viewP))).toEqual([]);
   });
+
+  it('never offers a box build (box-<base>-<n>), even when published and on main', async () => {
+    const boxGit = fakeGit({ tags: { 'v1.0.0': 'a', 'box-1.0.0-1': 'b', 'v1.0.0-box.1': 'b' }, main: ['a', 'b'] });
+    const out = await eligibleReleases([release('v1.0.0'), release('box-1.0.0-1'), release('v1.0.0-box.1')], await readMainView(boxGit));
+    expect(out.map((r) => r.tag_name)).toEqual(['v1.0.0']);
+  });
 });
 
 describe('fetchReleaseList', () => {

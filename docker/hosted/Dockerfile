@@ -249,6 +249,13 @@ ENV DISPATCH_WEB_DIST=/app/packages/web/dist \
 # (The name holds the word TOKEN; the value is a switch, not a secret.)
 ENV DISPATCH_ALLOW_SHARED_BOX_TOKEN=1
 
+# The image version (hosted-image.yml passes it): `<base>` for a release tag, `<base>-box.<n>` for a box
+# tag (docs/hosted.md, "Box releases"). The daemon reports it to the platform only when it names the
+# code in this image (update/version.ts, getReportedVersion); empty or anything else reports package.json.
+# Last in the stage, so a new value changes the config and no layer.
+ARG DISPATCH_IMAGE_VERSION=""
+ENV DISPATCH_IMAGE_VERSION=${DISPATCH_IMAGE_VERSION}
+
 # The default user is the runtime user: the daemon, `docker exec` and any other command run as uid 1000.
 # The entrypoint needs root for nothing in the standard mode. (It can still be STARTED as root, with
 # `user: "0"`, for the model-gateway mode; it then drops to uid 1000 itself. See entrypoint.sh.)

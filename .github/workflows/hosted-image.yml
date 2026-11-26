@@ -15,18 +15,24 @@
 # It is its own workflow: a failure here never blocks the desktop release (`dispatch release` tags and
 # publishes without waiting for it); rebuild the image with a manual run on the tag (below).
 #
-# A push happens only on a version tag: the tag push itself, or a manual run on a tag ref with
-# `push` ticked. A manual run on a branch builds and proves, and pushes nothing.
+# A push happens only on a tag: the tag push itself, or a manual run on a tag ref with `push` ticked.
+# Two kinds of tag:
+#   v<base>          a desktop release (`dispatch release`); the image version is <base>.
+#   box-<base>-<n>   a box build, with no desktop release (docs/hosted.md, "Box releases"); the image
+#                    version is <base>-box.<n>. <base> is the root package.json on that commit, and the
+#                    commit must be on main. The desktop updater and `dispatch release` read only v<X.Y.Z>
+#                    tags, so a box tag is never a desktop update.
+# A manual run on a branch builds and proves, and pushes nothing.
 # There is no pull_request trigger: this workflow never runs code from a fork.
 name: hosted-image
 
 on:
   push:
-    tags: ['v*']
+    tags: ['v*', 'box-*']
   workflow_dispatch:
     inputs:
       push:
-        description: 'Push and attest the image (only honored on a tag ref, e.g. --ref v4.7.0)'
+        description: 'Push and attest the image (only honored on a tag ref, e.g. --ref v4.7.0 or --ref box-4.7.0-1)'
         type: boolean
         default: false
 
@@ -67,15 +73,31 @@ jobs:
           set -euo pipefail
           PUSH=false
           if [ "$REF_TYPE" = tag ]; then
-            VERSION="${REF_NAME#v}"
-            if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
-              echo "::error::tag $REF_NAME is not v<major>.<minor>.<patch>[-label]"; exit 1
-            fi
-            # The tag must sit on the commit whose root package.json carries the same release (the file
-            # `dispatch release` reads; a release may leave packages/*/package.json behind).
             PKG="$(node -p 'require("./package.json").version')"
-            if [ "${VERSION%%-*}" != "${PKG%%-*}" ]; then
-              echo "::error::tag $REF_NAME does not match package.json ($PKG)"; exit 1
+            if [[ "$REF_NAME" =~ ^box-([0-9]+\.[0-9]+\.[0-9]+)-([1-9][0-9]*)$ ]]; then
+              # A box build: no desktop release. <base> is exactly the root package.json, and the
+              # commit is on main (a box tag on a side branch would ship code nobody merged).
+              BASE="${BASH_REMATCH[1]}"
+              VERSION="${BASE}-box.${BASH_REMATCH[2]}"
+              if [ "$BASE" != "$PKG" ]; then
+                echo "::error::tag $REF_NAME has base $BASE, but package.json is $PKG"; exit 1
+              fi
+              git fetch --no-tags --quiet --filter=tree:0 --unshallow origin +refs/heads/main:refs/remotes/origin/main
+              if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
+                echo "::error::tag $REF_NAME ($GITHUB_SHA) is not on main"; exit 1
+              fi
+            elif [[ "$REF_NAME" == box-* ]]; then
+              echo "::error::tag $REF_NAME is not box-<major>.<minor>.<patch>-<n> (n from 1)"; exit 1
+            else
+              VERSION="${REF_NAME#v}"
+              if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+                echo "::error::tag $REF_NAME is not v<major>.<minor>.<patch>[-label]"; exit 1
+              fi
+              # The tag must sit on the commit whose root package.json carries the same release (the file
+              # `dispatch release` reads; a release may leave packages/*/package.json behind).
+              if [ "${VERSION%%-*}" != "${PKG%%-*}" ]; then
+                echo "::error::tag $REF_NAME does not match package.json ($PKG)"; exit 1
+              fi
             fi
             if [ "$EVENT" = push ] || [ "$PUSH_INPUT" = true ]; then PUSH=true; fi
           else
@@ -107,8 +129,11 @@ jobs:
           provenance: false
           sbom: false
           tags: dispatch-box:candidate
-          # The same labels as "Push the proved image": the check after the push compares the
-          # full image config, labels included, so the two builds must write the same ones.
+          # The same build arguments and labels as "Build the OCI layout": the check after the push
+          # compares the full image config (environment and labels included), so the two builds must
+          # write the same ones.
+          build-args: |
+            DISPATCH_IMAGE_VERSION=${{ steps.meta.outputs.version }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -174,6 +199,8 @@ jobs:
           provenance: false
           sbom: false
           outputs: type=oci,dest=${{ runner.temp }}/oci/image.tar,compression=gzip,force-compression=false
+          build-args: |
+            DISPATCH_IMAGE_VERSION=${{ steps.meta.outputs.version }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -340,4 +367,5 @@ jobs:
             echo "- digest: \`$DIGEST\`"
             echo "- lazy-loading index: \`$SOCI\`"
             echo "- verify: \`gh attestation verify oci://$IMAGE@$DIGEST --repo $GITHUB_REPOSITORY --signer-workflow $GITHUB_REPOSITORY/.github/workflows/hosted-image.yml --source-ref $GITHUB_REF\`"
+            echo "- promote with version \`$VERSION\` and digest \`$DIGEST\`"
           } >> "$GITHUB_STEP_SUMMARY"

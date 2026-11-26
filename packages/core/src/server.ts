@@ -31,7 +31,7 @@ import { ensureClaudeTranscriptRetention } from './providers/claude-retention.js
 import { prepareSeparationAtStart, proveSeparationAtStart } from './privsep/boot.js';
 import { runDirFor } from './privsep/paths.js';
 import { privsep } from './privsep/config.js';
-import { getRunningVersion } from './update/version.js';
+import { getReportedVersion, getRunningVersion } from './update/version.js';
 import { currentProfile } from './os/profile.js';
 import { boxCapabilities } from './platform/capabilities.js';
 import { describeBoxTokenMode, takeBoxSecrets, type BoxTokenMode } from './platform/box-secrets.js';
@@ -221,7 +221,7 @@ function keepClaudeTranscripts(): void {
 /** Hosted box log (os/box-log.ts): one line that says which build started, and how. Local: no line. */
 function logDaemonStart(port: number, basePath: string, tokenMode: BoxTokenMode): void {
   boxLog('daemon.start', {
-    version: getRunningVersion(), profile: currentProfile(), basePath: basePath || '/', capabilities: boxCapabilities(),
+    version: getReportedVersion(), profile: currentProfile(), basePath: basePath || '/', capabilities: boxCapabilities(),
     port, node: process.version, tokenMode, ...(process.env.DISPATCH_BOX_ID ? { boxId: process.env.DISPATCH_BOX_ID } : {}),
   });
 }
