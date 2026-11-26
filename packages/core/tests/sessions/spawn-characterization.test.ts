@@ -12,6 +12,8 @@ import * as terminalsDb from '../../src/db/terminals.js';
 import * as appState from '../../src/db/app-state.js';
 import { SessionService } from '../../src/sessions/service.js';
 import { KeyRegistry } from '../../src/auth/principals.js';
+import { setProfileSource, fallbackProfile } from '../../src/os/profile.js';
+import { BUSINESS_AUTO_COMPACT_WINDOW, businessClaudeEnv } from '../../src/sessions/thread-spawner.js';
 
 class FakePty extends EventEmitter {
   alive = new Set<string>();
@@ -112,6 +114,32 @@ describe('SessionService spawn (characterization)', () => {
     expect(fs.existsSync(path.join(tmp, 'data', `thread-${t.id}.mcp.json`))).toBe(true);
     expect(reg.size() - before).toBe(1);
     expect((svc.getTerminal(t.id)!.config as Record<string, any>).toolsAvailable).toBeUndefined(); // no plugin system wired
+  });
+
+  it('a business person\'s Claude thread compacts early (CLAUDE_CODE_AUTO_COMPACT_WINDOW); a developer\'s thread does not', () => {
+    try {
+      setProfileSource(() => 'business');
+      const biz = svc.createTerminal('s1', 'claude-code', 'biz', undefined, undefined, undefined, { transport: 'structured' });
+      const bizEnv = mgr.spawns.find((x) => x.id === biz.id)!.opts.env;
+      expect(bizEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(String(BUSINESS_AUTO_COMPACT_WINDOW));
+      expect(BUSINESS_AUTO_COMPACT_WINDOW).toBeGreaterThanOrEqual(300_000);
+      expect(BUSINESS_AUTO_COMPACT_WINDOW).toBeLessThanOrEqual(400_000);
+
+      setProfileSource(() => 'developer');
+      const dev = svc.createTerminal('s1', 'claude-code', 'dev', undefined, undefined, undefined, { transport: 'structured' });
+      expect(mgr.spawns.find((x) => x.id === dev.id)!.opts.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined();
+      const cli = svc.createTerminal('s1', 'claude-code', 'cli');
+      expect(pty.spawns.find((x) => x.id === cli.id)!.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined();
+    } finally {
+      setProfileSource(() => fallbackProfile(process.env));
+    }
+  });
+
+  it('businessClaudeEnv: only a business Claude Code thread gets the window', () => {
+    expect(businessClaudeEnv('claude-code', 'business')).toEqual({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(BUSINESS_AUTO_COMPACT_WINDOW) });
+    expect(businessClaudeEnv('claude-code', 'developer')).toEqual({});
+    expect(businessClaudeEnv('codex', 'business')).toEqual({});
+    expect(businessClaudeEnv('opencode', 'business')).toEqual({});
   });
 
   it('a spawn that fails removes the new row and its MCP config file, revokes its key, and names the thread in the error', () => {
