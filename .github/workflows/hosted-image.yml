@@ -75,12 +75,15 @@ jobs:
           if [ "$REF_TYPE" = tag ]; then
             PKG="$(node -p 'require("./package.json").version')"
             if [[ "$REF_NAME" =~ ^box-([0-9]+\.[0-9]+\.[0-9]+)-([1-9][0-9]*)$ ]]; then
-              # A box build: no desktop release. <base> is exactly the root package.json, and the
-              # commit is on main (a box tag on a side branch would ship code nobody merged).
+              # A box build: no desktop release. <base> is exactly the root package.json AND
+              # packages/core/package.json (the version the daemon checks DISPATCH_IMAGE_VERSION
+              # against, update/version.ts), and the commit is on main (a box tag on a side branch
+              # would ship code nobody merged).
               BASE="${BASH_REMATCH[1]}"
               VERSION="${BASE}-box.${BASH_REMATCH[2]}"
-              if [ "$BASE" != "$PKG" ]; then
-                echo "::error::tag $REF_NAME has base $BASE, but package.json is $PKG"; exit 1
+              CORE="$(node -p 'require("./packages/core/package.json").version')"
+              if [ "$BASE" != "$PKG" ] || [ "$BASE" != "$CORE" ]; then
+                echo "::error::tag $REF_NAME has base $BASE, but package.json is $PKG and packages/core/package.json is $CORE"; exit 1
               fi
               git fetch --no-tags --quiet --filter=tree:0 --unshallow origin +refs/heads/main:refs/remotes/origin/main
               if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
@@ -88,16 +91,17 @@ jobs:
               fi
             elif [[ "$REF_NAME" == box-* ]]; then
               echo "::error::tag $REF_NAME is not box-<major>.<minor>.<patch>-<n> (n from 1)"; exit 1
-            else
-              VERSION="${REF_NAME#v}"
-              if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
-                echo "::error::tag $REF_NAME is not v<major>.<minor>.<patch>[-label]"; exit 1
-              fi
+            elif [[ "$REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+              # A desktop release: plain v<X.Y.Z> only (the shape the desktop updater offers). No label,
+              # so a v tag can never name a box build (v4.14.1-box.7 is refused).
+              VERSION="${BASH_REMATCH[1]}"
               # The tag must sit on the commit whose root package.json carries the same release (the file
               # `dispatch release` reads; a release may leave packages/*/package.json behind).
-              if [ "${VERSION%%-*}" != "${PKG%%-*}" ]; then
+              if [ "$VERSION" != "$PKG" ]; then
                 echo "::error::tag $REF_NAME does not match package.json ($PKG)"; exit 1
               fi
+            else
+              echo "::error::tag $REF_NAME is neither v<major>.<minor>.<patch> nor box-<major>.<minor>.<patch>-<n>"; exit 1
             fi
             if [ "$EVENT" = push ] || [ "$PUSH_INPUT" = true ]; then PUSH=true; fi
           else
