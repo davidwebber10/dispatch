@@ -2,7 +2,7 @@ import { boxCapabilities } from './capabilities.js';
 import { osBoxToken } from './box-secrets.js';
 import { currentProfile } from '../os/profile.js';
 import type Database from 'better-sqlite3';
-import { getRunningVersion } from '../update/version.js';
+import { getReportedVersion } from '../update/version.js';
 import { collectIdleInfo, type IdleInfo, type PluginJobsInfo } from '../os/idle-info.js';
 import type { HeartbeatDisk, HeartbeatLimits } from './fleet-stats.js';
 
@@ -117,7 +117,7 @@ export function collectHeartbeat(
     lastActivityAt: idle.lastActivityAt,
     automations: idle.automations,
     toolsReachable: extra.toolsReachable,
-    version: getRunningVersion(),
+    version: getReportedVersion(),
     capabilities: boxCapabilities(),
     profile: currentProfile(),
   };

@@ -456,12 +456,45 @@ stored in this repository.
 **How to release an image.**
 
 1. Cut the release as `docs/RELEASING.md` describes. The tag is `v<version>`, for example `v4.7.0`.
-   A tag with a label (`v4.7.0-os.1`) is also accepted. The `X.Y.Z` part of the tag must equal the
-   version in the root `package.json` on the tagged commit.
+   (For an image without a desktop release, see "Box releases" below.)
+   Only a plain `v<X.Y.Z>` tag builds an image (no label: a `v` tag never names a box build), and
+   `X.Y.Z` must equal the version in the root `package.json` on the tagged commit.
 2. The tag push starts `hosted-image`. Watch it: `gh run watch` on the run in the Actions tab.
 3. When the run is green, copy the digest from the run summary (`sha256:…`).
 4. To build again for a tag that exists (for example after a runner failure), run the workflow
    on the tag with `push` ticked: `gh workflow run hosted-image.yml --ref v4.7.0 -f push=true`.
+
+### Box releases
+
+A box release ships a new hosted image from `main` WITHOUT a desktop release: no `v` tag, no change
+to `package.json`, no GitHub Release, and no desktop install is offered anything.
+
+- **The tag** is `box-<base>-<n>`, for example `box-4.14.1-1`. `<base>` is the version in the root
+  `package.json` and in `packages/core/package.json` on the tagged commit (the last desktop release;
+  the workflow refuses the tag when the two differ, because the daemon checks its image version
+  against `packages/core/package.json`), and `<n>` counts box builds of that base, from 1. The tagged commit must be on `main`; the workflow refuses a tag on any other commit, a
+  tag whose base is not `package.json`, and a `box-` tag of any other shape.
+- **The image version** is `<base>-box.<n>`, for example `4.14.1-box.1`. It is the image tag
+  (`ghcr.io/davidwebber10/dispatch-box:4.14.1-box.1`), the `org.opencontainers.image.version` label,
+  and `DISPATCH_IMAGE_VERSION` in the image. The daemon reports it in its heartbeat, its start log line
+  and its update page (`getReportedVersion`, `packages/core/src/update/version.ts`). Release code
+  paths (the desktop updater, release notes, plugins, telemetry) still use the `package.json` version.
+- **Order:** `4.14.1 < 4.14.1-box.1 < 4.14.1-box.2 < 4.14.2`. A box build is newer than its base and
+  older than the next release (`compareVersions`).
+- **Never a desktop update:** the desktop updater offers only published `v<X.Y.Z>` releases whose
+  commit is on `main` (`TAG_SHAPE`, `update/target.ts`), and `dispatch release` reads only `v*` tags.
+
+To cut one:
+
+```bash
+git fetch origin && git checkout origin/main
+BASE="$(node -p 'require("./package.json").version')"
+git ls-remote --tags origin "box-${BASE}-*"     # the next <n> is one above the highest here
+git tag "box-${BASE}-1" && git push origin "box-${BASE}-1"
+```
+
+The push starts `hosted-image`; the run summary gives the version and the digest to promote. To verify
+a box image, pass `--source-ref refs/tags/box-<base>-<n>` to the command below.
 
 **How to verify an image.** Anyone can check that a digest came from this workflow, on a tag, from
 this repository:

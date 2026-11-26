@@ -5,7 +5,7 @@ import * as appState from '../db/app-state.js';
 import type { EventBroadcaster } from '../ws/events.js';
 import { applyUpdate, preflightUpdate, type GitExec } from '../update/apply.js';
 import { checkForUpdateOnce } from '../update/checker.js';
-import { getRunningVersion } from '../update/version.js';
+import { getReportedVersion, getRunningVersion } from '../update/version.js';
 import { storedUpdateView } from '../update/stored.js';
 import { markUpdateStarted, markHostedUpdateStarted, readUpdateProgress } from '../update/progress.js';
 import { platform } from '../platform/index.js';
@@ -93,8 +93,8 @@ export function createUpdateRouter(broadcaster: EventBroadcaster, repoDir: strin
     // "what has been built?", not "what has been released on GitHub" — a release
     // that nobody has built into an image is not an update this box can take.
     if (hosted) {
-      const state = await hostedCheck(hosted, getRunningVersion());
-      resetHostedUpdateCache({ version: getRunningVersion(), state }); // GET /api/state/update agrees at once
+      const state = await hostedCheck(hosted, getReportedVersion());
+      resetHostedUpdateCache({ version: getReportedVersion(), state }); // GET /api/state/update agrees at once
       res.json({ ...state, url: null, publishedAt: null, hosted: true });
       return;
     }

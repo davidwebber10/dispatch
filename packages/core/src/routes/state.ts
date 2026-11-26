@@ -9,7 +9,7 @@ import type Database from 'better-sqlite3';
 import * as appState from '../db/app-state.js';
 import { platform } from '../platform/index.js';
 import { summary } from '../analytics/queries.js';
-import { getRunningVersion } from '../update/version.js';
+import { getReportedVersion, getRunningVersion } from '../update/version.js';
 import { storedUpdateView } from '../update/stored.js';
 import { parseStoredNotes, readLocalReleaseNote } from '../update/notes.js';
 import { revealClientFrom } from '../files/reveal.js';
@@ -126,11 +126,12 @@ export function createStateRouter(db: Database.Database, opts: { policy?: PathPo
     // never from the GitHub release poller (which does not run there). url/publishedAt are null.
     const hosted = hostedTarget();
     if (hosted) {
-      const currentVersion = getRunningVersion();
+      // A box build reports <base>-box.<n>; its release note is the base release's.
+      const currentVersion = getReportedVersion();
       const st = await cachedHostedUpdate(hosted, currentVersion);
       return void res.json({
         available: st.available, version: st.available ? st.version : null, url: null, publishedAt: null,
-        currentVersion, notes: [], currentNotes: readLocalReleaseNote(currentVersion), hosted: true,
+        currentVersion, notes: [], currentNotes: readLocalReleaseNote(getRunningVersion()), hosted: true,
         ...(st.error ? { error: st.error } : {}),
       });
     }
