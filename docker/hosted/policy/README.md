@@ -24,8 +24,14 @@ Claude Code (2.1.322):
 - `allowManagedHooksOnly: true`: a hook in a user or project settings file does not run. Dispatch's
   chat threads use no hook; its CLI threads (developer image) do, which is why that image leaves it out.
 - `allowManagedPermissionRulesOnly: true`: `--allowedTools` and `permissions.allow` rules outside this
-  file are ignored, so a nested `claude` cannot pre-approve its own tools. Dispatch passes no rule today;
-  an `ask` rule for a company write tool must be added HERE when one is needed.
+  file are ignored, so a nested `claude` cannot pre-approve its own tools. The managed folder still
+  counts: under the business profile the daemon's root-written drop-in (`50-dispatch-business-mcp.json`,
+  `packages/core/src/os/hosted-mcp-policy.ts`) carries the smart-approvals rules. Its `permissions.allow`
+  names only the box's own card-only and state-only tools (`mcp__<system>__connect`,
+  `mcp__connections__list`, `mcp__connections__refresh`), so the auto-mode classifier cannot refuse them;
+  its `permissions.ask` holds the rules of `claudeSmartAskRules()` (none today). Claude Code merges the
+  drop-in's `permissions` block key by key with this file, so `disableBypassPermissionsMode` stays.
+  A rule passed in `--settings` does nothing on a business box.
 - `forceLoginMethod: "claudeai"`: the person's own subscription login only. NOT in the standard file:
   it is `claude-login-dropin.json`, installed as `/run/dispatch/claude-policy/10-dispatch-login.json`
   (the folder `/etc/claude-code/managed-settings.d` links to). Claude Code reads it there (measured

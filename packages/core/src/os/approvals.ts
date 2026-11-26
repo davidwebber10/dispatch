@@ -42,6 +42,10 @@ export function approvalsFor(config: Record<string, unknown>, profile: 'business
  * EXTEND HERE: company-system WRITE tools (e.g. `mcp__gmail__send`) once OS marks them; an
  * `ask` rule forces a can_use_tool request even in auto mode (measured 2026-11-11), and MCP
  * annotations (readOnlyHint/destructiveHint) change nothing.
+ * WHERE THEY APPLY: on a business box the image's policy sets `allowManagedPermissionRulesOnly`, so
+ * Claude Code ignores rules from `--settings`; there these rules take effect only through the managed
+ * business drop-in (os/hosted-mcp-policy.ts businessDropIn, which reads this function). `--settings`
+ * carries them for every other smart thread (a local install, a hosted developer).
  */
 export function claudeSmartAskRules(extra: readonly string[] = []): string[] {
   return [...extra];

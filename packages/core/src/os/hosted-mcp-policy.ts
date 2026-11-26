@@ -27,7 +27,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { McpServerSpec } from '../mcp/injection.js';
-import { claudeSmartAllowRules } from './approvals.js';
+import { claudeSmartAllowRules, claudeSmartAskRules } from './approvals.js';
 
 /** Claude Code's managed drop-in folder, and where the image links it (docker/hosted/Dockerfile). */
 export const CLAUDE_DROPIN_LINK = '/etc/claude-code/managed-settings.d';
@@ -74,13 +74,23 @@ export function allowListFor(specs: readonly McpServerSpec[]): Array<{ serverUrl
 }
 
 /**
- * The business drop-in document. It also carries the smart-approvals allow rules (os/approvals.ts
- * claudeSmartAllowRules): the image's policy sets `allowManagedPermissionRulesOnly`, so Claude Code
- * ignores permission rules from `--settings` on a business box, and only a managed file can carry them.
+ * The business drop-in document. It also carries the smart-approvals permission rules (os/approvals.ts
+ * claudeSmartAllowRules, claudeSmartAskRules): the image's policy sets `allowManagedPermissionRulesOnly`,
+ * so Claude Code ignores permission rules from `--settings` on a business box, and only a managed file
+ * can carry them. Claude Code merges this file's `permissions` block key by key with the image's
+ * managed-settings.json (lists combine), so `disableBypassPermissionsMode` there stays in force
+ * (code.claude.com/docs/en/managed-settings, "managed-settings.d").
  */
-export function businessDropIn(specs: readonly McpServerSpec[]): Record<string, unknown> {
+export function businessDropIn(specs: readonly McpServerSpec[], ask: readonly string[] = claudeSmartAskRules()): Record<string, unknown> {
   const allow = claudeSmartAllowRules(specs);
-  return { allowManagedMcpServersOnly: true, allowedMcpServers: allowListFor(specs), ...(allow.length ? { permissions: { allow } } : {}) };
+  const permissions = { ...(allow.length ? { allow } : {}), ...(ask.length ? { ask: [...ask] } : {}) };
+  return { allowManagedMcpServersOnly: true, allowedMcpServers: allowListFor(specs), ...(Object.keys(permissions).length ? { permissions } : {}) };
+}
+
+/** Two rule lists as one, without repeats (`now` first). */
+function unionRules(now: unknown, prior: unknown): string[] {
+  const list = (v: unknown) => (Array.isArray(v) ? v : []).filter((r): r is string => typeof r === 'string');
+  return [...new Set([...list(now), ...list(prior)])];
 }
 
 export interface DropInPaths { dir: string; link: string }
@@ -128,16 +138,16 @@ export function applyBusinessDropIn(doc: Record<string, unknown> | null, p: Drop
   let merged = doc;
   if (before) {
     try {
-      const old = JSON.parse(before) as { allowedMcpServers?: unknown; permissions?: { allow?: unknown } };
+      const old = JSON.parse(before) as { allowedMcpServers?: unknown; permissions?: { allow?: unknown; ask?: unknown } };
       const now = Array.isArray(doc.allowedMcpServers) ? doc.allowedMcpServers : [];
       const prior = Array.isArray(old.allowedMcpServers) ? old.allowedMcpServers : [];
       const seen = new Set(now.map((e) => JSON.stringify(e)));
       merged = { ...doc, allowedMcpServers: [...now, ...prior.filter((e) => !seen.has(JSON.stringify(e)))] };
-      // The allow rules grow the same way (another thread's server names may differ after a collision).
-      const nowAllow = (doc.permissions as { allow?: unknown } | undefined)?.allow;
-      const allow = [...new Set([...(Array.isArray(nowAllow) ? nowAllow : []), ...(Array.isArray(old.permissions?.allow) ? old.permissions.allow : [])]
-        .filter((r): r is string => typeof r === 'string'))];
-      if (allow.length) merged = { ...merged, permissions: { ...(doc.permissions as object | undefined), allow } };
+      // The permission rules grow the same way (another thread's server names may differ after a collision).
+      const nowPerms = (doc.permissions ?? {}) as { allow?: unknown; ask?: unknown };
+      const allow = unionRules(nowPerms.allow, old.permissions?.allow);
+      const ask = unionRules(nowPerms.ask, old.permissions?.ask);
+      if (allow.length || ask.length) merged = { ...merged, permissions: { ...nowPerms, ...(allow.length ? { allow } : {}), ...(ask.length ? { ask } : {}) } };
     } catch { /* an unreadable file is replaced */ }
   }
   const text = `${JSON.stringify(merged, null, 2)}\n`;

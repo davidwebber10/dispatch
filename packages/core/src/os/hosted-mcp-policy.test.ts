@@ -164,9 +164,10 @@ describe('the business drop-in on disk', () => {
     expect(doc.permissions).toEqual({ allow: ['mcp__acumatica__connect', 'mcp__connections__list', 'mcp__connections__refresh'] });
     const p = layout();
     expect(applyBusinessDropIn({ allowManagedMcpServersOnly: true, allowedMcpServers: [], permissions: { allow: ['mcp__crm__connect'] } }, p, me, me)).toBeNull();
-    expect(applyBusinessDropIn({ allowManagedMcpServersOnly: true, allowedMcpServers: [], permissions: { allow: ['mcp__os-crm__connect'] } }, p, me, me)).toBeNull();
+    expect(applyBusinessDropIn({ allowManagedMcpServersOnly: true, allowedMcpServers: [], permissions: { allow: ['mcp__os-crm__connect'], ask: ['mcp__crm__send'] } }, p, me, me)).toBeNull();
+    expect(applyBusinessDropIn({ allowManagedMcpServersOnly: true, allowedMcpServers: [], permissions: { allow: ['mcp__crm__connect'] } }, p, me, me)).toBeNull();
     expect(JSON.parse(fs.readFileSync(path.join(p.dir, BUSINESS_DROPIN_FILE), 'utf8')).permissions)
-      .toEqual({ allow: ['mcp__os-crm__connect', 'mcp__crm__connect'] });
+      .toEqual({ allow: ['mcp__crm__connect', 'mcp__os-crm__connect'], ask: ['mcp__crm__send'] });
   });
 
   test('refused: not root, a folder others may write, a link that leads elsewhere', () => {
