@@ -6,9 +6,10 @@
 // No `kind` is the old tool: text and/or paths, and the app infers the look.
 //
 // Every refusal names the exact field to pass, so a model that guessed a field can correct itself.
-// `code` takes `text`, or ONE file in `paths`: the server reads that file into `text` (a source file
-// such as .ts is not a type the Inbox stores, so it never travels as an attachment).
-import fs from 'node:fs';
+// `code` takes `text`, or ONE file in `paths`: then `checkArgs` answers `codeFile`, and the server asks the
+// DAEMON for its text (POST /api/plugins/:id/files/text, with the daemon's path policy and credential checks;
+// this process reads no file itself). A source file such as .ts is not a type the Inbox stores, so it never
+// travels as an attachment.
 import path from 'node:path';
 
 export const KINDS = ['command', 'link', 'code', 'secret', 'steps', 'diff', 'table', 'doc', 'text', 'images', 'files'];
@@ -34,31 +35,15 @@ export function languageOf(file) {
   return Object.prototype.hasOwnProperty.call(LANGUAGE_BY_EXT, ext) ? LANGUAGE_BY_EXT[ext] : null;
 }
 
-/**
- * Read a code file for kind=code: a regular text file inside `cwd` (the thread's folder), at most
- * MAX_TEXT. Throws an Error with a plain message.
- */
-export function readCodeFile(p, cwd = process.cwd()) {
-  const root = fs.realpathSync(cwd);
-  let real;
-  try { real = fs.realpathSync(path.resolve(cwd, p.trim())); } catch { fail(`code: cannot read "${p}" (no such file in this project)`); }
-  if (real !== root && !real.startsWith(root + path.sep)) fail(`code: "${p}" is outside this project; pass the snippet in \`text\` instead`);
-  const st = fs.statSync(real);
-  if (!st.isFile()) fail(`code: "${p}" is not a file`);
-  if (st.size > MAX_TEXT) fail('code: the file is too long (max 64 KB); pass the part that matters in `text`');
-  const body = fs.readFileSync(real, 'utf8');
-  if (body.includes('\u0000')) fail(`code: "${p}" is not a text file`);
-  return body;
-}
-
 const plural = (n, one) => (n === 1 ? one.charAt(0).toUpperCase() + one.slice(1) : `${n} ${one}s`);
 
 /**
- * Check the tool's arguments. Answers `{ kind, text, paths, fields, defaultTitle }`: `kind` is null when
+ * Check the tool's arguments. Answers `{ kind, text, paths, fields, defaultTitle, codeFile }`: `kind` is null when
  * none was given; `fields` are the kind's own document fields; `text` is what the document's `text` holds
- * (the copyable form, so search and an older app keep working). Throws an Error with a plain message.
+ * (the copyable form, so search and an older app keep working); `codeFile` is the one file whose
+ * text the server must fetch for kind=code (else null). Throws an Error with a plain message.
  */
-export function checkArgs(args, { cwd = process.cwd(), readFile = readCodeFile } = {}) {
+export function checkArgs(args) {
   const a = args && typeof args === 'object' ? args : {};
   const kind = a.kind === undefined || a.kind === null ? null : a.kind;
   if (kind !== null && (typeof kind !== 'string' || !KINDS.includes(kind))) fail(`unknown kind "${String(kind)}" (use one of: ${KINDS.join(', ')})`);
@@ -69,6 +54,7 @@ export function checkArgs(args, { cwd = process.cwd(), readFile = readCodeFile }
   for (const p of paths) if (typeof p !== 'string' || !p.trim()) fail('each path must be a non-empty string');
   const fields = {};
   let defaultTitle = null;
+  let codeFile = null;
   const needText = (what) => { if (!text) fail(`${kind} needs \`text\` (${what})`); };
 
   switch (kind) {
@@ -110,15 +96,11 @@ export function checkArgs(args, { cwd = process.cwd(), readFile = readCodeFile }
     }
     case 'code':
       if (!text) {
-        // The snippet from ONE file of the project: read into `text`; the file is not attached.
+        // The snippet from ONE file of the project: the server reads it through the daemon (`codeFile`).
         if (paths.length !== 1) fail('code needs `text` (the snippet), or exactly one file in `paths` to read it from');
-        const file = paths[0].trim();
-        text = str(readFile(file, cwd));
-        if (!text) fail(`code: "${file}" is empty; pass the snippet in \`text\``);
-        if (text.length > MAX_TEXT) fail('text too long (max 64 KB)');
-        paths.splice(0, 1);
-        if (a.language === undefined || a.language === null) { const lang = languageOf(file); if (lang) fields.language = lang; }
-        defaultTitle = path.basename(file);
+        codeFile = paths.splice(0, 1)[0].trim();
+        if (a.language === undefined || a.language === null) { const lang = languageOf(codeFile); if (lang) fields.language = lang; }
+        defaultTitle = path.basename(codeFile);
       }
       if (a.language !== undefined && a.language !== null) {
         if (typeof a.language !== 'string' || !/^[A-Za-z0-9+#._-]{1,40}$/.test(a.language.trim())) fail('language must be a short name such as ts, python or bash');
@@ -172,7 +154,7 @@ export function checkArgs(args, { cwd = process.cwd(), readFile = readCodeFile }
     default:
       break;
   }
-  return { kind, text, paths, fields, defaultTitle };
+  return { kind, text, paths, fields, defaultTitle, codeFile };
 }
 
 /** A secret's document past its 24 hours, with the text removed; null when nothing is to change. */
@@ -181,4 +163,12 @@ export function expireSecret(doc, now = Date.now()) {
   const t = Date.parse(doc.createdAt);
   if (Number.isNaN(t) || now - t <= SECRET_TTL_MS) return null;
   return { ...doc, text: null, expired: true };
+}
+
+/** The text the daemon read for kind=code (`codeFile`), checked as `text` is. Throws an Error with a plain message. */
+export function codeText(file, body) {
+  const t = body && typeof body.text === 'string' ? body.text : '';
+  if (!t.trim()) fail(`code: "${file}" is empty; pass the snippet in \`text\``);
+  if (t.length > MAX_TEXT) fail('text too long (max 64 KB)');
+  return t;
 }

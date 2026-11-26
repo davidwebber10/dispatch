@@ -128,6 +128,19 @@ describe('the Previews plugin MCP server', () => {
     const code = await callPreview({ kind: 'code', paths: ['add.ts'] });
     expect(code.isError).toBe(false);
     expect(docOf(code.parsed.id)).toMatchObject({ kind: 'code', language: 'ts', text: 'export const add = (a: number, b: number) => a + b;\n', files: [], title: 'add.ts' });
+    // The daemon reads it with its own path policy: a hidden file, a hard link and an outside file are refused.
+    fs.writeFileSync(path.join(proj, '.env'), 'API_KEY=abc');
+    const env = await callPreview({ kind: 'code', paths: ['.env'] });
+    expect(env.isError).toBe(true);
+    expect(env.text).toMatch(/code: This file is hidden/);
+    expect(env.text).not.toContain('API_KEY');
+    fs.linkSync(path.join(outside, 'secret.txt'), path.join(proj, 'linked.ts'));
+    const linked = await callPreview({ kind: 'code', paths: ['linked.ts'] });
+    expect(linked.isError).toBe(true);
+    expect(linked.text).toMatch(/more than one name/);
+    expect(linked.text).not.toContain('top secret');
+    const out = await callPreview({ kind: 'code', paths: [path.join(outside, 'secret.txt')] });
+    expect(out.text).toMatch(/outside the project folder/);
     const noCode = await callPreview({ kind: 'code' });
     expect(noCode.isError).toBe(true);
     expect(noCode.text).toMatch(/code needs `text` \(the snippet\), or exactly one file in `paths`/);

@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { randomUUID } from 'node:crypto';
-import { KINDS, MAX_STEPS, checkArgs, expireSecret } from './kinds.mjs';
+import { KINDS, MAX_STEPS, checkArgs, codeText, expireSecret } from './kinds.mjs';
 
 const PLUGIN = process.env.DISPATCH_PLUGIN || 'previews';
 const API = (process.env.DISPATCH_API || `http://127.0.0.1:${process.env.DISPATCH_PORT || 3456}`).replace(/\/$/, '');
@@ -138,9 +138,18 @@ const disabledIfGone =(e) => { if (e && e.status === 404 && /unknown plugin/i.te
 async function preview(args) {
   const a = args && typeof args === 'object' ? args : {};
   // The kind's checks (kinds.mjs): a plain message for each refusal, before anything is written.
-  const { kind, text, paths, fields, defaultTitle } = checkArgs(a);
+  const checked = checkArgs(a);
+  const { kind, paths, fields, defaultTitle, codeFile } = checked;
+  let { text } = checked;
   const who = await call('GET', '/api/whoami');
   if (who.kind !== 'thread' || !who.sessionId) throw new Error('the preview tool runs inside a Dispatch thread only');
+  // kind=code with one file and no text: the DAEMON reads it (its path policy and credential checks).
+  if (codeFile) {
+    let body;
+    try { body = await call('POST', `/api/plugins/${encodeURIComponent(PLUGIN)}/files/text`, { path: path.resolve(process.cwd(), codeFile) }); }
+    catch (e) { const d = disabledIfGone(e); throw d === e ? new Error(`code: ${e.message}`) : d; }
+    text = codeText(codeFile, body);
+  }
   // Paths are made absolute from this server's cwd (the thread's folder, a worktree perhaps), so the
   // daemon checks the file the thread meant. A refusal rolls back the references made before it.
   const files = [];

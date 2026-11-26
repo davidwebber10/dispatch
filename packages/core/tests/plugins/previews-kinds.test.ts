@@ -1,7 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
-import fs from 'node:fs';
-import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 // Drops (2026-11-11): the `preview` tool takes a `kind`. The checks are a module beside the MCP server,
@@ -9,11 +7,12 @@ import { fileURLToPath } from 'node:url';
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const kinds = await import(path.join(REPO, 'packages/plugins/previews/mcp/kinds.mjs')) as {
   KINDS: string[];
-  checkArgs(a: unknown, opts?: { cwd?: string; readFile?: (p: string, cwd: string) => string }): { kind: string | null; text: string | null; paths: string[]; fields: Record<string, unknown>; defaultTitle: string | null };
+  checkArgs(a: unknown): { kind: string | null; text: string | null; paths: string[]; fields: Record<string, unknown>; defaultTitle: string | null; codeFile: string | null };
+  codeText(file: string, body: unknown): string;
   expireSecret<T extends Record<string, unknown>>(doc: T, now?: number): T | null;
   SECRET_TTL_MS: number;
 };
-const { checkArgs, expireSecret, KINDS, SECRET_TTL_MS } = kinds;
+const { checkArgs, codeText, expireSecret, KINDS, SECRET_TTL_MS } = kinds;
 const err = (a: unknown) => { try { checkArgs(a); } catch (e) { return (e as Error).message; } return null; };
 
 describe('preview kinds: the checks of the tool arguments', () => {
@@ -61,37 +60,21 @@ describe('preview kinds: the checks of the tool arguments', () => {
     expect(err({ kind: 'code', text: 'x', language: 'no spaces allowed' })).toMatch(/language/);
   });
 
-  it('code: one file in `paths` (no text) is read as the snippet; the language comes from the extension', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'previews-code-'));
-    const out = fs.mkdtempSync(path.join(os.tmpdir(), 'previews-code-out-'));
-    try {
-      fs.mkdirSync(path.join(dir, 'src'));
-      fs.writeFileSync(path.join(dir, 'src', 'add.py'), 'def add(a, b):\n    return a + b\n');
-      fs.writeFileSync(path.join(dir, 'empty.ts'), '   \n');
-      fs.writeFileSync(path.join(dir, 'big.ts'), 'x'.repeat(64 * 1024 + 1));
-      fs.writeFileSync(path.join(dir, 'bin.dat'), Buffer.from([0x41, 0x00, 0x42]));
-      fs.writeFileSync(path.join(out, 'other.ts'), 'secret');
-      const args = { kind: 'code', paths: ['src/add.py'] };
-      const a = checkArgs(args, { cwd: dir });
-      expect(a).toMatchObject({ kind: 'code', text: 'def add(a, b):\n    return a + b\n', paths: [], fields: { language: 'python' }, defaultTitle: 'add.py' });
-      expect(args.paths).toEqual(['src/add.py']); // the caller's arguments are not changed
-      expect(checkArgs({ kind: 'code', paths: [path.join(dir, 'src/add.py')], language: 'py3' }, { cwd: dir }).fields).toEqual({ language: 'py3' });
-      // Text wins over a path: the path stays an attachment, as before.
-      expect(checkArgs({ kind: 'code', text: 'x = 1', paths: ['src/add.py'] }, { cwd: dir })).toMatchObject({ text: 'x = 1', paths: ['src/add.py'], defaultTitle: 'Code' });
-      const e = (x: unknown) => { try { checkArgs(x, { cwd: dir }); } catch (er) { return (er as Error).message; } return null; };
-      expect(e({ kind: 'code', paths: ['missing.ts'] })).toMatch(/cannot read "missing.ts"/);
-      expect(e({ kind: 'code', paths: [path.join(out, 'other.ts')] })).toMatch(/outside this project; pass the snippet in `text`/);
-      expect(e({ kind: 'code', paths: ['../' + path.basename(out) + '/other.ts'] })).toMatch(/outside this project/);
-      expect(e({ kind: 'code', paths: ['src'] })).toMatch(/is not a file/);
-      expect(e({ kind: 'code', paths: ['empty.ts'] })).toMatch(/is empty; pass the snippet in `text`/);
-      expect(e({ kind: 'code', paths: ['big.ts'] })).toMatch(/too long \(max 64 KB\)/);
-      expect(e({ kind: 'code', paths: ['bin.dat'] })).toMatch(/not a text file/);
-      // The reader is injectable.
-      expect(checkArgs({ kind: 'code', paths: ['x.go'] }, { readFile: () => 'package main' })).toMatchObject({ text: 'package main', fields: { language: 'go' } });
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-      fs.rmSync(out, { recursive: true, force: true });
-    }
+  it('code: one file in `paths` (no text) is named as `codeFile` for the daemon to read; this module reads no file', () => {
+    const args = { kind: 'code', paths: ['src/add.py'] };
+    const a = checkArgs(args);
+    expect(a).toMatchObject({ kind: 'code', text: null, paths: [], codeFile: 'src/add.py', fields: { language: 'python' }, defaultTitle: 'add.py' });
+    expect(args.paths).toEqual(['src/add.py']); // the caller's arguments are not changed
+    expect(checkArgs({ kind: 'code', paths: ['/abs/x.go'], language: 'golang' }).fields).toEqual({ language: 'golang' });
+    expect(checkArgs({ kind: 'code', paths: ['notes'] }).fields).toEqual({});
+    // Text wins over a path: the path stays an attachment, as before, and nothing is read.
+    expect(checkArgs({ kind: 'code', text: 'x = 1', paths: ['src/add.py'] })).toMatchObject({ text: 'x = 1', paths: ['src/add.py'], codeFile: null, defaultTitle: 'Code' });
+    expect(checkArgs({ text: 'plain' }).codeFile).toBeNull();
+    // The daemon's answer is checked as `text` is.
+    expect(codeText('a.ts', { text: 'const a = 1;' })).toBe('const a = 1;');
+    expect(() => codeText('a.ts', { text: '  \n' })).toThrow(/"a.ts" is empty; pass the snippet in `text`/);
+    expect(() => codeText('a.ts', {})).toThrow(/is empty/);
+    expect(() => codeText('a.ts', { text: 'x'.repeat(64 * 1024 + 1) })).toThrow(/text too long/);
   });
 
   it('every refusal names the field to pass', () => {

@@ -9,7 +9,7 @@ import * as sessionsDb from '../db/sessions.js';
 import * as terminalsDb from '../db/terminals.js';
 import * as messageSourceDb from '../db/message-source.js';
 import { getProvider } from '../providers/registry.js';
-import { dispatchClaudeSettings } from '../providers/claude-code.js';
+import { dispatchClaudeSettings, businessClaudeEnv } from '../providers/claude-code.js';
 import { PTYManager } from '../pty/manager.js';
 import type { KeyHandle, KeyRegistry } from '../auth/principals.js';
 import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
@@ -120,30 +120,8 @@ export function hostedClaudeEnv(type: string, hosted: boolean = isHostedBox()): 
   return {};
 }
 
-/**
- * The auto-compact window of a business person's Claude Code thread, in tokens. Claude Code compacts
- * the conversation when its context reaches this size. Without it, a model with a native 1M window
- * compacts only at about 967K tokens: one hosted business thread grew to about 870K tokens, with
- * model calls of 7-10 minutes (one hit a 601 s timeout), and a full cache rewrite after each idle stop.
- * 350K keeps a thread well clear of that and still holds a long working conversation.
- *
- * `CLAUDE_CODE_AUTO_COMPACT_WINDOW` is Claude Code's supported variable for this: it takes precedence
- * over `/autocompact`, `--autocompact` and the `autoCompactWindow` setting, and Claude Code caps it at
- * the model's own context window (so a 200K model is not affected). `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`
- * is a percentage of that window, so it would move with the model; a token count does not.
- * See https://code.claude.com/docs/en/model-config#set-the-auto-compact-window and
- * https://code.claude.com/docs/en/env-vars.
- */
-export const BUSINESS_AUTO_COMPACT_WINDOW = 350_000;
-
-/**
- * The environment a business person's Claude Code thread adds (see BUSINESS_AUTO_COMPACT_WINDOW).
- * A developer profile, a local install and every other harness: nothing, so their threads compact as before.
- */
-export function businessClaudeEnv(type: string, profile: string = currentProfile()): Record<string, string> {
-  if (profile !== 'business' || type !== 'claude-code') return {};
-  return { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(BUSINESS_AUTO_COMPACT_WINDOW) };
-}
+// The business auto-compact window lives beside the other Claude settings Dispatch pins (providers/claude-code.ts).
+export { BUSINESS_AUTO_COMPACT_WINDOW, businessClaudeEnv } from '../providers/claude-code.js';
 
 /** What ThreadSpawner needs. Every field is required. */
 export interface ThreadSpawnerDeps {
