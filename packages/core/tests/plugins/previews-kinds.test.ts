@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 // Drops (2026-11-11): the `preview` tool takes a `kind`. The checks are a module beside the MCP server,
@@ -7,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const kinds = await import(path.join(REPO, 'packages/plugins/previews/mcp/kinds.mjs')) as {
   KINDS: string[];
-  checkArgs(a: unknown): { kind: string | null; text: string | null; paths: string[]; fields: Record<string, unknown>; defaultTitle: string | null };
+  checkArgs(a: unknown, opts?: { cwd?: string; readFile?: (p: string, cwd: string) => string }): { kind: string | null; text: string | null; paths: string[]; fields: Record<string, unknown>; defaultTitle: string | null };
   expireSecret<T extends Record<string, unknown>>(doc: T, now?: number): T | null;
   SECRET_TTL_MS: number;
 };
@@ -23,7 +25,7 @@ describe('preview kinds: the checks of the tool arguments', () => {
 
   it('no kind: as before (text and/or paths), and the kind is not stored', () => {
     expect(checkArgs({ text: 'hello' })).toMatchObject({ kind: null, text: 'hello', paths: [], fields: {} });
-    expect(err({})).toMatch(/needs text or at least one path/);
+    expect(err({})).toMatch(/needs `text` or at least one file in `paths`/);
   });
 
   it('command: one per line of text, or a list; blank lines go; cwd is kept', () => {
@@ -49,13 +51,60 @@ describe('preview kinds: the checks of the tool arguments', () => {
     for (const bad of ['javascript:alert(1)', 'file:///etc/passwd', 'ftp://x.y', 'not a url', 'data:text/html,hi']) {
       expect(err({ kind: 'link', url: bad }), bad).toMatch(/url must be an http:\/\/ or https:\/\/ address/);
     }
-    expect(err({ kind: 'link' })).toMatch(/link needs a `url`/);
+    expect(err({ kind: 'link' })).toMatch(/link needs `url` \(an http:\/\/ or https:\/\/ address\)/);
   });
 
   it('code: text with an optional language', () => {
     expect(checkArgs({ kind: 'code', text: 'const a = 1;', language: 'ts' }).fields).toEqual({ language: 'ts' });
-    expect(err({ kind: 'code' })).toMatch(/code needs `text`/);
+    expect(err({ kind: 'code' })).toMatch(/code needs `text` \(the snippet\), or exactly one file in `paths`/);
+    expect(err({ kind: 'code', paths: ['a.ts', 'b.ts'] })).toMatch(/code needs `text` \(the snippet\), or exactly one file in `paths`/);
     expect(err({ kind: 'code', text: 'x', language: 'no spaces allowed' })).toMatch(/language/);
+  });
+
+  it('code: one file in `paths` (no text) is read as the snippet; the language comes from the extension', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'previews-code-'));
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), 'previews-code-out-'));
+    try {
+      fs.mkdirSync(path.join(dir, 'src'));
+      fs.writeFileSync(path.join(dir, 'src', 'add.py'), 'def add(a, b):\n    return a + b\n');
+      fs.writeFileSync(path.join(dir, 'empty.ts'), '   \n');
+      fs.writeFileSync(path.join(dir, 'big.ts'), 'x'.repeat(64 * 1024 + 1));
+      fs.writeFileSync(path.join(dir, 'bin.dat'), Buffer.from([0x41, 0x00, 0x42]));
+      fs.writeFileSync(path.join(out, 'other.ts'), 'secret');
+      const args = { kind: 'code', paths: ['src/add.py'] };
+      const a = checkArgs(args, { cwd: dir });
+      expect(a).toMatchObject({ kind: 'code', text: 'def add(a, b):\n    return a + b\n', paths: [], fields: { language: 'python' }, defaultTitle: 'add.py' });
+      expect(args.paths).toEqual(['src/add.py']); // the caller's arguments are not changed
+      expect(checkArgs({ kind: 'code', paths: [path.join(dir, 'src/add.py')], language: 'py3' }, { cwd: dir }).fields).toEqual({ language: 'py3' });
+      // Text wins over a path: the path stays an attachment, as before.
+      expect(checkArgs({ kind: 'code', text: 'x = 1', paths: ['src/add.py'] }, { cwd: dir })).toMatchObject({ text: 'x = 1', paths: ['src/add.py'], defaultTitle: 'Code' });
+      const e = (x: unknown) => { try { checkArgs(x, { cwd: dir }); } catch (er) { return (er as Error).message; } return null; };
+      expect(e({ kind: 'code', paths: ['missing.ts'] })).toMatch(/cannot read "missing.ts"/);
+      expect(e({ kind: 'code', paths: [path.join(out, 'other.ts')] })).toMatch(/outside this project; pass the snippet in `text`/);
+      expect(e({ kind: 'code', paths: ['../' + path.basename(out) + '/other.ts'] })).toMatch(/outside this project/);
+      expect(e({ kind: 'code', paths: ['src'] })).toMatch(/is not a file/);
+      expect(e({ kind: 'code', paths: ['empty.ts'] })).toMatch(/is empty; pass the snippet in `text`/);
+      expect(e({ kind: 'code', paths: ['big.ts'] })).toMatch(/too long \(max 64 KB\)/);
+      expect(e({ kind: 'code', paths: ['bin.dat'] })).toMatch(/not a text file/);
+      // The reader is injectable.
+      expect(checkArgs({ kind: 'code', paths: ['x.go'] }, { readFile: () => 'package main' })).toMatchObject({ text: 'package main', fields: { language: 'go' } });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(out, { recursive: true, force: true });
+    }
+  });
+
+  it('every refusal names the field to pass', () => {
+    expect(err({ kind: 'link' })).toMatch(/`url`/);
+    expect(err({ kind: 'secret' })).toMatch(/`text`/);
+    expect(err({ kind: 'steps' })).toMatch(/needs `steps`/);
+    expect(err({ kind: 'diff' })).toMatch(/diff needs `text` \(a unified diff\)/);
+    expect(err({ kind: 'doc' })).toMatch(/doc needs `text` \(markdown\)/);
+    expect(err({ kind: 'text' })).toMatch(/text needs `text`/);
+    expect(err({ kind: 'images' })).toMatch(/images needs `paths`/);
+    expect(err({ kind: 'files' })).toMatch(/files needs `paths`/);
+    expect(err({ kind: 'table' })).toMatch(/CSV `text` or one .csv or .json file/);
+    expect(err({ kind: 'command' })).toMatch(/`text` or `commands`/);
   });
 
   it('secret: text only, never in the title or the note, never as a default title', () => {

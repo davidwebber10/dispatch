@@ -66,20 +66,25 @@ const TOOLS = [{
     'or Pretty mode): it lands in their Inbox in Dispatch, with a badge, and opens in the app. Tell the user "I put it in your Inbox". In terminal mode ' +
     'they cannot select text, so anything they must copy goes here, never only in your reply. ' +
     'Pass `paths` (files inside this project: png/jpg/gif/webp/svg images, pdf, html, md, txt, csv, json; ' +
-    'up to 20) and/or `text` (up to 64 KB), a short `title` and a one-line `note`. Set `kind` for the look: ' +
-    '`command` for anything the user must run (one per line in `text`, or `commands`; optional `cwd`), each ' +
-    'with its own Copy button; `link` for a `url` (http/https) to open; `code` for a snippet (`language`); ' +
-    '`secret` for a token or password (masked, removed after 24 hours; never repeat it in title or note); ' +
-    '`steps` for a short procedure (`steps`: [{ text, command? }], max 30); `diff` for a unified diff; ' +
-    '`table` for CSV `text` or one .csv/.json file. Without `kind`, images show as pictures, a URL as a link, ' +
-    'markdown as a document and other text as text to copy.' +
+    'up to 20) and/or `text` (up to 64 KB), a short `title` and a one-line `note`. Set `kind` for the look. ' +
+    'The field each kind NEEDS: ' +
+    '`command` → `text` (one command per line) or `commands` (a list); optional `cwd`. Each gets its own Copy button. ' +
+    '`link` → `url` (http/https). ' +
+    '`code` → `text` (the snippet), or exactly ONE file in `paths` (any source file; Dispatch reads it); optional `language`. ' +
+    '`secret` → `text` (the value) only; masked, removed after 24 hours; never repeat it in title or note. ' +
+    '`steps` → `steps`: [{ text, command? }], max 30. ' +
+    '`diff` → `text` (a unified diff). ' +
+    '`table` → CSV `text`, or one .csv/.json file in `paths`. ' +
+    '`doc` → `text` (markdown). `text` → `text`. ' +
+    '`images` / `files` → `paths`. ' +
+    'Without `kind`, images show as pictures, a URL as a link, markdown as a document and other text as text to copy.' +
     (BUSINESS ? '' : ' ' + SEND_A_SECRET_HINT),
   inputSchema: {
     type: 'object',
     properties: {
-      kind: { type: 'string', enum: KINDS, description: 'The look of the drop. command: shell commands to run; link: a url; code: a snippet; secret: a token or password; steps: a procedure; diff: a unified diff; table: CSV or a .csv/.json file. Default: inferred.' },
-      paths: { type: 'array', items: { type: 'string' }, description: 'Files inside the project working directory (relative or absolute).' },
-      text: { type: 'string', description: 'A string for the user to copy. For command: one command per line. For table: CSV.' },
+      kind: { type: 'string', enum: KINDS, description: 'The look of the drop, and the field it needs. command: `text` or `commands`; link: `url`; code: `text`, or one file in `paths`; secret: `text`; steps: `steps`; diff: `text`; table: CSV `text` or one .csv/.json file in `paths`; doc and text: `text`; images and files: `paths`. Default: inferred from text and paths.' },
+      paths: { type: 'array', items: { type: 'string' }, description: 'Files inside the project working directory (relative or absolute). kind=code: ONE source file, read as the snippet when `text` is absent. kind=images/files: required.' },
+      text: { type: 'string', description: 'A string for the user to copy. Required for secret, diff, doc and text. command: one command per line. code: the snippet (or pass one file in `paths`). table: CSV.' },
       commands: { type: 'array', items: { type: 'string' }, description: 'kind=command: the commands, one per item (instead of text).' },
       cwd: { type: 'string', description: 'kind=command: the folder the commands run in.' },
       url: { type: 'string', description: 'kind=link: an http:// or https:// address.' },

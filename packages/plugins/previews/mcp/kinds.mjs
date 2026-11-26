@@ -4,6 +4,12 @@
 // older app still shows the text.
 //
 // No `kind` is the old tool: text and/or paths, and the app infers the look.
+//
+// Every refusal names the exact field to pass, so a model that guessed a field can correct itself.
+// `code` takes `text`, or ONE file in `paths`: the server reads that file into `text` (a source file
+// such as .ts is not a type the Inbox stores, so it never travels as an attachment).
+import fs from 'node:fs';
+import path from 'node:path';
 
 export const KINDS = ['command', 'link', 'code', 'secret', 'steps', 'diff', 'table', 'doc', 'text', 'images', 'files'];
 export const MAX_FILES = 20;
@@ -16,6 +22,35 @@ export const SECRET_TTL_MS = 24 * 3_600_000;
 
 const str = (v) => (typeof v === 'string' && v.trim() ? v : null);
 const fail = (m) => { throw new Error(m); };
+/** The language of a code file, from its extension; null when unknown. */
+const LANGUAGE_BY_EXT = {
+  ts: 'ts', tsx: 'tsx', js: 'js', mjs: 'js', cjs: 'js', jsx: 'jsx', json: 'json', py: 'python', rb: 'ruby',
+  go: 'go', rs: 'rust', java: 'java', kt: 'kotlin', swift: 'swift', c: 'c', h: 'c', cpp: 'cpp', cs: 'csharp',
+  php: 'php', sh: 'bash', bash: 'bash', zsh: 'bash', sql: 'sql', yml: 'yaml', yaml: 'yaml', toml: 'toml',
+  html: 'html', css: 'css', scss: 'scss', md: 'markdown', xml: 'xml', tf: 'hcl', lua: 'lua', r: 'r',
+};
+export function languageOf(file) {
+  const ext = path.extname(String(file)).slice(1).toLowerCase();
+  return Object.prototype.hasOwnProperty.call(LANGUAGE_BY_EXT, ext) ? LANGUAGE_BY_EXT[ext] : null;
+}
+
+/**
+ * Read a code file for kind=code: a regular text file inside `cwd` (the thread's folder), at most
+ * MAX_TEXT. Throws an Error with a plain message.
+ */
+export function readCodeFile(p, cwd = process.cwd()) {
+  const root = fs.realpathSync(cwd);
+  let real;
+  try { real = fs.realpathSync(path.resolve(cwd, p.trim())); } catch { fail(`code: cannot read "${p}" (no such file in this project)`); }
+  if (real !== root && !real.startsWith(root + path.sep)) fail(`code: "${p}" is outside this project; pass the snippet in \`text\` instead`);
+  const st = fs.statSync(real);
+  if (!st.isFile()) fail(`code: "${p}" is not a file`);
+  if (st.size > MAX_TEXT) fail('code: the file is too long (max 64 KB); pass the part that matters in `text`');
+  const body = fs.readFileSync(real, 'utf8');
+  if (body.includes('\u0000')) fail(`code: "${p}" is not a text file`);
+  return body;
+}
+
 const plural = (n, one) => (n === 1 ? one.charAt(0).toUpperCase() + one.slice(1) : `${n} ${one}s`);
 
 /**
@@ -23,22 +58,22 @@ const plural = (n, one) => (n === 1 ? one.charAt(0).toUpperCase() + one.slice(1)
  * none was given; `fields` are the kind's own document fields; `text` is what the document's `text` holds
  * (the copyable form, so search and an older app keep working). Throws an Error with a plain message.
  */
-export function checkArgs(args) {
+export function checkArgs(args, { cwd = process.cwd(), readFile = readCodeFile } = {}) {
   const a = args && typeof args === 'object' ? args : {};
   const kind = a.kind === undefined || a.kind === null ? null : a.kind;
   if (kind !== null && (typeof kind !== 'string' || !KINDS.includes(kind))) fail(`unknown kind "${String(kind)}" (use one of: ${KINDS.join(', ')})`);
   let text = str(a.text);
   if (text && text.length > MAX_TEXT) fail('text too long (max 64 KB)');
-  const paths = Array.isArray(a.paths) ? a.paths : [];
+  const paths = Array.isArray(a.paths) ? [...a.paths] : [];
   if (paths.length > MAX_FILES) fail(`too many files (max ${MAX_FILES})`);
   for (const p of paths) if (typeof p !== 'string' || !p.trim()) fail('each path must be a non-empty string');
   const fields = {};
   let defaultTitle = null;
-  const needText = () => { if (!text) fail(`${kind} needs \`text\``); };
+  const needText = (what) => { if (!text) fail(`${kind} needs \`text\` (${what})`); };
 
   switch (kind) {
     case null:
-      if (!text && paths.length === 0) fail('a preview needs text or at least one path');
+      if (!text && paths.length === 0) fail('a preview needs `text` or at least one file in `paths`');
       break;
     case 'command': {
       let list;
@@ -62,7 +97,7 @@ export function checkArgs(args) {
     }
     case 'link': {
       const raw = str(a.url) ?? text;
-      if (!raw) fail('a link needs a `url`');
+      if (!raw) fail('a link needs `url` (an http:// or https:// address)');
       let u;
       try { u = new URL(raw.trim()); } catch { u = null; }
       if (!u || (u.protocol !== 'http:' && u.protocol !== 'https:')) fail('url must be an http:// or https:// address');
@@ -74,12 +109,22 @@ export function checkArgs(args) {
       break;
     }
     case 'code':
-      needText();
+      if (!text) {
+        // The snippet from ONE file of the project: read into `text`; the file is not attached.
+        if (paths.length !== 1) fail('code needs `text` (the snippet), or exactly one file in `paths` to read it from');
+        const file = paths[0].trim();
+        text = str(readFile(file, cwd));
+        if (!text) fail(`code: "${file}" is empty; pass the snippet in \`text\``);
+        if (text.length > MAX_TEXT) fail('text too long (max 64 KB)');
+        paths.splice(0, 1);
+        if (a.language === undefined || a.language === null) { const lang = languageOf(file); if (lang) fields.language = lang; }
+        defaultTitle = path.basename(file);
+      }
       if (a.language !== undefined && a.language !== null) {
         if (typeof a.language !== 'string' || !/^[A-Za-z0-9+#._-]{1,40}$/.test(a.language.trim())) fail('language must be a short name such as ts, python or bash');
         fields.language = a.language.trim();
       }
-      defaultTitle = 'Code';
+      defaultTitle = defaultTitle || 'Code';
       break;
     case 'secret':
       if (!text) fail('a secret needs `text` (the value)');
@@ -89,7 +134,7 @@ export function checkArgs(args) {
       defaultTitle = 'Secret';
       break;
     case 'steps': {
-      if (!Array.isArray(a.steps) || a.steps.length === 0) fail('steps needs `steps`: a list of { text, command? }');
+      if (!Array.isArray(a.steps) || a.steps.length === 0) fail('steps needs `steps`: a list of { text, command? } (not `text`)');
       if (a.steps.length > MAX_STEPS) fail(`too many steps (max ${MAX_STEPS})`);
       const steps = a.steps.map((s) => {
         if (!s || typeof s !== 'object' || !str(s.text)) fail('each step needs `text`');
@@ -105,7 +150,7 @@ export function checkArgs(args) {
       break;
     }
     case 'diff':
-      needText();
+      needText('a unified diff');
       defaultTitle = 'Diff';
       break;
     case 'table': {
@@ -115,12 +160,14 @@ export function checkArgs(args) {
       break;
     }
     case 'doc':
+      needText('markdown');
+      break;
     case 'text':
-      needText();
+      needText('the text to show');
       break;
     case 'images':
     case 'files':
-      if (paths.length === 0) fail(`${kind} needs at least one path`);
+      if (paths.length === 0) fail(`${kind} needs \`paths\`: at least one file of this project`);
       break;
     default:
       break;
