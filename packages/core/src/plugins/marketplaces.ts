@@ -35,11 +35,36 @@ export function slugOf(url: string): string {
   return `${text.slice(0, 48) || 'market'}-${h}`;
 }
 
-function runGit(args: string[], cwd: string): Promise<{ ok: boolean; stdout: Buffer; stderr: string }> {
+/**
+ * For an https marketplace whose first try found no login: the arguments of a second try, in which
+ * git asks the GitHub CLI, and only the GitHub CLI, for the host of that URL.
+ *
+ * "Signed in with `gh`" does not mean that git has a login for https: with ssh as the CLI's git
+ * protocol, `gh auth login` sets no credential helper, and a clone of a private https repository
+ * fails with "could not read Username" (seen 2026-11-25).
+ *
+ * The empty `credential.helper` first clears every other helper for this one command. Without it,
+ * git hands a login that worked to all helpers to keep, and the macOS keychain helper of Apple's git
+ * then saved the CLI's token as a second copy (measured). With it, nothing is stored anywhere and
+ * nothing is written to the git configuration. Without `gh`, or when it is signed out, the helper
+ * gives nothing and git fails as before.
+ */
+export function ghCredentialArgs(url: string): string[] {
+  const host = /^https:\/\/([A-Za-z0-9.-]+(?::\d+)?)\//.exec(url)?.[1];
+  return host ? ['-c', 'credential.helper=', '-c', `credential.https://${host}.helper=!gh auth git-credential`] : [];
+}
+
+/** Git found no login for an https remote: the failure that a second try with the GitHub CLI can repair. */
+export function gitNeedsLogin(stderr: string): boolean {
+  return /could not read (Username|Password)|terminal prompts disabled|Authentication failed/i.test(stderr);
+}
+
+/** `login`: extra arguments that give this one command a login (ghCredentialArgs). */
+function runGit(args: string[], cwd: string, login: string[] = []): Promise<{ ok: boolean; stdout: Buffer; stderr: string }> {
   return new Promise((resolve) => {
     const env = { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' };
     try {
-      const child = execFile('git', ['-c', 'core.fsmonitor=false', ...args], { cwd, env, timeout: GIT_TIMEOUT_MS, maxBuffer: MAX_OUT, encoding: 'buffer' }, (err, stdout, stderr) => {
+      const child = execFile('git', ['-c', 'core.fsmonitor=false', ...login, ...args], { cwd, env, timeout: GIT_TIMEOUT_MS, maxBuffer: MAX_OUT, encoding: 'buffer' }, (err, stdout, stderr) => {
         resolve({ ok: !err, stdout: Buffer.isBuffer(stdout) ? stdout : Buffer.from(String(stdout ?? '')), stderr: String(stderr ?? '') });
       });
       child.stdin?.end();
@@ -98,6 +123,20 @@ export class MarketplaceService {
     return row;
   }
 
+  /**
+   * Run a git command that talks to the marketplace. The person's own git setup goes first, exactly
+   * as before. Only when git found no login for an https remote, the command runs once more with
+   * the login of the GitHub CLI (ghCredentialArgs).
+   */
+  private async withLogin(url: string, run: (login: string[]) => Promise<{ ok: boolean; stdout: Buffer; stderr: string }>): Promise<{ ok: boolean; stdout: Buffer; stderr: string }> {
+    const first = await run([]);
+    const login = ghCredentialArgs(url);
+    if (first.ok || !login.length || !gitNeedsLogin(first.stderr)) return first;
+    const second = await run(login);
+    // The second try failed too: the first failure is the one that names the real state of git.
+    return second.ok ? second : first;
+  }
+
   /** Clone when the clone is missing, else fast-forward it. Git's own last line lands on the row when it fails. */
   async pull(slug: string): Promise<Marketplace> {
     const row = this.get(slug);
@@ -108,10 +147,10 @@ export class MarketplaceService {
     try {
       if (!fs.existsSync(path.join(clone, '.git'))) {
         fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
-        fs.rmSync(clone, { recursive: true, force: true });
-        r = await runGit(['clone', '--quiet', '--', row.url, clone], this.dir);
+        // Each try starts from no folder: a clone that failed can leave a part of one.
+        r = await this.withLogin(row.url, (login) => { fs.rmSync(clone, { recursive: true, force: true }); return runGit(['clone', '--quiet', '--', row.url, clone], this.dir, login); });
       } else {
-        r = await runGit(['pull', '--quiet', '--ff-only'], clone);
+        r = await this.withLogin(row.url, (login) => runGit(['pull', '--quiet', '--ff-only'], clone, login));
       }
     } finally {
       const left = (this.gitRuns.get(slug) ?? 1) - 1;
