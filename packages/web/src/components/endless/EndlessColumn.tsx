@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type UIEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type UIEvent } from 'react';
 import { MessageScroller, useMessageScroller } from '@shadcn/react/message-scroller';
 import { Rows, X } from '@phosphor-icons/react';
 import { useEndless } from '../../stores/endless';
@@ -44,12 +44,14 @@ function BootstrapOlder() {
  * returns to null ("Back to latest"), scrollToEnd resumes following.
  * It scrolls only when the focus changes: a later prepend or append must not move the reader.
  */
-function FocusScroll() {
+function FocusScroll({ restoring }: { restoring: boolean }) {
   const focus = useEndless((s) => s.focus);
   const sendCount = useEndless((s) => s.sendCount);
   const messages = useEndless((s) => s.messages);
   const { scrollToMessage, scrollToEnd } = useMessageScroller();
-  const scrolledFocus = useRef<number | null>(null);
+  // A return to Chat puts the reader back where they were (RestoreScroll): the focus they had
+  // already reached is not jumped to again.
+  const scrolledFocus = useRef<number | null>(restoring ? focus : null);
   const prevFocus = useRef<number | null>(focus);
   useEffect(() => {
     const was = prevFocus.current;
@@ -73,6 +75,65 @@ function FocusScroll() {
     scrollToEnd({ behavior: 'auto' });
   }, [sendCount, scrollToEnd]);
   return null;
+}
+
+/** Same as the Provider's scrollEdgeThreshold: closer than this to the end counts as at the end. */
+const EDGE_PX = 48;
+
+/** Where the reader was: the first message on screen and its top relative to the viewport top. */
+type ScrollSpot = { id: string; offset: number };
+
+/**
+ * Where the reader was when Chat last unmounted (another view, a thread). null after a full
+ * reload, so a reload still opens at the end. A spot of null means the reader was at the end.
+ */
+let savedSpot: { spot: ScrollSpot | null } | null = null;
+
+/** Test hook: forget the saved spot, as a reload does. */
+export function resetChatScrollForTest(): void { savedSpot = null; }
+
+function readSpot(viewport: HTMLElement, content: HTMLElement): ScrollSpot | null {
+  if (viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= EDGE_PX) return null;
+  const top = viewport.getBoundingClientRect().top;
+  // The scroller's items are the content's direct children (the same rows it anchors a prepend on).
+  for (const el of Array.from(content.children)) {
+    const id = el instanceof HTMLElement ? el.dataset.messageId : undefined;
+    if (!id) continue;
+    const r = el.getBoundingClientRect();
+    if (r.bottom > top) return { id, offset: r.top - top };
+  }
+  return null;
+}
+
+/**
+ * Chat unmounts when the user opens another view. On the way out this saves the first message on
+ * screen; on the way back it puts that message at the same place, by its id, not by scrollTop:
+ * messages that arrived while away, or an older page, change the heights. It runs after the
+ * scroller's own first scroll to the end, in the same commit, so the end never paints. A reader who
+ * was at the end gets the end, and the scroller follows new messages as before.
+ */
+function RestoreScroll() {
+  const { scrollToMessage } = useMessageScroller();
+  // React 18 passes no ref to the scroller's parts, and a parent's ref is not set yet when this
+  // layout effect runs. A marker of its own, beside the viewport in the Root, finds them.
+  const mark = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const spot = savedSpot?.spot ?? null;
+    savedSpot = null;
+    const vp = mark.current?.parentElement?.querySelector<HTMLElement>(':scope > [data-chat-viewport]') ?? null;
+    const box = vp?.querySelector<HTMLElement>(':scope > [data-chat-content]') ?? null;
+    if (spot && vp && box) {
+      const el = Array.from(box.children).find((c) => c instanceof HTMLElement && c.dataset.messageId === spot.id);
+      // align 'start' puts the row at the content's top padding plus scrollMargin: take the padding off.
+      if (el) scrollToMessage(spot.id, { align: 'start', scrollMargin: spot.offset - (parseFloat(getComputedStyle(box).paddingTop) || 0) });
+    }
+    // The elements are taken now. On unmount the nodes are still in the page when this cleanup
+    // runs, so they can still be measured.
+    return () => { if (vp && box) savedSpot = { spot: readSpot(vp, box) }; };
+    // Once per mount: a later render must not move the reader.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return <span ref={mark} hidden />;
 }
 
 /** How long the key stays a Send after a send ends (see settling in Composer). */
@@ -384,6 +445,8 @@ export function EndlessColumn({ mobile = false }: { mobile?: boolean } = {}) {
   const turn = useEndless((s) => s.turn);
   const pending = useEndless((s) => s.pending);
   const busy = turn.status === 'waiting' || turn.status === 'running';
+  // Read once per mount: whether this mount returns to a spot the reader left (RestoreScroll).
+  const [restoring] = useState(() => !!savedSpot?.spot);
 
   const onScroll = (e: UIEvent<HTMLDivElement>) => {
     if (e.currentTarget.scrollTop < 120 && hasMore && !loadingOlder) void loadOlder();
@@ -394,8 +457,8 @@ export function EndlessColumn({ mobile = false }: { mobile?: boolean } = {}) {
     <div className="chat-scope" style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
       <MessageScroller.Provider autoScroll defaultScrollPosition="end" scrollEdgeThreshold={48}>
         <MessageScroller.Root style={{ position: 'relative', flex: 1, minWidth: 0, minHeight: 0, display: 'flex' }}>
-          <MessageScroller.Viewport preserveScrollOnPrepend onScroll={onScroll} style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
-            <MessageScroller.Content style={{ maxWidth: 768, margin: '0 auto', padding: mobile ? '24px 16px' : '24px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <MessageScroller.Viewport data-chat-viewport="" preserveScrollOnPrepend onScroll={onScroll} style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
+            <MessageScroller.Content data-chat-content="" style={{ maxWidth: 768, margin: '0 auto', padding: mobile ? '24px 16px' : '24px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
               <LoadEarlierButton show={hasMore && !loadingOlder} onClick={() => void loadOlder()} />
               {loaded && messages.length === 0 && !busy && (
                 <div style={{ margin: '20vh auto 0', color: 'var(--color-text-tertiary)', fontSize: fontVar(14) }}>One chat that never ends. Say something.</div>
@@ -417,8 +480,9 @@ export function EndlessColumn({ mobile = false }: { mobile?: boolean } = {}) {
               {turn.status === 'interrupted' && <TurnError mobile={mobile} text={hostCopy('thread.interrupted', 'The daemon restarted during the last turn, so the turn stopped.')} />}
             </MessageScroller.Content>
           </MessageScroller.Viewport>
+          <RestoreScroll />
           <BootstrapOlder />
-          <FocusScroll />
+          <FocusScroll restoring={restoring} />
         </MessageScroller.Root>
       </MessageScroller.Provider>
       {!atTail && (

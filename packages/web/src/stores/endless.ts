@@ -38,6 +38,8 @@ interface EndlessStoreState {
   /** In-progress docs per project (the pane's "Docs (N)"); loaded on the first watch and the 60 s timer only. */
   docCounts: Record<string, number>;
   loadTail: () => Promise<void>;
+  /** Chat's mount: the first time, loadTail; after a return to Chat, add newer messages and keep the window shown. */
+  refreshTail: () => Promise<void>;
   loadOlder: () => Promise<void>;
   openAt: (i: number) => Promise<void>;
   setFilter: (project: string | null) => Promise<void>;
@@ -169,6 +171,29 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
           const last = page.messages.length ? page.messages[page.messages.length - 1].i : -1;
           const newer = atTail ? messages.filter((m) => m.i > last && (filter === null || m.project === filter)) : [];
           set({ messages: [...page.messages, ...newer], hasMore: page.hasMore, atTail: true, focus: null, loaded: true });
+        },
+        g,
+      );
+    },
+    refreshTail: () => {
+      const { loaded, messages, atTail } = get();
+      if (!loaded || messages.length === 0) return get().loadTail();
+      // A search window stays as it is: "Back to latest" goes to the tail.
+      if (!atTail) return Promise.resolve();
+      const g = ++gen;
+      return load(
+        () => api.endlessMessages({ limit: PAGE, project: get().filter }),
+        (page) => {
+          const cur = get();
+          const last = cur.messages.length ? cur.messages[cur.messages.length - 1].i : -1;
+          // No overlap with what is shown: messages are missing in between, so take the page as loadTail does.
+          if (!cur.atTail || !page.messages.length || page.messages[0].i > last) {
+            set({ messages: page.messages, hasMore: page.hasMore, atTail: true, focus: null, loaded: true });
+            return;
+          }
+          // Keep the older pages the reader loaded and add only what is newer: the rows on screen stay.
+          const newer = page.messages.filter((m) => m.i > last);
+          if (newer.length) set({ messages: [...cur.messages, ...newer] });
         },
         g,
       );

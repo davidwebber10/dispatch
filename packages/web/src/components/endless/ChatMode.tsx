@@ -42,7 +42,9 @@ export function ChatMode({ mobile = false }: { mobile?: boolean }) {
   const needs = useEndless((s) => s.projects.reduce((n, p) => n + p.needsYou, 0));
   useEffect(() => {
     const s = useEndless.getState();
-    void s.loadTail().catch(() => {});
+    // Not loadTail: after a return to Chat it would drop the older pages the reader scrolled up
+    // through, and the spot EndlessColumn restores would be gone.
+    void s.refreshTail().catch(() => {});
     void s.refreshState().catch(() => {});
     void s.loadProjects().catch(() => {});
     s.watch();
