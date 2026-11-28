@@ -134,7 +134,8 @@ describe('the bundled plugins run on SDK version 2 (W3-F)', () => {
     await screen.findByText(`${DROPS} · Alpha`);
     expect(screen.getAllByTestId('preview-item')).toHaveLength(20);
     expect(screen.getByRole('button', { name: /Show older \(5 more\)/ })).toBeTruthy();
-    // Delete: the document and the file reference go through the bound routes.
+    // Delete (in the open item): the document and the file reference go through the bound routes.
+    await act(async () => { screen.getByText('Preview 1').click(); });
     await act(async () => { screen.getAllByRole('button', { name: 'Delete item' })[0].click(); });
     await settle();
     expect(daemon.calls).toContain('DELETE /api/plugins/previews/data/preview%3Ap1');

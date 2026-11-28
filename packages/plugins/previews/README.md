@@ -7,11 +7,14 @@ item in the desktop rail, open the sheet or the history, and the files open in t
 The name the user reads is one constant, `NAME` in `web.js` (and the labels in `plugin.json`). HTML runs sandboxed. A thread posts into its own
 project only, and every file is checked when it is posted and again when it is served.
 
+Every list (the Inbox screen, the project's sheet, the thread's tab) has two views, Rows (default) and
+Cards. The toggle is on the Inbox screen. The choice is the plugin's setting `{ "view": "rows" | "cards" }`.
+
 Bundled with Dispatch and enabled by default. Disable it in Settings → Plugins; threads then lose
 the tool at their next start.
 
-Send a secret goes the other way: the owner sends a thread an API key by a 6-character ID (Inbox → Send a
-secret), and the thread's `inbox_secret` tool has the daemon write it to a project file or to Doppler. The
+Send Secret goes the other way: the owner sends a thread an API key by a 6-character ID (Inbox → Send
+Secret), and the thread's `inbox_secret` tool has the daemon write it to a project file or to Doppler. The
 value is kept by the daemon (`/api/plugins/previews/secrets`, `<data dir>/inbox-secrets`), not in this plugin's storage.
 
 - `mcp/server.mjs`: the tools (`preview`, `inbox_secret`), a standalone MCP server that runs under the thread's key.

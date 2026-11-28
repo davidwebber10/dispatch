@@ -56,11 +56,11 @@ const fill = () => {
 };
 
 describe('Send a secret: the sheet', () => {
-  it('the project sheet has a Send a secret button; the sheet has Name, a password Value and the read switch off', async () => {
+  it('the project sheet has a Send Secret button; the sheet has Name, a password Value and the read switch off', async () => {
     const { Sheet, openSheet } = setup();
     render(<Sheet />);
     openSheet();
-    fireEvent.click(await screen.findByRole('button', { name: 'Send a secret' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Send Secret' }));
     const dialog = await screen.findByTestId('send-secret');
     expect(within(dialog).getByLabelText('Name')).toHaveAttribute('type', 'text');
     const value = within(dialog).getByLabelText('Value');
@@ -76,7 +76,7 @@ describe('Send a secret: the sheet', () => {
     const { Sheet, openSheet, calls, copy } = setup();
     render(<Sheet />);
     openSheet();
-    fireEvent.click(await screen.findByRole('button', { name: 'Send a secret' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Send Secret' }));
     fill();
     fireEvent.click(screen.getByRole('switch', { name: 'Let the thread read it' }));
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
@@ -85,8 +85,8 @@ describe('Send a secret: the sheet', () => {
     expect(post).toHaveLength(1);
     expect(post[0].url).toMatch(/\/api\/plugins\/previews\/secrets$/);
     expect(post[0].body).toEqual({ name: 'Stripe key', value: VALUE, sessionId: 's1', allowReveal: true });
-    // The Inbox plugin's own routes, bound to it (W3-F).
-    expect(calls.every((c) => /\/api\/plugins\/previews\/secrets/.test(c.url) && c.bound === 'previews')).toBe(true);
+    // The Inbox plugin's own routes, bound to it (W3-F): the secrets and, since 1.3.0, the view setting.
+    expect(calls.every((c) => /\/api\/plugins\/previews\/(secrets|settings)/.test(c.url) && c.bound === 'previews')).toBe(true);
     expect(document.body.innerHTML).not.toContain(VALUE);
     const sheet = screen.getByTestId('send-secret');
     fireEvent.click(within(sheet).getByRole('button', { name: 'Copy ID' }));
@@ -101,7 +101,7 @@ describe('Send a secret: the sheet', () => {
   it('from the thread tab the secret is for that thread only', async () => {
     const { Tab, calls } = setup();
     render(<Tab terminalId="t1" sessionId="s1" />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Send a secret' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Send Secret' }));
     expect(screen.getByText(/this thread only/)).toBeInTheDocument();
     fill();
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
@@ -112,7 +112,7 @@ describe('Send a secret: the sheet', () => {
   it('from the Inbox view a project is required', async () => {
     const { History } = setup();
     render(<History />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Send a secret' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Send Secret' }));
     fill();
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
     expect(screen.getByText('Choose a project')).toBeInTheDocument();
@@ -125,7 +125,7 @@ describe('Send a secret: the sheet', () => {
       : { ok: true, status: 200, json: async () => ({ secrets: [] }) })));
     render(<Sheet />);
     openSheet();
-    fireEvent.click(await screen.findByRole('button', { name: 'Send a secret' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Send Secret' }));
     fill();
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByText(/project not found/)).toBeInTheDocument();
@@ -139,9 +139,14 @@ describe('Send a secret: the cards', () => {
     rec('DOPP44', { name: 'Doppler one', state: 'used', usedAt: iso(30_000), usedBy: 't2', usedByLabel: 'Builder', usedTo: { kind: 'doppler', name: 'SENTRY_DSN' } }),
     rec('GONE55', { name: 'Old token', createdAt: iso(25 * 3_600_000), state: 'expired' }),
   ];
-  const card = (title: string) => screen.getByText(title).closest('[data-testid="sent-secret"]') as HTMLElement;
+  /** The item of a title, opened: its content is in the page only while it is open. */
+  const card = (title: string) => {
+    const el = screen.getByText(title).closest('[data-testid="sent-secret"]') as HTMLElement;
+    if (!el.dataset.open) fireEvent.click(screen.getByText(title));
+    return el;
+  };
 
-  it('the Inbox shows a Secret card per secret: name, ID, scope, state', async () => {
+  it('the Inbox lists each secret, and an open one shows its name, ID, scope and state', async () => {
     const { History } = setup(RECORDS);
     render(<History />);
     await screen.findByText('Stripe key');

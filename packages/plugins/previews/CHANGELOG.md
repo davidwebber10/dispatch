@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.3.0
+
+Dispatch 4.15.0. The Inbox is compact, so several items fit on a phone screen.
+
+Two views, with a toggle in the top row: **Rows** (the default), one line for each item with one action
+(copy, open the link, or open the pictures), and **Cards**, a short card with two lines of the note and a
+small look at the content. A tap opens an item in place, with all of its content and Delete. One item is
+open at a time. The Inbox remembers your view, also on your other devices. The project's sheet and the
+thread's tab use the same view.
+
+The title and the description at the top are gone. The search, Filters, the view toggle and Send Secret
+are on one row. The old tall card is gone.
+
+The search is behind a magnifying glass. Cancel, or Escape in the field, closes it and clears the text.
+The key button is now **Send Secret** with a paper plane.
+
 ## 1.2.1
 
 The Inbox follows the text scale (Settings → Appearance): its font sizes are in `rem`, so they grow and
