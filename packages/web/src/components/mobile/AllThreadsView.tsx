@@ -7,6 +7,7 @@ import { useTabs, findTerminal } from '../../stores/tabs';
 import { useAccounts, threadAccount, shortAccountLabel } from '../../stores/accounts';
 import { HARNESSES } from '../../lib/harnesses';
 import { FilterBar, type FilterFacet } from '../common/FilterBar';
+import { PHONE_HEADER_BTN_SIZE, PhoneHeaderPlus } from './PhoneHeaderButtons';
 import { Spinner } from '../common/Spinner';
 import { SwipeRow } from '../common/SwipeRow';
 import { SectionHeader } from '../sidebar/sectionParts';
@@ -149,9 +150,14 @@ export function defaultNewThreadProject(): string | null {
  * FilterBar with Filters right of the search, which opens a popover instead of a bottom sheet; there
  * are no ACTIVE / ARCHIVED tabs, and the archived threads are a folded ARCHIVED section at the end,
  * as inside a project. On the phone the search is in the app header and the row holds the tabs.
+ *
+ * `headerActionsHost` (the phone, owner 2026-11-27): the app header's slot right of the search. Filters
+ * and the green + render there, as Sort and + do on Projects, and the row under the switch keeps only
+ * the ACTIVE / ARCHIVED tabs. Left out, they stay in that row.
  */
-export function AllThreadsView({ onOpenThread, query = '', onQueryChange }: { onOpenThread: (projectId: string, tabId: string) => void; query?: string; onQueryChange?: (query: string) => void }) {
+export function AllThreadsView({ onOpenThread, query = '', onQueryChange, headerActionsHost }: { onOpenThread: (projectId: string, tabId: string) => void; query?: string; onQueryChange?: (query: string) => void; headerActionsHost?: HTMLElement | null }) {
   const desktop = onQueryChange !== undefined;
+  const inHeader = !desktop && headerActionsHost !== undefined;
   const [archivedOpen, setArchivedOpen] = useState(false);
   const projects = useProjects((s) => s.sessions);
   // Every project on purpose (W1-F): this list IS every thread of every project, sorted and
@@ -301,8 +307,8 @@ export function AllThreadsView({ onOpenThread, query = '', onQueryChange }: { on
   // Active ⇄ Archived (2026-11-05): archived threads were only reachable inside each project.
   const tabBtn = (on: boolean): React.CSSProperties => ({
     // 14 px under the word puts it on the centre line of the Filters and + buttons, which now have 8 px
-    // of air below them (owner, 2026-11-27).
-    padding: '8px 2px 14px', background: 'transparent', border: 'none', cursor: 'pointer', marginBottom: -1,
+    // of air below them (owner, 2026-11-27). Alone in the row (the buttons are in the header), 8 px.
+    padding: inHeader ? '8px 2px' : '8px 2px 14px', background: 'transparent', border: 'none', cursor: 'pointer', marginBottom: -1,
     borderBottom: on ? '2px solid var(--color-accent)' : '2px solid transparent',
     color: on ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)', font: `700 ${fontVar(12.5)} var(--font-mono)`, letterSpacing: '1px',
   });
@@ -343,8 +349,9 @@ export function AllThreadsView({ onOpenThread, query = '', onQueryChange }: { on
   const doneLabel = tab === 'active' ? `Show ${threads.length} thread${threads.length === 1 ? '' : 's'}` : 'Done';
   // A new thread from the Threads list (owner, 2026-11-20): the green + right of Filters, as on Projects.
   // The dialog picks the project, starting on the open thread's project, else the most recent one.
-  const plus = (
-    <button type="button" aria-label="New thread" title="New thread" onClick={() => setNewThreadIn(defaultNewThreadProject())}
+  const newThread = () => setNewThreadIn(defaultNewThreadProject());
+  const plus = inHeader ? <PhoneHeaderPlus label="New thread" onClick={newThread} /> : (
+    <button type="button" aria-label="New thread" title="New thread" onClick={newThread}
       // 32 px on both, the height of the Filters button next to it (owner, 2026-11-20: at 36 px on the
       // phone it touched the line under the row).
       style={{ width: 32, height: 32, padding: 0, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-on-accent)', cursor: 'pointer' }}>
@@ -356,12 +363,14 @@ export function AllThreadsView({ onOpenThread, query = '', onQueryChange }: { on
       style={{ padding: '8px 8px 10px', gap: 8, background: 'color-mix(in srgb, var(--color-pane) 62%, transparent)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderBottom: '1px solid color-mix(in srgb, var(--color-text-emphasis) 6%, transparent)' }} />
   ) : (
     <FilterBar variant="sheet" size="md" facets={filterFacets} doneLabel={doneLabel} style={{ gap: 0 }} trailing={plus}
+      {...(inHeader ? { buttonHost: headerActionsHost, compact: true, buttonHeight: PHONE_HEADER_BTN_SIZE } : {})}
       // Spacing (owner, 2026-11-27): 8 px above the buttons (6 here + 2 under the switch) and 8 px below,
       // where they sat 4 px under the switch and on the line. The 10 px sides are the header's, so the
-      // search box, the switch and the + end on one edge.
-      rowStyle={{ padding: '6px 10px 8px', borderBottom: '1px solid var(--color-border)' }} pillsStyle={{ padding: '8px 10px 2px' }}
+      // search box, the switch and the + end on one edge. With the buttons in the header the row holds
+      // only the tabs, so it is no taller than they are.
+      rowStyle={{ padding: inHeader ? '2px 10px 0' : '6px 10px 8px', borderBottom: '1px solid var(--color-border)' }} pillsStyle={{ padding: '8px 10px 2px' }}
       leading={(
-        <div role="tablist" aria-label="Thread list" style={{ flex: 1, display: 'flex', gap: 18, alignSelf: 'stretch', alignItems: 'flex-end', marginBottom: -8 }}>
+        <div role="tablist" aria-label="Thread list" data-testid="thread-list-tabs" style={{ flex: 1, display: 'flex', gap: 18, alignSelf: 'stretch', alignItems: 'flex-end', marginBottom: inHeader ? 0 : -8 }}>
           <button type="button" role="tab" aria-selected={tab === 'active'} onClick={() => setTab('active')} style={tabBtn(tab === 'active')}>ACTIVE</button>
           <button type="button" role="tab" aria-selected={tab === 'archived'} onClick={() => setTab('archived')} style={tabBtn(tab === 'archived')}>ARCHIVED</button>
         </div>

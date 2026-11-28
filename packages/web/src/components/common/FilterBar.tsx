@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { CaretDown, Check, FunnelSimple, MagnifyingGlass, X } from '@phosphor-icons/react';
 import { Modal } from './Modal';
 import { useIsMobile } from '../../hooks/useIsMobile';
@@ -58,6 +59,14 @@ export interface FilterBarProps {
   compact?: boolean;
   /** The search field takes the focus as it appears (a search opened by a button). */
   autoFocus?: boolean;
+  /**
+   * The Filters button and `trailing` render into this element instead of the row (the phone's
+   * Threads list puts them in the app header, beside the search, as Projects does: owner, 2026-11-27).
+   * Null while the host is not mounted: they show nowhere until it is.
+   */
+  buttonHost?: HTMLElement | null;
+  /** The Filters button's height, when it must match other buttons (the phone header's 36 px). It also takes their round corners. */
+  buttonHeight?: number;
 }
 
 /**
@@ -67,7 +76,7 @@ export interface FilterBarProps {
  * show as pills under the row, each with ×, and Clear. Derived from the Threads list's filters;
  * the Threads list (desktop and phone) and the Previews plugin (`d.ui.FilterBar`) use it.
  */
-export function FilterBar({ facets, query = '', onQueryChange, placeholder = 'Search', leading, trailing, onClear, doneLabel = 'Done', variant, size, style, rowStyle, pillsStyle, rowTestId, compact, autoFocus }: FilterBarProps) {
+export function FilterBar({ facets, query = '', onQueryChange, placeholder = 'Search', leading, trailing, onClear, doneLabel = 'Done', variant, size, style, rowStyle, pillsStyle, rowTestId, compact, autoFocus, buttonHost, buttonHeight }: FilterBarProps) {
   const isMobile = useIsMobile();
   const sheet = (variant ?? (isMobile ? 'sheet' : 'popover')) === 'sheet';
   const lg = (size ?? (isMobile ? 'lg' : 'md')) === 'lg';
@@ -85,11 +94,12 @@ export function FilterBar({ facets, query = '', onQueryChange, placeholder = 'Se
   }, [open, sheet]);
 
   const h = compact ? 44 : lg ? 36 : 32;
+  const bh = buttonHeight ?? h;
   const button = (
     <button type="button" aria-expanded={open} aria-haspopup="dialog" aria-label={n ? `Filters, ${n} on` : 'Filters'} onClick={() => setOpen((v) => !v)}
       style={{
-        height: h, padding: compact ? 0 : '0 10px', width: compact && !n ? h : undefined, minWidth: compact ? h : undefined, justifyContent: 'center', flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: compact ? 3 : 6, cursor: 'pointer',
-        fontSize: fontVar(lg ? 14 : 13), borderRadius: lg ? 'var(--radius-md)' : 'var(--radius-sm)',
+        height: bh, padding: compact ? 0 : '0 10px', width: compact && !n ? bh : undefined, minWidth: compact ? bh : undefined, justifyContent: 'center', flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: compact ? 3 : 6, cursor: 'pointer',
+        fontSize: fontVar(lg ? 14 : 13), borderRadius: lg || buttonHeight ? 'var(--radius-md)' : 'var(--radius-sm)',
         border: `1px solid ${n ? 'color-mix(in srgb, var(--color-accent) 55%, transparent)' : 'var(--color-border-strong)'}`,
         background: n || open ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-elevated))' : 'var(--color-elevated)',
         color: n ? 'var(--color-accent)' : 'var(--color-text-secondary)',
@@ -98,6 +108,11 @@ export function FilterBar({ facets, query = '', onQueryChange, placeholder = 'Se
       {n > 0 && <span aria-hidden style={{ minWidth: 18, height: 18, padding: '0 5px', borderRadius: 'var(--radius-pill)', background: 'var(--color-accent)', color: 'var(--color-on-accent)', font: `600 ${fontVar(11)} var(--font-sans)`, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{n}</span>}
     </button>
   );
+
+  const actions = <>
+    <span style={{ display: 'flex', flexShrink: 0, marginLeft: onQueryChange || leading ? undefined : 'auto' }}>{button}</span>
+    {trailing}
+  </>;
 
   const body = (
     <div data-testid="filters-panel" style={{ display: 'flex', flexDirection: 'column', margin: sheet ? '0 -4px' : 0 }}>
@@ -126,8 +141,7 @@ export function FilterBar({ facets, query = '', onQueryChange, placeholder = 'Se
           </span>
         )}
         {!onQueryChange && leading}
-        <span style={{ display: 'flex', flexShrink: 0, marginLeft: onQueryChange || leading ? undefined : 'auto' }}>{button}</span>
-        {trailing}
+        {buttonHost === undefined ? actions : buttonHost ? createPortal(actions, buttonHost) : null}
         {/* Anchored to the row, not the button, so a narrow row (the desktop's left panel) keeps the
             whole panel inside it: right-aligned, never wider than the row. */}
         {open && !sheet && <>
