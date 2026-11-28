@@ -69,6 +69,9 @@ export function limitsFromEnv(raw?: string): ViewLimits {
   return { low: n[0], high: n[1], compactionLow: n[2], compactionHigh: n[3] };
 }
 
+/** How many of Chat's processes keep their account on record: far more than ever run at once. */
+const PROCESS_ACCOUNTS_KEPT = 100;
+
 export interface EndlessServiceOptions {
   db: Database.Database;
   broadcaster: EventBroadcaster;
@@ -81,8 +84,13 @@ export interface EndlessServiceOptions {
    */
   toolSpecs?: () => McpServerSpec[];
   summarizer?: Summarizer;
-  /** The login of the default Claude account, as environment variables: Chat turns and compactions run on it. */
-  claudeLoginEnv?: () => Record<string, string>;
+  /**
+   * The login of a Claude account as environment variables: Chat turns and compactions run on it.
+   * Null: the default Claude account.
+   */
+  claudeLoginEnv?: (accountId: string | null) => Record<string, string>;
+  /** The Claude accounts Chat can be switched to. Absent: Chat has no account setting. */
+  claudeAccounts?: { has: (id: string) => boolean; defaultId: () => string };
   keys?: KeyRegistry;
   limits?: ViewLimits;
   timeZone?: string;
@@ -115,6 +123,8 @@ export class EndlessService {
   /** 'new' until start(); 'failed' if start() threw (the chat routes then answer 503). */
   private phase: 'new' | 'ready' | 'failed' = 'new';
   private readonly usage: { turns: Usage[]; compactions: Usage[] } = { turns: [], compactions: [] };
+  /** The Claude account each of Chat's processes started on (the newest PROCESS_ACCOUNTS_KEPT of them). */
+  private readonly processAccounts = new Map<string, string>();
   /** Threads with a settle edge scheduled this tick: one ending claims at most one report. */
   private readonly settling = new Set<string>();
   /**
@@ -146,11 +156,22 @@ export class EndlessService {
     this.timeZone = o.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
     this.now = o.now ?? Date.now;
     this.docs = new DocsService(o.db, this.store, this.now);
+    // The login of one of Chat's processes, read when it starts. Which account that was is kept, because the
+    // process reports its usage figures later, maybe after a switch.
+    const loginEnv = o.claudeLoginEnv ? (processId: string): Record<string, string> => {
+      const pinned = this.pinnedAccount();
+      const accountId = pinned ?? o.claudeAccounts?.defaultId();
+      if (accountId) {
+        this.processAccounts.set(processId, accountId);
+        if (this.processAccounts.size > PROCESS_ACCOUNTS_KEPT) this.processAccounts.delete(this.processAccounts.keys().next().value!);
+      }
+      return o.claudeLoginEnv!(pinned);
+    } : undefined;
     const summarizer = o.summarizer ?? createSummarizer({
       manager: o.manager, chatDir: o.chatDir, mcpConfigPath: this.mcpConfigPath,
       openRouterKey: o.openRouterKey ?? (async () => null), onUsage: (u) => this.note('compactions', u),
       keys: () => this.keys,
-      loginEnv: o.claudeLoginEnv,
+      loginEnv,
     });
     this.compactor = new Compactor({
       store: this.store, views: this.views, summarizer,
@@ -169,7 +190,7 @@ export class EndlessService {
       readImage,
       onUsage: (u) => this.note('turns', u),
       keys: () => this.keys,
-      loginEnv: o.claudeLoginEnv,
+      loginEnv,
       settings: () => {
         const c = this.chatSettings();
         return { model: c.model ?? undefined, effort: c.effort ?? undefined };
@@ -244,15 +265,27 @@ export class EndlessService {
 
   systemPrompt(): string { return systemPromptWith(this.instructions()); }
   /**
-   * The owner's Chat-wide model and effort (slash menu, 2026-11-06). One setting for the whole of Chat,
-   * not per message. `model` null means the default (TURN_MODEL); `effort` null means the CLI's own.
+   * The owner's Chat-wide model, effort (slash menu, 2026-11-06) and account (2026-11-27). One setting for
+   * the whole of Chat, not per message. `model` null means the default (TURN_MODEL); `effort` null means
+   * the CLI's own; `accountId` null means the default Claude account.
    * Every turn is a new `claude -p` process, so a change applies from the next turn with no restart.
    */
-  chatSettings(): { model: string | null; effort: string | null; defaultModel: string } {
-    return { model: this.store.getState('chat_model') || null, effort: this.store.getState('chat_effort') || null, defaultModel: TURN_MODEL };
+  chatSettings(): { model: string | null; effort: string | null; defaultModel: string; accountId?: string | null } {
+    return {
+      model: this.store.getState('chat_model') || null, effort: this.store.getState('chat_effort') || null, defaultModel: TURN_MODEL,
+      ...(this.o.claudeAccounts ? { accountId: this.pinnedAccount() } : {}),
+    };
   }
-  setChatSettings(change: { model?: string | null; effort?: string | null }): void {
-    if (change.model === undefined && change.effort === undefined) throw new UserError('Send a model or an effort to change.');
+  /** The account Chat is switched to; null: it follows the default (also when that account was removed). */
+  private pinnedAccount(): string | null {
+    const id = this.store.getState('chat_account') || null;
+    return id && this.o.claudeAccounts?.has(id) ? id : null;
+  }
+  /** The account one of Chat's processes (a turn, a compaction) started on, or null when not known. */
+  accountOfProcess(processId: string): string | null { return this.processAccounts.get(processId) ?? null; }
+  setChatSettings(change: { model?: string | null; effort?: string | null; accountId?: string | null }): void {
+    if (change.model === undefined && change.effort === undefined && change.accountId === undefined) throw new UserError('Send a model, an effort or an account to change.');
+    if (change.accountId && !this.o.claudeAccounts?.has(change.accountId)) throw new UserError('That account cannot run Chat. Pick a Claude account.');
     // Chat runs Claude only: a Claude tier alias (the chip's list) or a full Claude id; null goes back to the default.
     if (change.model) {
       const known = catalogModelChoices('claude-code').some((m) => m.value === change.model);
@@ -266,6 +299,12 @@ export class EndlessService {
     }
     if (change.model !== undefined) this.store.setState('chat_model', change.model ?? '');
     if (change.effort !== undefined) this.store.setState('chat_effort', change.effort ?? '');
+    if (change.accountId !== undefined && change.accountId !== this.pinnedAccount()) {
+      this.store.setState('chat_account', change.accountId ?? '');
+      // A pause for the old account's usage limit does not hold the new one; a failed memory compaction retries on it.
+      this.onOwnerAction?.();
+      this.retryCompaction();
+    }
     // Another device that has Chat open takes the change without a reload.
     if (!this.closed) {
       try { this.o.broadcaster.broadcast({ type: 'endless:settings', ...this.chatSettings() }); } catch { /* a missed broadcast is caught by the chip's reload on open */ }

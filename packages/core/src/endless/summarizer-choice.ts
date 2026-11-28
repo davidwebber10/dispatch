@@ -20,7 +20,7 @@ export function createSummarizer(d: {
   onUsage?: (u: Usage) => void;
   keys?: () => KeyRegistry | undefined;
   /** The login of the default Claude account, as environment variables. */
-  loginEnv?: () => Record<string, string>;
+  loginEnv?: (processId: string) => Record<string, string>;
 }): Summarizer {
   return SUMMARY_ENGINE === 'openrouter'
     ? new OpenRouterSummarizer({ apiKey: d.openRouterKey })

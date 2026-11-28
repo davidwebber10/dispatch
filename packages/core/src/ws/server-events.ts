@@ -97,7 +97,7 @@ export type UsageLimitsEvent = {
 // ── Chat (the endless conversation) ──────────────────────────────────────────
 export type EndlessMessageEvent = { type: 'endless:message'; message: ServerEventPayload };
 export type EndlessDeltaEvent = { type: 'endless:delta'; kind: string; text: string };
-export type EndlessSettingsEvent = { type: 'endless:settings'; model?: string | null; effort?: string | null; defaultModel?: string };
+export type EndlessSettingsEvent = { type: 'endless:settings'; model?: string | null; effort?: string | null; defaultModel?: string; accountId?: string | null };
 export type EndlessTurnEvent = { type: 'endless:turn'; status: string; error?: string };
 
 // ── Plugins (the three that the app itself reads) ────────────────────────────

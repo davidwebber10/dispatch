@@ -24,8 +24,8 @@ export interface ClaudeSummarizerOptions {
   commandArgs?: string[];
   /** The daemon's key registry, read at each open (it can be set after construction). */
   keys?: () => KeyRegistry | undefined;
-  /** The login of the default Claude account, as environment variables (spec 2026-11-23). None in a test: the process inherits. */
-  loginEnv?: () => Record<string, string>;
+  /** The login of Chat's account, as environment variables, for the process of this id. None in a test: the process inherits. */
+  loginEnv?: (processId: string) => Record<string, string>;
 }
 
 export class ClaudeSummarizer implements Summarizer {
@@ -86,8 +86,8 @@ export class ClaudeSummarizer implements Summarizer {
         command: this.o.command ?? 'claude',
         args: [...(this.o.commandArgs ?? []), ...endlessClaudeArgs({ model: this.o.model ?? SUMMARY_MODEL, effort: this.o.effort ?? SUMMARY_EFFORT, systemPrompt: opts.systemPrompt, mcpConfigPath: this.o.mcpConfigPath, userTools: false })],
         workDir: this.o.chatDir,
-        // The same login as a Chat turn: the default Claude account (spec 2026-11-23).
-        env: { ...COMPACTION_ENV, ...(this.o.loginEnv?.() ?? {}), ...(minted ? { DISPATCH_AUTH: minted.key } : {}) },
+        // The same login as a Chat turn: Chat's account.
+        env: { ...COMPACTION_ENV, ...(this.o.loginEnv?.(id) ?? {}), ...(minted ? { DISPATCH_AUTH: minted.key } : {}) },
         toolPolicy: () => ({ allow: false, message: 'Compaction: call no tools.' }),
       });
     } catch (err) {

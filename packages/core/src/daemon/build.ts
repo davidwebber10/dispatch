@@ -523,8 +523,10 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   const endless = new EndlessService({
     ledger: ledgerService,
     db, broadcaster, manager: endlessManager,
-    // Chat runs on the default Claude account (owner decision 1, spec 2026-11-23), read at each turn.
-    claudeLoginEnv: () => claudeLogins.overlay(),
+    // Chat runs on the account it was switched to, else the default Claude account (spec 2026-11-23,
+    // changed 2026-11-27), read at each turn.
+    claudeLoginEnv: (accountId) => claudeLogins.overlay(accountId),
+    claudeAccounts: { has: (id) => accounts.has('claude', id), defaultId: () => accounts.defaultId('claude') },
     chatDir: agentDirFor(dataDir, 'chat'),
     home: os.homedir(),
     // A turn the user starts gets the servers a thread gets from Dispatch (owner, 2026-11-13: "all
