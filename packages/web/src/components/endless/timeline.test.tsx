@@ -74,6 +74,30 @@ describe('ChatTimeline scroll ids (search jumps, MemorySearch)', () => {
     expect(screen.getByTestId('activity-fold').dataset.open).toBe('true');
     expect(anchor(701)).not.toBeNull();
   });
+  it('a fold the search opened closes on a tap and opens on the next; the jump target and its outline come back with it', () => {
+    setFoldsOpenForTest(false);
+    const msgs = [m(710, 'unii', 'one'), m(711, 'tool', 'Bash {"command":"ls"}'), m(712, 'echo', 'out'), m(713, 'unii', 'two')];
+    const wrapAt = (focus: number | null) => (
+      <MessageScroller.Provider><MessageScroller.Root><MessageScroller.Viewport><MessageScroller.Content>
+        <ChatTimeline messages={msgs} focus={focus} />
+      </MessageScroller.Content></MessageScroller.Viewport></MessageScroller.Root></MessageScroller.Provider>
+    );
+    const outlined = () => [...document.querySelectorAll<HTMLElement>('[data-endless-i]')].filter((e) => e.style.outline.includes('solid')).map((e) => e.dataset.endlessI);
+    const { rerender } = render(wrapAt(712));
+    expect(anchor(711)).not.toBeNull();
+    expect(outlined()).toEqual(['711']);
+    fireEvent.click(screen.getByTestId('activity-fold-row'));
+    expect(screen.getByTestId('activity-fold').dataset.open).toBeUndefined();
+    expect(anchor(711)).toBeNull();
+    fireEvent.click(screen.getByTestId('activity-fold-row'));
+    expect(anchor(711)).not.toBeNull();
+    expect(outlined()).toEqual(['711']);
+    // Closed again, then the search moves away and comes back: the fold opens for the new jump.
+    fireEvent.click(screen.getByTestId('activity-fold-row'));
+    rerender(wrapAt(710));
+    rerender(wrapAt(712));
+    expect(anchor(711)).not.toBeNull();
+  });
 });
 
 describe('ChatTimeline: an open tool call keeps its scroll position when the next call arrives', () => {
