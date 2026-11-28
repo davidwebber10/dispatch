@@ -480,7 +480,9 @@ export function NewThreadModal({ sessionId: initialSession, prompts, onClose, on
 
         {/* The project, as a settings row like Mode, Account and Model (owner, 2026-11-20), below the tools
             (owner, later the same day: "maybe put project below the provider list"). */}
-        {pickProject && (
+        {/* Not while the harness is missing: a project has no use before the install (owner,
+            2026-11-27). The pick is kept, and the row comes back when the install completes. */}
+        {pickProject && selectedAvailable && (
           <Row mobile={m} last>
             <span style={rowLabel}>Project</span>
             <div style={{ width: controlWidth }}>
