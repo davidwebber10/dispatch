@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { CaretRight, CheckCircle, WarningCircle } from '@phosphor-icons/react';
 import type { ConvItem } from '../../../../api/types';
 import { Spinner } from '../../../common/Spinner';
@@ -157,27 +157,46 @@ export function fmtSecs(secs: number): string {
 // No provider gives a time per call (ConvItems carry no clock on a live call), so a strip's time is
 // what this page SAW: it starts only when the page saw the strip's FIRST call start, and it ends at
 // the first render that saw the strip settled. A strip seen first in the middle of its work (a page
-// opened mid-turn) or from history shows no time at all, never a guess. Module maps, so a remount
-// keeps the clock. Exported for tests only.
-export const foldClock = { start: new Map<string, number>(), end: new Map<string, number>(), seen: new Set<string>() };
+// opened mid-turn) or from history shows no time at all, never a guess.
+//
+// The module maps hold a strip only while it runs (owner 2026-11-28: they grew for the life of the
+// page). When the strip settles, its time moves into the fold itself and its entries go; when the
+// fold unmounts, they go too, so a strip seen again later (a thread opened again) shows no time.
+// Exported for tests only.
+export const foldClock = { start: new Map<string, number>(), seen: new Set<string>() };
 function useSeenClock(key: string, steps: number, running: boolean): number | undefined {
   const [, tick] = useState(0);
-  if (!foldClock.seen.has(key)) {
-    foldClock.seen.add(key);
-    if (running && steps === 1) foldClock.start.set(key, Date.now());
+  // The time this fold saw, once its strip settled. Kept by the fold, not by the maps.
+  const settled = useRef<number | undefined>(undefined);
+  if (running) {
+    settled.current = undefined;
+    if (!foldClock.seen.has(key)) {
+      foldClock.seen.add(key);
+      if (steps === 1) foldClock.start.set(key, Date.now());
+    }
+  } else {
+    const start = foldClock.start.get(key);
+    if (start !== undefined) settled.current = Math.max(0, Math.round((Date.now() - start) / 1000));
+    foldClock.start.delete(key);
+    foldClock.seen.delete(key);
   }
-  // Running again after a pause (a new call): the clock goes on. Settled: it stops at the first
-  // render that saw it settled.
-  if (running) foldClock.end.delete(key);
-  else if (foldClock.start.has(key) && !foldClock.end.has(key)) foldClock.end.set(key, Date.now());
+  // What this render holds, so the mount effect can put it back: StrictMode runs the cleanup and the
+  // effect once more on mount, and the cleanup must not lose a clock that runs.
+  const startNow = foldClock.start.get(key);
+  const seenNow = foldClock.seen.has(key);
   useEffect(() => {
-    if (!running || !foldClock.start.has(key)) return;
+    if (startNow !== undefined && !foldClock.start.has(key)) foldClock.start.set(key, startNow);
+    if (seenNow) foldClock.seen.add(key);
+    return () => { foldClock.start.delete(key); foldClock.seen.delete(key); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the values of the mount render only
+  }, [key]);
+  useEffect(() => {
+    if (!running || startNow === undefined) return;
     const t = setInterval(() => tick((n) => n + 1), 1000);
     return () => clearInterval(t);
-  }, [running, key]);
-  const start = foldClock.start.get(key);
-  if (start === undefined) return undefined;
-  return Math.max(0, Math.round(((foldClock.end.get(key) ?? Date.now()) - start) / 1000));
+  }, [running, key, startNow]);
+  if (!running) return settled.current;
+  return startNow === undefined ? undefined : Math.max(0, Math.round((Date.now() - startNow) / 1000));
 }
 
 // ---- The fold --------------------------------------------------------------------------------
@@ -193,10 +212,20 @@ export function ActivityFold({ foldKey, nodes, pairs, onViewFile, forceOpen = fa
   const s = turnLive && !stats.running ? { ...stats, running: true } : stats;
   const secs = useSeenClock(foldKey, s.steps, s.running);
   const [manual, setManual] = useActivityFoldOpen(`fold:${foldKey}`, undefined);
+  // A surface holds the fold open (Chat: the search focus is a call inside it), so the call's anchor
+  // and its focus outline are in the page. The reader can still close it with a tap (owner
+  // 2026-11-28): `dismissed` is that tap. A new hold (the focus comes again) opens it once more.
+  const [held, setHeld] = useState(forceOpen);
+  const [dismissed, setDismissed] = useState(false);
+  if (held !== forceOpen) { setHeld(forceOpen); setDismissed(false); }
   // A call the reader opened keeps the strip open for good: its DOM node and scroll stay.
   const memberOpen = manual === undefined && pairs.some((p) => useToolExpanded.peek(uiKeyOf(p.tool)) === true);
   useEffect(() => { if (memberOpen) setManual(true); });
-  const open = forceOpen || (manual ?? (memberOpen || openForTest));
+  const open = forceOpen ? !dismissed : (manual ?? (memberOpen || openForTest));
+  const toggle = () => {
+    if (forceOpen) setDismissed(open);
+    setManual(!open);
+  };
   const failed = s.errors.length > 0;
   const last = pairs[pairs.length - 1];
   const live = s.live ? stepPhrase(s.live.tool, true) : last ? stepPhrase(last.tool, false) : '';
@@ -208,7 +237,7 @@ export function ActivityFold({ foldKey, nodes, pairs, onViewFile, forceOpen = fa
         type="button"
         aria-expanded={open}
         aria-label={s.running ? `Working: ${live}, ${meta}` : summary}
-        onClick={() => setManual(!open)}
+        onClick={toggle}
         data-testid="activity-fold-row"
         style={{ width: '100%', minHeight: 44, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '0 20px', display: 'flex', gap: 10, alignItems: 'center', color: 'var(--color-text-secondary)' }}
         onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-hover)'; }}
@@ -221,7 +250,8 @@ export function ActivityFold({ foldKey, nodes, pairs, onViewFile, forceOpen = fa
             : <CheckCircle size={16} weight="fill" color="var(--color-text-tertiary)" style={{ flexShrink: 0 }} />}
         {s.running ? (
           <>
-            <span className="chat-shimmer" style={{ minWidth: 0, flex: '1 1 auto', font: SANS(13.5, 500), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{live}</span>
+            {/* No shimmer (owner 2026-11-28): the spinner says it runs; the text stays still. */}
+            <span style={{ minWidth: 0, flex: '1 1 auto', font: SANS(13.5, 500), color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{live}</span>
             <span style={{ flexShrink: 0, font: MONO(11.5), color: 'var(--color-text-tertiary)', fontVariantNumeric: 'tabular-nums' }}>{meta}</span>
           </>
         ) : (

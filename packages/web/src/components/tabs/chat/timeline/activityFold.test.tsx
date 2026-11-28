@@ -8,7 +8,7 @@ import { MessageScroller } from '@shadcn/react/message-scroller';
 import type { ConvItem } from '../../../../api/types';
 import { setHostContextForTest } from '../../../../lib/hostContext';
 import { renderTimeline, type TimelineExtensions } from './renderTimeline';
-import { stepKind, stepPhrase, foldStats, settledLine, foldsActivity } from './activityFold';
+import { stepKind, stepPhrase, foldStats, settledLine, foldsActivity, foldClock } from './activityFold';
 
 beforeAll(() => {
   class Noop { observe() {} unobserve() {} disconnect() {} }
@@ -160,5 +160,63 @@ describe('the fold in the timeline', () => {
     expect(screen.getByText(/needle/)).toBeInTheDocument();
     expect(screen.getByText(/tsc/)).toBeInTheDocument();
     expect(screen.getByText('error')).toBeInTheDocument();
+  });
+});
+
+// Three nits from the 4.15.0 merge (owner 2026-11-28).
+describe('the fold row: nits from the 4.15.0 merge', () => {
+  it('a fold the search holds open closes on a tap, and opens again on the next tap', () => {
+    const a = call('Read', { file_path: '/nit-1.ts' });
+    const hold = { foldOpen: (items: ConvItem[]) => items.includes(a) };
+    const { rerender } = render(<View items={[a, res(a.toolId!)]} ext={hold} />);
+    const fold = () => screen.getByTestId('activity-fold');
+    expect(fold().dataset.open).toBe('true');
+    fireEvent.click(screen.getByTestId('activity-fold-row'));
+    expect(fold().dataset.open).toBeUndefined();
+    // A new line of the same render path (the focus did not move) keeps the reader's choice.
+    rerender(<View items={[a, res(a.toolId!), say('more')]} ext={hold} />);
+    expect(fold().dataset.open).toBeUndefined();
+    fireEvent.click(screen.getByTestId('activity-fold-row'));
+    expect(fold().dataset.open).toBe('true');
+  });
+
+  it('a new search focus opens a fold the reader closed', () => {
+    const a = call('Read', { file_path: '/nit-1b.ts' });
+    const items = [a, res(a.toolId!)];
+    const { rerender } = render(<View items={items} ext={{ foldOpen: () => true }} />);
+    fireEvent.click(screen.getByTestId('activity-fold-row'));
+    expect(screen.getByTestId('activity-fold').dataset.open).toBeUndefined();
+    rerender(<View items={items} ext={{ foldOpen: () => false }} />);
+    rerender(<View items={items} ext={{ foldOpen: () => true }} />);
+    expect(screen.getByTestId('activity-fold').dataset.open).toBe('true');
+  });
+
+  it('the fold row does not shimmer, running or settled', () => {
+    const a = call('Bash', { command: 'npx vitest run', description: 'Run the tests' });
+    const { rerender } = render(<View items={[a]} ext={{ turnRunning: true }} />);
+    expect(screen.getByTestId('activity-fold-row').querySelector('.chat-shimmer')).toBeNull();
+    rerender(<View items={[a, res(a.toolId!)]} />);
+    expect(screen.getByTestId('activity-fold-row').querySelector('.chat-shimmer')).toBeNull();
+  });
+
+  it('the clock entries go when the strip settles, and the settled line keeps its time', () => {
+    vi.useFakeTimers();
+    const a = call('Bash', { command: 'sleep 3', description: 'Wait' });
+    const { rerender } = render(<View items={[a]} />);
+    act(() => { vi.advanceTimersByTime(3000); });
+    rerender(<View items={[a, res(a.toolId!)]} />);
+    expect(screen.getByTestId('activity-fold-row')).toHaveTextContent('Worked 3s · 1 step');
+    expect(foldClock.start.size + foldClock.seen.size).toBe(0);
+    // A later render still shows the time it saw.
+    rerender(<View items={[a, res(a.toolId!), say('after')]} />);
+    expect(screen.getByTestId('activity-fold-row')).toHaveTextContent('Worked 3s · 1 step');
+  });
+
+  it('the clock entries go when a running fold unmounts', () => {
+    const a = call('Bash', { command: 'sleep 9', description: 'Wait' });
+    const { unmount } = render(<View items={[a]} />);
+    expect(foldClock.start.size).toBe(1);
+    unmount();
+    expect(foldClock.start.size + foldClock.seen.size).toBe(0);
   });
 });
