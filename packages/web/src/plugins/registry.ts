@@ -30,6 +30,11 @@ export interface ComposerCtx {
   insert: (text: string) => void;
   /** Replace what is typed. */
   set: (text: string) => void;
+  /**
+   * Send now (v4.15.0). With `text`, that text replaces what is typed and is sent; without, what is
+   * typed is sent. When the composer cannot send (an upload is in progress), the text stays typed.
+   */
+  send: (text?: string) => void;
 }
 export interface PluginComposerAction { plugin: string; id: string; label: string; icon?: string; when?: (ctx: ComposerCtx) => boolean; onClick: (ctx: ComposerCtx) => void }
 /** A command for the ⌘K palette (and the phone's Plugins tab). */

@@ -209,19 +209,59 @@ export function PillComposer({
   const [micHint, setMicHint] = useState(false);
   // Plugin buttons above the pill (the composer-favorites example): each gets the composer's context.
   const pluginActions = useContributions('composerActions');
+  // A button can send (v4.15.0). The host owns the text, so the text goes to the host first and the
+  // send waits for the render that hands it back as `value`: the host then sends what the button
+  // meant. A wait that is not answered within a second is dropped, so no later edit sends by itself.
+  const pendingSend = useRef<{ text: string; at: number } | null>(null);
+  useEffect(() => {
+    const p = pendingSend.current;
+    if (!p) return;
+    if (value !== p.text) { if (Date.now() - p.at > 1000) pendingSend.current = null; return; }
+    pendingSend.current = null;
+    if (canSend) onSend();
+  });
   const composerCtx: ComposerCtx = {
     surface: pluginContext?.surface ?? 'unknown', terminalId: pluginContext?.terminalId, sessionId: pluginContext?.sessionId, value,
     insert: (t) => onChange(value ? `${value}${/\s$/.test(value) ? '' : ' '}${t}` : t),
     set: (t) => onChange(t),
+    send: (t) => {
+      if (t === undefined || t === value) { if (canSend) onSend(); return; }
+      pendingSend.current = { text: t, at: Date.now() };
+      onChange(t);
+    },
   };
   const shownActions = pluginActions.filter((a) => !a.when || a.when(composerCtx));
+  // The row slides (v4.15.0): a fade on the side that has more buttons, and a mouse wheel moves it.
+  const actionsRow = useRef<HTMLDivElement | null>(null);
+  const [actionsFade, setActionsFade] = useState({ left: false, right: false });
+  const measureActions = () => {
+    const el = actionsRow.current;
+    if (!el) return;
+    const left = el.scrollLeft > 1, right = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+    setActionsFade((f) => (f.left === left && f.right === right ? f : { left, right }));
+  };
+  const actionsKey = shownActions.map((a) => `${a.plugin}:${a.id}:${a.label}`).join('|');
+  useEffect(() => {
+    measureActions();
+    const el = actionsRow.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(measureActions);
+    ro.observe(el);
+    return () => ro.disconnect();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actionsKey]);
+  const actionsMask = actionsFade.left || actionsFade.right
+    ? `linear-gradient(to right, ${actionsFade.left ? 'transparent, currentColor 28px' : 'currentColor'}, ${actionsFade.right ? 'currentColor calc(100% - 28px), transparent' : 'currentColor'})`
+    : undefined;
 
   return (
     <>
     {/* The one slot this slice mounts: a form or a note above the composer (a template picker). */}
     <Slot name="composer.before" {...composerCtx} />
     {shownActions.length > 0 && (
-      <div data-testid="composer-plugin-actions" style={{ display: 'flex', gap: 6, padding: '0 2px 6px', overflowX: 'auto', scrollbarWidth: 'none' }}>
+      <div ref={actionsRow} data-testid="composer-plugin-actions" onScroll={measureActions}
+        onWheel={(e) => { const el = e.currentTarget; if (el.scrollWidth > el.clientWidth && Math.abs(e.deltaY) > Math.abs(e.deltaX)) el.scrollLeft += e.deltaY; }}
+        style={{ display: 'flex', gap: 6, padding: '0 2px 6px', overflowX: 'auto', scrollbarWidth: 'none', overscrollBehaviorX: 'contain', WebkitOverflowScrolling: 'touch', touchAction: 'pan-x', maskImage: actionsMask, WebkitMaskImage: actionsMask }}>
         {shownActions.map((a) => (
           <button key={`${a.plugin}:${a.id}`} type="button" onClick={() => a.onClick(composerCtx)}
             style={{ flexShrink: 0, height: 28, padding: '0 11px', borderRadius: 'var(--radius-pill)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', fontSize: fontVar(12.5), cursor: 'pointer', whiteSpace: 'nowrap' }}>{a.label}</button>

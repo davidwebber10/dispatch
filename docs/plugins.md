@@ -91,7 +91,7 @@ What `register` takes:
 | `settings` | Settings, under PLUGINS, on desktop and phone | `{ id, label, blurb?, icon?, Component }` |
 | `threadMenu` | the thread ⋯ menu, after Copy thread ID (on a phone: the sheet's Plugins section) | `{ id, label, icon?, when?({ tab }), onPick({ tab }), badge? }` (`icon`: a name from `icons`, such as `eye`; `badge`: `{ subscribe(onChange), get({ tab }) }`, a live count on the row; above 0 the phone's thread ⋯ shows a dot) |
 | `projectMenu` | the phone's project ⋯ menu, with the project's own rows | `{ id, label, when?({ session }), onPick({ session }) }` |
-| `composerActions` | a row of buttons above every composer | `{ id, label, when?(ctx), onClick(ctx) }` with `ctx = { surface, terminalId?, sessionId?, value, insert(text), set(text) }` |
+| `composerActions` | a row of buttons above every composer | `{ id, label, when?(ctx), onClick(ctx) }` with `ctx = { surface, terminalId?, sessionId?, value, insert(text), set(text), send(text?) }`; `send` (4.15.0) sends at once: with `text` it sends that text, without it sends what is typed. The row scrolls sideways when the buttons do not fit |
 | `slots` | a named place in an existing screen | `{ id, slot, priority?, Component }`; mounted slots: `composer.before` (above the composer, the composer context as props), `project.header.actions` (the phone's project header, `{ session }`), `thread.header.actions` (the thread header on the phone and the desktop's floating controls, `{ terminal, floating? }`), `app.overlay` (the app root, for sheets and modals) |
 | `inspectorTabs` | the desktop right column, after Details and Files; on a phone, the thread ⋯ menu (a full-height sheet) | `{ id, label, icon?, priority?, Component }`, see [Right-column tabs](#right-column-tabs) |
 
@@ -101,7 +101,7 @@ What `register` takes:
 Icons are names from the SDK's map (`puzzle`, `sun`, `star`, `sparkle`, `lightning`,
 `calendar`, `clock`, `note`, `rocket`, `flag`, `heart`, `folder`, `terminal`, `git`, `cloud`,
 `database`, `bell`, `chart`, `list`, `play`, `gear`, `eye`, `chat`, `book`, `bug`, `shield`,
-`globe`, `wrench`, `copy`, `check`, `trash`, `image`, `file`, `pdf`, `html`, `csv`, `x`, `thumbs-up`, `thumbs-down`, `dots`, `bell-slash`, `arrow-up`, `arrow-down`, `arrow-right`, `target`, `plus`, `caret-down`, `caret-right`); an unknown name shows the puzzle piece.
+`globe`, `wrench`, `copy`, `check`, `trash`, `image`, `file`, `pdf`, `html`, `csv`, `x`, `thumbs-up`, `thumbs-down`, `dots`, `bell-slash`, `arrow-up`, `arrow-down`, `arrow-right`, `target`, `plus`, `caret-down`, `caret-right`, `grip`); an unknown name shows the puzzle piece.
 
 ### Right-column tabs
 
@@ -180,7 +180,7 @@ The SDK object (version 2), in full:
 - `url(path)`: an app-root-relative path (`/api/...`, `/plugins/...`) as the browser must request it.
 - `zustand.create`: the app's zustand, for a store of the plugin's own.
 - `ui`: `Modal`, `Markdown`, `FileViewer`, `Toggle`, `FilterBar`, `Select`, `MultiSelect`,
-  `Segmented`, `SettingsGroup`, `SettingsRow`, and `styles` (`sectionLabel`, `row`, `item`,
+  `Segmented`, `SortableList`, `SettingsGroup`, `SettingsRow`, and `styles` (`sectionLabel`, `row`, `item`,
   `ghostBtn`, `solidBtn(on)`, `chip`, `fieldInput`).
   - `SettingsGroup` and `SettingsRow` build a settings page in the same grouped-card shape as
     Settings → Plugins. A group is `{ title?, footer?, action?, children }`: a small heading over
@@ -189,6 +189,16 @@ The SDK object (version 2), in full:
     `control` on the right (a `Toggle`, a short `Select`, a number field, a `MultiSelect`
     trigger). A wide control goes in `children`, on its own full-width line under the label, so
     the text is never squeezed.
+  - `SortableList` (Dispatch 4.15.0 and later; check that `ui.SortableList` exists) is a vertical
+    list the user reorders by a drag: `{ items: [{ id, ... }], onReorder(orderedIds),
+    renderItem(item, { dragging, handle }), renderOverlay?, disabled?, handle? }`. With no
+    `handle`, a press of 180 ms on a row lifts it with a mouse, and a short tap still reaches the
+    row's own buttons; stop `pointerdown` on a part of the row that must not start a drag, such as
+    a text field. On a phone a finger that moves on a row scrolls the page, so the drag does not
+    start: give the list `handle: true` and spread `opts.handle` on a grip in each row
+    (`h('span', { ...handle, style: { ...handle.style, width: 40 } }, h(icons.grip))`). The grip
+    lifts the row after a move of 4 px, takes Space and the arrow keys, and the rest of the row
+    keeps its taps. The Composer favorites example does this.
   - `Segmented` is a full-width segmented choice for 2 to 5 options: `{ value, options:
     [{ value, label, hint? }], onChange(value), ariaLabel, size? }`. It is a `radiogroup`, and the
     picked option's `hint` shows under it. Put it in a row's `children`, not in `control`. For

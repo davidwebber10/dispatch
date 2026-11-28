@@ -122,3 +122,35 @@ test('press-hold on row content still lifts the row', () => {
     expect(document.querySelector('.dispatch-wiggle')).not.toBeNull();
   } finally { vi.useRealTimers(); }
 });
+
+// A finger that moves on a plain row scrolls the page and the browser cancels the pointer, so a
+// list on a phone gives each row a grip: the drag wiring is on the grip, not on the row.
+test('handle: the drag wiring goes to the grip, and the row keeps none', () => {
+  render(
+    <SortableList
+      items={items}
+      handle
+      onReorder={() => {}}
+      renderItem={(it, { handle }) => (
+        <div data-testid={`row-${it.id}`}>
+          <span data-testid={`grip-${it.id}`} {...handle} style={{ ...handle?.style, width: 40 }} />
+          <button>open-{it.id}</button>
+        </div>
+      )}
+    />,
+  );
+  const grip = screen.getByTestId('grip-a');
+  expect(grip.style.touchAction).toBe('none');
+  expect(grip.getAttribute('role')).toBe('button');
+  expect(grip.getAttribute('tabindex')).toBe('0');
+  const wrapper = screen.getByTestId('row-a').parentElement!.parentElement!;
+  expect(wrapper.hasAttribute('role')).toBe(false);
+  expect(wrapper.hasAttribute('tabindex')).toBe(false);
+});
+
+test('without handle, renderItem gets no grip props and the row carries the drag wiring', () => {
+  const seen: unknown[] = [];
+  render(<SortableList items={items} onReorder={() => {}} renderItem={(it, opts) => { seen.push(opts.handle); return <div data-testid={`row-${it.id}`} />; }} />);
+  expect(seen.every((h) => h === undefined)).toBe(true);
+  expect(screen.getByTestId('row-a').parentElement!.parentElement!.getAttribute('role')).toBe('button');
+});

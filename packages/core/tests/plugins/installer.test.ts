@@ -38,6 +38,9 @@ describe('PluginInstaller', () => {
     await expect(inst.install(slug, 'future')).rejects.toThrow(/needs Dispatch >=99.0/);
     m.plugin('newsdk', '1.0.0', { sdk: 9 }); m.commit('newsdk');
     await expect(inst.install(slug, 'newsdk')).rejects.toThrow(/SDK 9/);
+    m.plugin('sdktwo', '1.0.0', { sdk: 2 }); m.commit('sdktwo');
+    await mkt.pull(slug);
+    expect(await inst.install(slug, 'sdktwo')).toMatchObject({ id: 'sdktwo', version: '1.0.0', enabled: true });
   });
 
   it('updates lists a newer version with its changelog; a pin hides it; update swaps the folder, keeps .prev, broadcasts plugin:updated, and the row shows the new version', async () => {

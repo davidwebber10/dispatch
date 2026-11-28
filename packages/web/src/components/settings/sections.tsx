@@ -118,13 +118,27 @@ export function settingsGroupLabel(g: SettingsGroup): string {
 // Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md, section 2.3): a plugin's sections join
 // the list under a PLUGINS group, each inside a boundary so a throwing section stays a card in Settings.
 const pluginSectionCache = new WeakMap<PluginSettingsSection, SettingsSection>();
+// One wrapper for each plugin component. A plugin that registers again with the same component (to
+// change its other contributions) keeps the screen that is open: a new wrapper would be a new
+// component type, and React would mount the screen again, losing its state and the focused field.
+const pluginBodyCache = new WeakMap<object, Map<string, ComponentType<SectionProps>>>();
+function pluginBody(p: PluginSettingsSection): ComponentType<SectionProps> {
+  const C = p.Component;
+  let byPlugin = pluginBodyCache.get(C);
+  if (!byPlugin) { byPlugin = new Map(); pluginBodyCache.set(C, byPlugin); }
+  let Wrapped = byPlugin.get(p.plugin);
+  if (!Wrapped) {
+    const plugin = p.plugin;
+    Wrapped = (props: SectionProps) => <PluginBoundary plugin={plugin}><C {...props} /></PluginBoundary>;
+    byPlugin.set(plugin, Wrapped);
+  }
+  return Wrapped;
+}
 function pluginSections(list: PluginSettingsSection[]): SettingsSection[] {
   return list.map((p) => {
     let s = pluginSectionCache.get(p);
     if (!s) {
-      const C = p.Component;
-      const Wrapped = (props: { onDone?: () => void }) => <PluginBoundary plugin={p.plugin}><C {...props} /></PluginBoundary>;
-      s = { key: p.key, group: 'PLUGINS', label: p.label, blurb: p.blurb ?? '', icon: pluginIcon(p.icon), Component: Wrapped, feature: 'settings.plugins' };
+      s = { key: p.key, group: 'PLUGINS', label: p.label, blurb: p.blurb ?? '', icon: pluginIcon(p.icon), Component: pluginBody(p), feature: 'settings.plugins' };
       pluginSectionCache.set(p, s);
     }
     return s;

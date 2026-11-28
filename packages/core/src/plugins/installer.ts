@@ -16,7 +16,8 @@ export interface InstallInfo { update?: { to: string; changelog: string | null }
 /** `autoUpdate`: the owner's explicit choice per plugin; unset means the marketplace's trust decides. */
 interface State { pins: Record<string, string>; autoUpdate: Record<string, boolean> }
 
-export const SUPPORTED_SDK = 1;
+/** The highest plugin SDK major this Dispatch loads. The web app picks the SDK per plugin (host.ts `sdkVersionOf`). */
+export const SUPPORTED_SDK = 2;
 const INSTALL_FILE = '.dispatch-install.json';
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import {
   DndContext, DragOverlay, PointerSensor, KeyboardSensor, useSensor, useSensors,
@@ -8,13 +8,30 @@ import { SortableContext, useSortable, sortableKeyboardCoordinates, verticalList
 import { CSS } from '@dnd-kit/utilities';
 import { reorderIds } from '../../lib/reorder';
 
+/** The props a row spreads on its grip when the list has `handle`. */
+export interface SortableHandleProps {
+  ref: (el: HTMLElement | null) => void;
+  style: CSSProperties;
+  [prop: string]: unknown;
+}
+
 interface SortableListProps<T extends { id: string }> {
   items: T[];
   onReorder: (orderedIds: string[]) => void;
-  renderItem: (item: T, opts: { dragging: boolean }) => ReactNode;
+  renderItem: (item: T, opts: { dragging: boolean; handle?: SortableHandleProps }) => ReactNode;
   renderOverlay?: (item: T) => ReactNode;
   disabled?: boolean;
+  /**
+   * The drag starts from a grip in the row, not from a press and hold on the row. The row spreads
+   * `opts.handle` on its grip. A move of 4 px on the grip lifts the row at once, and the rest of
+   * the row keeps its taps and lets a finger scroll the page.
+   */
+  handle?: boolean;
 }
+
+// A finger that moves on a plain element scrolls the page, and the browser then cancels the
+// pointer: the drag ends before it starts. `touch-action: none` on the grip keeps the pointer.
+const HANDLE_STYLE: CSSProperties = { touchAction: 'none', cursor: 'grab', userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none' };
 
 // The stock KeyboardSensor lifts the row on Space/Enter from ANY descendant —
 // React synthetic events bubble through the component tree (portals included),
@@ -45,16 +62,17 @@ class RowPointerSensor extends PointerSensor {
   }];
 }
 
-function SortableRow({ id, children }: { id: string; children: (dragging: boolean) => ReactNode }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+function SortableRow({ id, handle, children }: { id: string; handle: boolean; children: (dragging: boolean, handle?: SortableHandleProps) => ReactNode }) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const onRow = handle ? {} : { ...attributes, ...listeners };
+  const grip: SortableHandleProps | undefined = handle ? { ...attributes, ...listeners, ref: setActivatorNodeRef, style: HANDLE_STYLE } : undefined;
   return (
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition, position: 'relative' }}
-      {...attributes}
-      {...listeners}
+      {...onRow}
     >
-      <div style={{ opacity: isDragging ? 0 : 1 }}>{children(isDragging)}</div>
+      <div style={{ opacity: isDragging ? 0 : 1 }}>{children(isDragging, grip)}</div>
       {isDragging && (
         <div style={{
           position: 'absolute', inset: 0, borderRadius: 'var(--radius-md)', pointerEvents: 'none',
@@ -66,10 +84,10 @@ function SortableRow({ id, children }: { id: string; children: (dragging: boolea
   );
 }
 
-export function SortableList<T extends { id: string }>({ items, onReorder, renderItem, renderOverlay, disabled }: SortableListProps<T>) {
+export function SortableList<T extends { id: string }>({ items, onReorder, renderItem, renderOverlay, disabled, handle = false }: SortableListProps<T>) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const sensors = useSensors(
-    useSensor(RowPointerSensor, { activationConstraint: { delay: 180, tolerance: 8 } }),
+    useSensor(RowPointerSensor, { activationConstraint: handle ? { distance: 4 } : { delay: 180, tolerance: 8 } }),
     useSensor(RowKeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
@@ -90,7 +108,7 @@ export function SortableList<T extends { id: string }>({ items, onReorder, rende
       onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setActiveId(null)}>
       <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
         {items.map((it) => (
-          <SortableRow key={it.id} id={it.id}>{(dragging) => renderItem(it, { dragging })}</SortableRow>
+          <SortableRow key={it.id} id={it.id} handle={handle}>{(dragging, grip) => renderItem(it, { dragging, handle: grip })}</SortableRow>
         ))}
       </SortableContext>
       {createPortal(

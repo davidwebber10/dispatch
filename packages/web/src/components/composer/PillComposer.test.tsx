@@ -167,6 +167,34 @@ describe('plugin composer actions (2026-11-07)', () => {
     expect(onChange).toHaveBeenCalledWith('fresh text');
   });
 
+  it('send(text) puts the text in the composer, then sends once the host hands it back; send() sends what is typed (v4.15.0)', () => {
+    usePluginRegistry.getState().register('fav', { composerActions: [
+      { id: 'a', label: 'Send it', onClick: (ctx) => ctx.send('Run the tests.') },
+      { id: 'b', label: 'Send typed', onClick: (ctx) => ctx.send() },
+    ] });
+    const onChange = vi.fn(); const onSend = vi.fn();
+    const { rerender } = render(<PillComposer {...base} value="" onChange={onChange} onSend={onSend} canSend={false} dictation={dictation()} pluginContext={{ surface: 'thread' }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Send it' }));
+    expect(onChange).toHaveBeenCalledWith('Run the tests.');
+    expect(onSend).not.toHaveBeenCalled();
+    rerender(<PillComposer {...base} value="Run the tests." onChange={onChange} onSend={onSend} canSend dictation={dictation()} pluginContext={{ surface: 'thread' }} />);
+    expect(onSend).toHaveBeenCalledTimes(1);
+    rerender(<PillComposer {...base} value="Run the tests." onChange={onChange} onSend={onSend} canSend dictation={dictation()} pluginContext={{ surface: 'thread' }} />);
+    expect(onSend).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Send typed' }));
+    expect(onSend).toHaveBeenCalledTimes(2);
+  });
+
+  it('send(text) leaves the text typed and does not send when the composer cannot send', () => {
+    usePluginRegistry.getState().register('fav', { composerActions: [{ id: 'a', label: 'Send it', onClick: (ctx) => ctx.send('Run the tests.') }] });
+    const onChange = vi.fn(); const onSend = vi.fn();
+    const { rerender } = render(<PillComposer {...base} value="" onChange={onChange} onSend={onSend} canSend={false} dictation={dictation()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Send it' }));
+    rerender(<PillComposer {...base} value="Run the tests." onChange={onChange} onSend={onSend} canSend={false} dictation={dictation()} />);
+    rerender(<PillComposer {...base} value="Run the tests." onChange={onChange} onSend={onSend} canSend dictation={dictation()} />);
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
   it('a composer.before slot renders above the actions row with the composer context', () => {
     usePluginRegistry.getState().register('tpl', {
       slots: [{ id: 'form', slot: 'composer.before', Component: ({ surface, value }: Record<string, unknown>) => <div data-testid="tpl">template for {String(surface)}: {String(value)}</div> }],

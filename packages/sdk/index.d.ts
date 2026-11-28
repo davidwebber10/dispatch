@@ -34,6 +34,12 @@ export interface ComposerCtx {
   value: string;
   insert(text: string): void;
   set(text: string): void;
+  /**
+   * Send now (Dispatch 4.15.0 and later; test `typeof ctx.send === 'function'` for older apps). With
+   * `text`, that text replaces what is typed and is sent; without, what is typed is sent. When the
+   * composer cannot send (an upload is in progress), the text stays typed.
+   */
+  send(text?: string): void;
 }
 export interface Contributions {
   views?: { id: string; label: string; icon?: string; Component: React.ComponentType }[];
@@ -203,6 +209,36 @@ export interface SettingsRowProps {
   style?: React.CSSProperties;
 }
 
+/** A list the user puts in order by a drag. Each item needs a stable `id`. */
+export interface SortableListProps<T extends { id: string } = { id: string }> {
+  items: T[];
+  /** Called once at the end of a drag that moved a row, with every id in the new order. */
+  onReorder(orderedIds: string[]): void;
+  /** `opts.handle` is set only when the list has `handle`: spread it on the row's grip. */
+  renderItem(item: T, opts: { dragging: boolean; handle?: SortableHandleProps }): React.ReactNode;
+  /** The row that follows the finger. Default: `renderItem` with `dragging: true`. */
+  renderOverlay?(item: T): React.ReactNode;
+  /** Shows the rows in order with no drag. */
+  disabled?: boolean;
+  /**
+   * The drag starts from a grip in the row, not from a press and hold on the row. Use it for a
+   * list on a phone, and for a row with its own tap: a move of 4 px on the grip lifts the row,
+   * and the rest of the row keeps its taps and lets a finger scroll the page.
+   */
+  handle?: boolean;
+}
+
+/**
+ * What a row spreads on its grip (`h('span', { ...handle, style: { ...handle.style, width: 40 } }, icon)`):
+ * the drag wiring, the keyboard wiring (Space lifts and drops, the arrows move) and a style that
+ * keeps the finger on the grip. Merge your own style with `handle.style`; do not replace it.
+ */
+export interface SortableHandleProps {
+  ref(el: HTMLElement | null): void;
+  style: React.CSSProperties;
+  [prop: string]: unknown;
+}
+
 /** The controls and styles both SDK versions hand out as `ui`. */
 export interface UiKit {
   Modal: React.ComponentType<{ open: boolean; onClose(): void; title?: string; sheet?: boolean; maxWidth?: number; children: React.ReactNode }>;
@@ -227,6 +263,14 @@ export interface UiKit {
   MultiSelect: React.ComponentType<MultiSelectProps>;
   /** A full-width segmented choice (a radiogroup) for 2 to 5 options, with the picked option's hint under it. */
   Segmented: React.ComponentType<SegmentedProps>;
+  /**
+   * A vertical list the user reorders by a drag (Dispatch 4.15.0 and later; check `ui.SortableList`
+   * before use). A press of 180 ms on a row lifts it; a short tap still reaches the row's own
+   * buttons. Stop `pointerdown` on a part of the row that must not start a drag (a text field).
+   * A finger that moves on a row scrolls the page, so on a phone give the list `handle` and each
+   * row a grip (`SortableHandleProps`).
+   */
+  SortableList: React.ComponentType<SortableListProps<any>>;
   /** A grouped settings card: a small heading over rows split by a hairline. */
   SettingsGroup: React.ComponentType<SettingsGroupProps>;
   /** One settings row: label and hint on the left, a small control on the right, a wide control below. */

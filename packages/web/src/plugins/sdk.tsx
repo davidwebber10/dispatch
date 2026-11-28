@@ -17,6 +17,7 @@ import { FilterBar } from '../components/common/FilterBar';
 import { Select } from '../components/common/Select';
 import { MultiSelect } from '../components/common/MultiSelect';
 import { Segmented } from '../components/common/Segmented';
+import { SortableList } from '../components/common/SortableList';
 import { Markdown } from '../components/Markdown';
 import { FileViewer } from '../components/viewer/FileViewer';
 import { copyText } from '../lib/clipboard';
@@ -48,7 +49,7 @@ export const ICONS: Record<string, Icon> = {
   chat: Icons.ChatCircleDots, book: Icons.BookOpen, bug: Icons.Bug, shield: Icons.ShieldCheck, globe: Icons.Globe, wrench: Icons.Wrench,
   copy: Icons.Copy, check: Icons.Check, trash: Icons.Trash, image: Icons.Image, file: Icons.FileText, pdf: Icons.FilePdf, html: Icons.FileHtml, csv: Icons.FileCsv, x: Icons.X,
   'thumbs-up': Icons.ThumbsUp, 'thumbs-down': Icons.ThumbsDown, dots: Icons.DotsThree, 'bell-slash': Icons.BellSlash,
-  'arrow-up': Icons.ArrowUp, 'arrow-down': Icons.ArrowDown, 'arrow-right': Icons.ArrowRight, target: Icons.Target, plus: Icons.Plus, 'caret-down': Icons.CaretDown, 'caret-right': Icons.CaretRight,
+  'arrow-up': Icons.ArrowUp, 'arrow-down': Icons.ArrowDown, 'arrow-right': Icons.ArrowRight, target: Icons.Target, plus: Icons.Plus, 'caret-down': Icons.CaretDown, 'caret-right': Icons.CaretRight, grip: Icons.DotsSixVertical,
   // Drops (2026-11-11): the kinds' chips and their buttons.
   link: Icons.Link, code: Icons.Code, key: Icons.Key, 'list-numbers': Icons.ListNumbers, 'git-diff': Icons.GitDiff, table: Icons.Table,
   'text-t': Icons.TextT, paperclip: Icons.Paperclip, 'arrow-square-out': Icons.ArrowSquareOut, tray: Icons.Tray,
@@ -179,7 +180,7 @@ function warnDeprecated(pluginId: string, member: 'api' | 'stores'): void {
 export function __resetDeprecationWarningsForTest(): void { warned.clear(); }
 
 /** The controls and styles both SDK versions hand out. */
-export const uiKit = { Modal, Markdown, FileViewer, Toggle, FilterBar, Select, MultiSelect, Segmented, SettingsGroup, SettingsRow, styles: { sectionLabel, row, item, ghostBtn, solidBtn, chip, fieldInput } };
+export const uiKit = { Modal, Markdown, FileViewer, Toggle, FilterBar, Select, MultiSelect, Segmented, SortableList, SettingsGroup, SettingsRow, styles: { sectionLabel, row, item, ghostBtn, solidBtn, chip, fieldInput } };
 
 /** The app actions both SDK versions hand out (the W2-F wrappers: a plugin never touches the UI store). */
 export const appActions = {

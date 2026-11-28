@@ -1,9 +1,9 @@
 {
   "id": "composer-favorites",
   "name": "Composer favorites",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "sdk": 2,
-  "description": "Your own buttons under the composer.",
+  "description": "Your own buttons above the composer: a tap sends a message, adds it or replaces what you typed. Add, reorder and remove them in Settings.",
   "web": "web.js",
   "contributes": {
     "composerActions": true,
