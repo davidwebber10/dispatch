@@ -53,6 +53,47 @@ describe('ChatTimeline scroll ids (search jumps, MemorySearch)', () => {
   });
 });
 
+describe('ChatTimeline: an open tool call keeps its scroll position when the next call arrives', () => {
+  const wrap = (messages: EndlessMessage[]) => (
+    <MessageScroller.Provider><MessageScroller.Root><MessageScroller.Viewport><MessageScroller.Content>
+      <ChatTimeline messages={messages} focus={null} />
+    </MessageScroller.Content></MessageScroller.Viewport></MessageScroller.Root></MessageScroller.Provider>
+  );
+  const long = Array.from({ length: 80 }, (_, n) => `line ${n}`).join('\n');
+  const openBox = (container: HTMLElement) => container.querySelector('pre.hljs') as HTMLElement;
+  // The open state lives in a store keyed by tool id (chat:t<i>): these i values are used by no other test.
+  for (const name of ['Bash', 'Read']) {
+    const base = name === 'Bash' ? 900 : 950;
+    it(`${name} then ${name}: the open box is the same node, with the same scrollTop, and both ids stay reachable`, () => {
+      const first = [m(base, 'user', 'go'), m(base + 1, 'tool', `${name} {"command":"one","file_path":"/one"}`), m(base + 2, 'echo', long)];
+      const { container, rerender } = render(wrap(first));
+      const row = container.querySelector(`[data-message-id="m${base + 1}"]`) as HTMLElement;
+      fireEvent.click(row.querySelector('button') as HTMLElement);
+      const box = openBox(container);
+      expect(box).not.toBeNull();
+      box.scrollTop = 240;
+
+      // The second call of the same tool starts: the lone call becomes a run of two.
+      const second = [...first, m(base + 3, 'tool', `${name} {"command":"two","file_path":"/two"}`)];
+      rerender(wrap(second));
+      expect(openBox(container)).toBe(box);
+      expect(box.scrollTop).toBe(240);
+      expect(container.querySelector(`[data-message-id="m${base + 1}"]`)).toBe(row);
+      expect(anchor(base + 3)).not.toBeNull();
+
+      // Its result lands, then a third call joins the run.
+      const third = [...second, m(base + 4, 'echo', 'done'), m(base + 5, 'tool', `${name} {"command":"three","file_path":"/three"}`)];
+      rerender(wrap(third));
+      expect(openBox(container)).toBe(box);
+      expect(box.scrollTop).toBe(240);
+      expect(anchor(base + 5)).not.toBeNull();
+      // The later ids are overlays inside the unit, not wrappers around it.
+      expect(row.contains(anchor(base + 3))).toBe(true);
+      expect(anchor(base + 3)?.contains(box)).toBe(false);
+    });
+  }
+});
+
 describe('ChatTimeline Chat-only views', () => {
   it('a user message shows its project, its images as user images and its other files as chips', () => {
     draw([m(0, 'user', 'see these', { project: 's1', projectName: 'salsify', media: ['1-0-abcdef12-shot.png', '1-1-abcdef12-notes.pdf'] })]);

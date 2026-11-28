@@ -1,4 +1,5 @@
 import type { ConvItem } from '../../../../api/types';
+import { uiKeyOf } from '../../../../hooks/useToolUIState';
 
 // Stable fallback id for a ConvItem that has neither `uuid` nor `toolId` (e.g. a plain
 // 'user'/'assistant'/'result' item built by useStructuredChat's non-streaming reconcile
@@ -17,4 +18,16 @@ export function stableId(it: ConvItem): string {
   let id = fallbackIds.get(it);
   if (!id) { id = `fallback-${++fallbackIdCounter}`; fallbackIds.set(it, id); }
   return id;
+}
+
+/**
+ * The React key of a drawn item. It differs from `stableId` in two ways that both keep a row
+ * mounted (owner 2026-11-27: an open tool call lost its scroll position on each new line):
+ * - a streamed block keeps its key when it gets its message's `uuid` (the tool id or the block's
+ *   first key comes first), so the row is not built again when the message settles;
+ * - the blocks of one settled message share that `uuid`, but each has its own key here, so two
+ *   tool calls of one message never get the same React key.
+ */
+export function rowKey(it: ConvItem): string {
+  return uiKeyOf(it) ?? stableId(it);
 }

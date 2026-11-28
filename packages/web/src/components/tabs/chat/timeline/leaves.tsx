@@ -1,4 +1,4 @@
-import { memo, useState, type ReactNode } from 'react';
+import { memo, useEffect, useState, type ReactNode } from 'react';
 import { Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, ArrowBendDownRight, ArrowClockwise } from '@phosphor-icons/react';
 import type { ConvItem } from '../../../../api/types';
 import { friendlyModelName } from '../../../../lib/modelName';
@@ -9,10 +9,10 @@ import type { LedgerChips } from '../../../../lib/ledgerRefs';
 import { useThreadDocs } from '../../../threadDocs';
 import { Spinner } from '../../../common/Spinner';
 import { ToolCall, editDiffStat } from '../../ToolCall';
-import { useToolGroupExpanded, useThoughtExpanded, uiKeyOf } from '../../../../hooks/useToolUIState';
+import { useToolExpanded, useToolGroupExpanded, useThoughtExpanded, uiKeyOf } from '../../../../hooks/useToolUIState';
 import { useRecentlyChanged } from '../../../../hooks/useThrottledValue';
 import { hostCopy } from '../../../../lib/hostCopy';
-import { stableId } from './stableId';
+import { rowKey } from './stableId';
 import { fontVar } from '../../../../lib/fontSize';
 import { askLook } from '../askLook';
 
@@ -84,9 +84,18 @@ export type ToolPair = { tool: ConvItem; result?: ConvItem };
  * `open || running` used to compute it) can't represent "the reader hasn't touched
  * this yet" as distinct from "the reader chose collapsed."
  *
+ * A LONE call is drawn by this component too (2026-11-27, owner: an open call "resets the
+ * scroll" and then closes). A lone call used to be a bare <ToolCall>; when a second call of
+ * the same tool arrived, the row became a <ToolGroup>, a different component in the same
+ * place, so React built the open call again (its output box went back to the top). When the
+ * run settled, the untouched group collapsed and the open call was gone. Now one call is a
+ * group of one with no header, and the calls sit in the same place of the same DOM shape for
+ * any count, so the open call's DOM node (and the reader's scroll position in it) stays.
+ * A call the reader opened also counts as touching the group: the group then stays open
+ * when the run settles.
+ *
  * Expansion state is keyed off the FIRST member's id, which is immutable as a run
- * grows — the group's React key is anchored to its LAST item by renderTimeline, for
- * the scroll-preservation reasons documented there. Uses `toolId ?? uuid` (not the
+ * grows — renderTimeline keys the group by that same first item. Uses `toolId ?? uuid` (not the
  * reverse): `useStructuredChat` upgrades every content block of an assistant message to
  * that message's single `uuid` once the whole-message event lands, so several distinct
  * groups within one settled parallel-tool turn would otherwise collide on the same
@@ -96,7 +105,12 @@ export function ToolGroup({ pairs, onViewFile }: { pairs: ToolPair[]; onViewFile
   const firstId = uiKeyOf(pairs[0].tool);
   const running = pairs.some((p) => !p.result);
   const [manualOpen, setManualOpen] = useToolGroupExpanded(firstId ? `group:${firstId}` : undefined, undefined);
-  const expanded = manualOpen === undefined ? running : manualOpen;
+  const single = pairs.length === 1;
+  // The reader opened a call of this run and never touched the group header: keep the run
+  // open for good (stored as a manual expand below), or the open call closes when the run settles.
+  const memberOpen = !single && manualOpen === undefined && pairs.some((p) => useToolExpanded.peek(uiKeyOf(p.tool)) === true);
+  useEffect(() => { if (memberOpen) setManualOpen(true); });
+  const expanded = single || (manualOpen === undefined ? running || memberOpen : manualOpen);
   const toolName = pairs[0].tool.toolName ?? 'tool';
   const lines = pairs.reduce((n, p) => n + (p.result?.text?.split('\n').length ?? 0), 0);
   // Aggregate edit stat across the run (the redesign's `+33 −9`): only shown when EVERY
@@ -109,12 +123,14 @@ export function ToolGroup({ pairs, onViewFile }: { pairs: ToolPair[]; onViewFile
   if (expanded) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column' }}>
-        <GroupHeader toolName={toolName} count={pairs.length} lines={lines} diff={diff} running={running} open onClick={() => setManualOpen(false)} />
+        {/* No header for one call. The slot stays (false, then the header), so the calls below
+            keep their place in the tree when a second call makes this a real group. */}
+        {!single && <GroupHeader toolName={toolName} count={pairs.length} lines={lines} diff={diff} running={running} open onClick={() => setManualOpen(false)} />}
         {/* Members flush-left with the header (no indent — David's call): the caret column
             on each row already provides the visual hierarchy. */}
-        <div style={{ display: 'flex', flexDirection: 'column', paddingBottom: 4 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', paddingBottom: single ? 0 : 4 }}>
           {pairs.map(({ tool: t, result }) => (
-            <ToolCall key={stableId(t)} tool={t} result={result} onViewFile={onViewFile} />
+            <ToolCall key={rowKey(t)} tool={t} result={result} onViewFile={onViewFile} />
           ))}
         </div>
       </div>

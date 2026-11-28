@@ -12,7 +12,7 @@ import { useState, type Dispatch, type SetStateAction } from 'react';
  */
 function createPersistedState<T>() {
   const store = new Map<string, T>();
-  return function usePersistedState(id: string | undefined, initial: T): [T, Dispatch<SetStateAction<T>>] {
+  function usePersistedState(id: string | undefined, initial: T): [T, Dispatch<SetStateAction<T>>] {
     const [value, setValue] = useState<T>(() => (id !== undefined && store.has(id) ? store.get(id)! : initial));
     const setPersisted: Dispatch<SetStateAction<T>> = (next) => {
       setValue((prev) => {
@@ -22,7 +22,14 @@ function createPersistedState<T>() {
       });
     };
     return [value, setPersisted];
-  };
+  }
+  /**
+   * The stored value for `id`, read once and without a subscription (`undefined` when nothing
+   * was stored). For a parent that needs a child's state at its own next render (ToolGroup
+   * asks if the reader opened one of its calls); a write here re-renders only the writer.
+   */
+  usePersistedState.peek = (id: string | undefined): T | undefined => (id !== undefined ? store.get(id) : undefined);
+  return usePersistedState;
 }
 
 /** Whether a tool call/result's expanded shelf is open, keyed by tool id. */
