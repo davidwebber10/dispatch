@@ -52,6 +52,10 @@ export const ICONS: Record<string, Icon> = {
   // Drops (2026-11-11): the kinds' chips and their buttons.
   link: Icons.Link, code: Icons.Code, key: Icons.Key, 'list-numbers': Icons.ListNumbers, 'git-diff': Icons.GitDiff, table: Icons.Table,
   'text-t': Icons.TextT, paperclip: Icons.Paperclip, 'arrow-square-out': Icons.ArrowSquareOut, tray: Icons.Tray,
+  // The Inbox's two views (2026-11-27).
+  rows: Icons.List, cards: Icons.Rows, search: Icons.MagnifyingGlass,
+  // Send Secret (the owner's pick).
+  'paper-plane': Icons.PaperPlaneTilt,
 };
 export const pluginIcon = (name: string | undefined): Icon => (name && ICONS[name]) || Icons.PuzzlePiece;
 /** A right-column tab's icon: a name from the list above, or the phosphor component itself. */
