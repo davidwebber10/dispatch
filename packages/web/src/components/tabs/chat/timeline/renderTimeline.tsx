@@ -7,9 +7,9 @@ import { noticeHidden, type NoticeFilter } from '../../../../stores/dismissedNot
 import { isReportStatusTool, parseReportStatus, reportStatusKey } from '../reportStatus';
 import { ModelNotice } from '../ModelSwitcher';
 import { ChatImage } from '../../../ChatImage';
-import { ToolCall, ToolResult } from '../../ToolCall';
+import { ToolResult } from '../../ToolCall';
 import { uiKeyOf } from '../../../../hooks/useToolUIState';
-import { stableId } from './stableId';
+import { rowKey } from './stableId';
 import { AssistantTurn, MachineryBlock, ToolGroup, UserBubble, AssistantText, Thinking, ResultFooter, TaskNotice } from './leaves';
 
 /**
@@ -88,7 +88,6 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
   const flushMach = () => {
     if (mach && mach.nodes.length > 0 && group) {
       group.nodes.push(<MachineryBlock key={`m-${mach.key}`} nodes={mach.nodes} />);
-      group.key = mach.key;
     }
     mach = null;
   };
@@ -104,17 +103,21 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
     }
     group = null;
   };
+  // The group and the strip take the key of their FIRST item and keep it (see the note at the
+  // end of the walk): a later call in the same strip must not build the strip again.
   const pushMach = (id: string, node: React.ReactNode) => {
     if (!group) group = { key: id, nodes: [] };
-    group.key = id;
     if (!mach) mach = { key: id, nodes: [] };
-    mach.key = id;
     mach.nodes.push(<div key={id}>{node}</div>);
   };
 
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
-    const id = stableId(it);
+    const id = rowKey(it);
+
+    // A page boundary closes the group even when its item draws nothing (a blank block, below):
+    // the group keys rely on a group never growing at its start.
+    if (pageBoundaries.has(it)) flushGroup();
 
     // A blank assistant/thinking item (a streamed message whose text block is empty —
     // the common shape when a message only carries tool calls) renders nothing, but if
@@ -122,8 +125,6 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
     // flex-gap slot — the "inconsistent tool-call spacing" bug: hollow hairline bands
     // between blocks that should have been one strip. Skip it before it breaks anything.
     if ((it.kind === 'assistant' || it.kind === 'thinking') && !(it.text ?? '').trim()) continue;
-
-    if (pageBoundaries.has(it)) flushGroup();
 
     if (it.kind === 'user') {
       const custom = ext?.userRow?.(it);
@@ -236,9 +237,10 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
           tool: t,
           result: t.toolId ? resultById.get(t.toolId) : runResults[toolIdLessSeen++],
         }));
-        const lastId = stableId(run[run.length - 1]);
         const runItems = pairs.flatMap((p) => (p.result ? [p.tool, p.result] : [p.tool]));
-        pushMach(lastId, frame(runItems, <ToolGroup pairs={pairs} onViewFile={onViewFile} />));
+        // Keyed by the run's FIRST call (`id`), which stays while the run grows: the key of its
+        // last call changed with each new call, and an open call inside lost its scroll position.
+        pushMach(id, frame(runItems, <ToolGroup pairs={pairs} onViewFile={onViewFile} />));
         // Skip past the run's members; their paired results are skipped by the
         // existing `toolIds.has(...)` guard on the 'tool-result' branch.
         i = lastIdx;
@@ -287,7 +289,9 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
       } else {
         // Generic machinery — routes through pushMach so consecutive calls share one
         // bordered block, and so the header's Hide-tool-calls toggle can drop it.
-        pushMach(id, frame(covered, <ToolCall tool={it} result={result} onViewFile={onViewFile} />));
+        // A group of one, not a bare <ToolCall>: a second call of the same tool then grows this
+        // same component, and an open call keeps its DOM node and scroll (see ToolGroup).
+        pushMach(id, frame(covered, <ToolGroup pairs={[{ tool: it, result }]} onViewFile={onViewFile} />));
         continue;
       }
     } else if (it.kind === 'tool-result') {
@@ -310,14 +314,14 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
     // ends exactly where the prose resumes.
     flushMach();
     if (!group) group = { key: id, nodes: [] };
-    // Anchor the group's React key to its LAST item, re-set on every push (not just at
-    // creation). A group's start can move earlier when loadOlder() prepends older history
-    // that merges into it (no `user` boundary between them) — keying by the first item would
-    // then change the key every time, forcing React to unmount+remount the node and breaking
-    // MessageScroller's preserveScrollOnPrepend (it tracks anchor position by DOM node
-    // identity). The group's LAST item is untouched by anything prepended before it, so
-    // keying there keeps the node — and the reader's scroll position — stable across a page.
-    group.key = id;
+    // The group's React key is its FIRST item's key, set once (owner 2026-11-27). It was the
+    // LAST item's key, set again on every push, so each new line of a turn that still streams
+    // changed the key: React built the whole turn again, and an open tool call lost its scroll
+    // position (its open state came back from useToolUIState, its scroll did not). The last
+    // item was chosen because a loadOlder() page could merge into the start of a group. That
+    // cannot occur now: usePageBoundaries makes each older page its own group, so a group grows
+    // only at its end, and its first item keeps the node (and MessageScroller's
+    // preserveScrollOnPrepend, which follows DOM node identity) through a page and a new line.
     group.nodes.push(<div key={id}>{frame(covered, node)}</div>);
   }
   flushGroup();

@@ -25,8 +25,9 @@ import { CardOpenContext, ChatProse, FileChip, NoteCard, ProjectLabel, RecallLin
 /** One drawn unit: an anchor per message it shows, the focus outline, and a user message's label and files. */
 function ChatFrame({ keys, focused, user, children }: { keys: number[]; focused: boolean; user: EndlessMessage | null; children: ReactNode }) {
   const files = user ? user.media.filter((name) => !isImageMedia(name)) : [];
+  const [first, ...rest] = keys;
   const body = (
-    <div data-endless-i={keys[0]} style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0, borderRadius: 'var(--radius-md)', outline: focused ? '1px solid var(--color-accent)' : 'none', outlineOffset: 4 }}>
+    <div data-endless-i={first} style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0, borderRadius: 'var(--radius-md)', outline: focused ? '1px solid var(--color-accent)' : 'none', outlineOffset: 4 }}>
       {user?.projectName && <ProjectLabel name={user.projectName} />}
       {children}
       {files.length > 0 && (
@@ -34,12 +35,17 @@ function ChatFrame({ keys, focused, user, children }: { keys: number[]; focused:
           {files.map((name) => <FileChip key={name} name={mediaDisplayName(name)} href={endlessMediaUrl(name)} />)}
         </div>
       )}
+      {/* A unit that shows several messages (a same-tool run) is reachable by each one's id. The
+          later ids are overlays the size of the unit, NOT wrappers around it: a wrapper added when
+          the run grows would move the unit to a new parent, and React would rebuild it, which
+          closed the reader's open tool call and reset its scroll (2026-11-27). */}
+      {rest.map((key) => (
+        <MessageScroller.Item key={key} messageId={`m${key}`} aria-hidden="true" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />
+      ))}
     </div>
   );
-  // A unit that shows several messages (a same-tool run) is reachable by each one's id.
-  return keys.reduceRight<ReactNode>((inner, key) => (
-    <MessageScroller.Item messageId={`m${key}`} style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>{inner}</MessageScroller.Item>
-  ), body);
+  if (first === undefined) return body;
+  return <MessageScroller.Item messageId={`m${first}`} style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>{body}</MessageScroller.Item>;
 }
 
 /** Chat's renderTimeline extensions for this window of messages and search focus. */

@@ -187,6 +187,155 @@ describe('renderTimeline — an expanded tool call survives a live streaming re-
   });
 });
 
+// Owner 2026-11-27: "it doesn't hide, but it resets the scroll". The open state came back from
+// useToolUIState, but each new line still built the whole turn again (the turn, its tool strip
+// and a same-tool group were keyed by their NEWEST item), so the open output box was a new DOM
+// node scrolled back to its top. These tests hold the DOM node itself: the same node means the
+// reader's scroll position inside it is kept.
+describe('renderTimeline: an open tool call keeps its scroll position when new lines arrive', () => {
+  const wrap = (items: ConvItem[]) => (
+    <MessageScroller.Provider>
+      <MessageScroller.Root>
+        <MessageScroller.Viewport>
+          <MessageScroller.Content>
+            {renderTimeline(items, () => {}, new Set())}
+          </MessageScroller.Content>
+        </MessageScroller.Viewport>
+      </MessageScroller.Root>
+    </MessageScroller.Provider>
+  );
+  const bash = (id: string, cmd: string): ConvItem[] => [
+    { kind: 'tool', toolId: id, toolName: 'Bash', toolTitle: `Bash ${id}`, toolInput: cmd },
+    { kind: 'tool-result', toolId: id, text: Array.from({ length: 80 }, (_, n) => `line ${n}`).join('\n') },
+  ];
+  // The open state lives in a store keyed by tool id for the whole file: these ids are used by no other test.
+  const openBox = (container: HTMLElement) => container.querySelector('pre.hljs') as HTMLElement;
+
+  it('the same output box stays through a new tool call, new prose and a new result', () => {
+    const base: ConvItem[] = [{ kind: 'user', text: 'go', uuid: 'u1' }, { kind: 'assistant', text: 'Looking.', uuid: 'a1' }, ...bash('keep-a', 'ls')];
+    const { container, rerender } = render(wrap(base));
+    fireEvent.click(screen.getByText('Bash keep-a'));
+    const box = openBox(container);
+    expect(box).not.toBeNull();
+    box.scrollTop = 240;
+    const turn = container.querySelector('[data-message-id="a1"]');
+    expect(turn).not.toBeNull();
+
+    // A different tool starts in the same strip.
+    const read1: ConvItem = { kind: 'tool', toolId: 'keep-r', toolName: 'Read', toolTitle: 'Read', toolInput: 'a.txt' };
+    rerender(wrap([...base, read1]));
+    expect(openBox(container)).toBe(box);
+    // Its result lands, then prose closes the strip, then one more call opens a second strip.
+    const more: ConvItem[] = [...base, read1, { kind: 'tool-result', toolId: 'keep-r', text: 'x' }, { kind: 'assistant', text: 'Next.', uuid: 'a2' }];
+    rerender(wrap(more));
+    expect(openBox(container)).toBe(box);
+    rerender(wrap([...more, ...bash('keep-b', 'pwd')]));
+    expect(openBox(container)).toBe(box);
+    expect(box.scrollTop).toBe(240);
+    // The turn is one row, and it is still the same row.
+    expect(container.querySelector('[data-message-id="a1"]')).toBe(turn);
+  });
+
+  it('the same output box stays when a same-tool group grows by one call', () => {
+    const base: ConvItem[] = [{ kind: 'user', text: 'go', uuid: 'u1' }, ...bash('keep-1', 'one'), ...bash('keep-2', 'two')];
+    const { container, rerender } = render(wrap(base));
+    // Open the group, then the first call inside it. (A group is open by itself only while a call runs.)
+    if (!screen.queryByText('Bash keep-1')) fireEvent.click(screen.getByRole('button', { name: /×2/ }));
+    fireEvent.click(screen.getByText('Bash keep-1'));
+    const box = openBox(container);
+    expect(box).not.toBeNull();
+    box.scrollTop = 120;
+
+    rerender(wrap([...base, ...bash('keep-3', 'three')]));
+    expect(screen.getByRole('button', { name: /×3/ })).toBeInTheDocument();
+    expect(openBox(container)).toBe(box);
+    expect(box.scrollTop).toBe(120);
+  });
+
+  // The two phone failures of the 2026-11-27 browser check: a lone call became a group when a
+  // second call of the same tool came, the open box went to its top, then closed on the result.
+  it('the same output box stays when a second call of the same tool makes a lone call a group', () => {
+    const base: ConvItem[] = [{ kind: 'user', text: 'go', uuid: 'u1' }, ...bash('keep-g1', 'one')];
+    const { container, rerender } = render(wrap(base));
+    // One call has no group header.
+    expect(screen.queryByRole('button', { name: /×1/ })).toBeNull();
+    fireEvent.click(screen.getByText('Bash keep-g1'));
+    const box = openBox(container);
+    expect(box).not.toBeNull();
+    box.scrollTop = 180;
+
+    // The second Bash call starts (no result yet): the row is now a group of two.
+    const second: ConvItem = { kind: 'tool', toolId: 'keep-g2', toolName: 'Bash', toolTitle: 'Bash keep-g2', toolInput: 'two' };
+    rerender(wrap([...base, second]));
+    expect(screen.getByRole('button', { name: /×2/ })).toBeInTheDocument();
+    expect(openBox(container)).toBe(box);
+    expect(box.scrollTop).toBe(180);
+
+    // Its result lands: the run is settled, and the call the reader opened is still open.
+    rerender(wrap([...base, second, { kind: 'tool-result', toolId: 'keep-g2', text: 'done' }]));
+    expect(openBox(container)).toBe(box);
+    expect(box.scrollTop).toBe(180);
+    expect(screen.getByRole('button', { name: /×2/ })).toHaveAttribute('aria-expanded', 'true');
+    // A third call and its result change nothing for the open call.
+    rerender(wrap([...base, second, { kind: 'tool-result', toolId: 'keep-g2', text: 'done' }, ...bash('keep-g3', 'three')]));
+    expect(openBox(container)).toBe(box);
+    expect(box.scrollTop).toBe(180);
+  });
+
+  it('a call opened while it runs stays open, in the same row, when a second call and the results come', () => {
+    const first: ConvItem = { kind: 'tool', toolId: 'keep-h1', toolName: 'Read', toolTitle: 'Read keep-h1', toolInput: 'a.txt' };
+    const base: ConvItem[] = [{ kind: 'user', text: 'go', uuid: 'u1' }, first];
+    const { rerender } = render(wrap(base));
+    fireEvent.click(screen.getByText('Read keep-h1'));
+    const row = screen.getByText('Read keep-h1').closest('button');
+    expect(row).not.toBeNull();
+
+    const second: ConvItem = { kind: 'tool', toolId: 'keep-h2', toolName: 'Read', toolTitle: 'Read keep-h2', toolInput: 'b.txt' };
+    rerender(wrap([...base, second]));
+    expect(screen.getByText('Read keep-h1').closest('button')).toBe(row);
+    rerender(wrap([...base, second, { kind: 'tool-result', toolId: 'keep-h1', text: 'A' }, { kind: 'tool-result', toolId: 'keep-h2', text: 'B' }]));
+    // Settled and never touched at the header, but a call inside is open: the group stays open.
+    expect(screen.getByText('Read keep-h1').closest('button')).toBe(row);
+    expect(screen.getByRole('button', { name: /×2/ })).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('a group the reader never opened anything in still collapses when the run settles', () => {
+    const first: ConvItem = { kind: 'tool', toolId: 'keep-i1', toolName: 'Read', toolTitle: 'Read keep-i1', toolInput: 'a.txt' };
+    const second: ConvItem = { kind: 'tool', toolId: 'keep-i2', toolName: 'Read', toolTitle: 'Read keep-i2', toolInput: 'b.txt' };
+    const base: ConvItem[] = [{ kind: 'user', text: 'go', uuid: 'u1' }, first, second];
+    const { rerender } = render(wrap(base));
+    expect(screen.getByRole('button', { name: /×2/ })).toHaveAttribute('aria-expanded', 'true');
+    rerender(wrap([...base, { kind: 'tool-result', toolId: 'keep-i1', text: 'A' }, { kind: 'tool-result', toolId: 'keep-i2', text: 'B' }]));
+    expect(screen.getByRole('button', { name: /×2/ })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Read keep-i1')).toBeNull();
+  });
+
+  it('the same output box stays when the streamed message gets its uuid, and two calls of one message get different keys', () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // While it streams, each block has its own synthetic key as `uuid`.
+    const streaming: ConvItem[] = [
+      { kind: 'user', text: 'go', uuid: 'u1' },
+      { kind: 'tool', toolId: 'keep-c', toolName: 'Bash', toolTitle: 'Bash keep-c', toolInput: 'ls', uuid: 's-1-0' },
+      { kind: 'tool', toolId: 'keep-d', toolName: 'Read', toolTitle: 'Read keep-d', toolInput: 'a.txt', uuid: 's-1-1' },
+    ];
+    const { container, rerender } = render(wrap(streaming));
+    fireEvent.click(screen.getByText('Bash keep-c'));
+    const box = openBox(container);
+    expect(box).not.toBeNull();
+    // The whole message lands: both blocks get the message's one uuid and keep their first key.
+    const settled: ConvItem[] = [
+      streaming[0],
+      { ...streaming[1], uuid: 'msg-1', blockKey: 's-1-0' },
+      { ...streaming[2], uuid: 'msg-1', blockKey: 's-1-1' },
+      { kind: 'tool-result', toolId: 'keep-c', text: 'out' },
+    ];
+    rerender(wrap(settled));
+    expect(openBox(container)).toBe(box);
+    expect(errors.mock.calls.some((c) => String(c[0]).includes('same key'))).toBe(false);
+    errors.mockRestore();
+  });
+});
+
 // ---- Grouping a run of consecutive same-tool calls into one collapsible row ----------
 // Six Reads in a turn would otherwise be six separate rows that bury the assistant's
 // prose (see ChatView's ToolGroup doc comment). A run of 2+ same-tool calls collapses;
@@ -298,7 +447,7 @@ describe('renderTimeline — groups a run of consecutive same-tool calls', () =>
     fireEvent.click(screen.getByRole('button', { name: /Read ×2/ }));
     expect(screen.getByText('three.ts')).toBeTruthy(); // expanded
 
-    const groupNodeBefore = container.querySelector('[data-message-id="d"]');
+    const groupNodeBefore = container.querySelector('[data-message-id="c"]');
     expect(groupNodeBefore).not.toBeNull();
 
     // loadOlder() prepends an older page — its own run of two Reads — in front. ChatView's
@@ -321,7 +470,7 @@ describe('renderTimeline — groups a run of consecutive same-tool calls', () =>
     expect(screen.getByText('three.ts')).toBeTruthy(); // still expanded
     // Same DOM node — not unmounted/remounted. This is the actual scroll-preservation
     // contract MessageScroller relies on; toBe (not toEqual) checks object identity.
-    expect(container.querySelector('[data-message-id="d"]')).toBe(groupNodeBefore);
+    expect(container.querySelector('[data-message-id="c"]')).toBe(groupNodeBefore);
     // Two SEPARATE groups now render — the prepended page's own run, plus the pre-existing
     // group — rather than one run of 4 merged across the boundary.
     expect(screen.getAllByRole('button', { name: /Read ×2/ })).toHaveLength(2);
@@ -875,7 +1024,8 @@ describe('renderTimeline — ext.frame and ext.prose (the hooks Chat uses)', () 
     plain.unmount();
     const framed = draw(items, { frame: (_c, node) => <span>{node}</span> });
     expect([...framed.container.querySelectorAll('[data-message-id]')].map((e) => e.getAttribute('data-message-id'))).toEqual(ids);
-    expect(ids).toEqual(['u', 'y']);
+    // A turn's row has the id of its FIRST item (it kept changing to the newest one before 2026-11-27).
+    expect(ids).toEqual(['u', 'x']);
   });
   it('prose is given the item its text came from', () => {
     draw([{ kind: 'assistant', text: 'hello', uuid: 'a7' }], { prose: (text, item) => <p>{`${item.uuid}: ${text}`}</p> });

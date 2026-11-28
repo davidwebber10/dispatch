@@ -3,4 +3,4 @@
 export { renderTimeline, type TimelineExtensions } from './renderTimeline';
 export { TaskNotice, AssistantTurn, MachineryBlock, ToolGroup, type ToolPair, ReconnectingState, EmptyState, UserBubble, AssistantText, Thinking, ResultFooter } from './leaves';
 export { StickToEndOnLoad, BootstrapOlderPages, LoadEarlierButton, LoadingOlderPill, JumpButton, ThreadStartMarker } from './scroll';
-export { stableId } from './stableId';
+export { stableId, rowKey } from './stableId';
