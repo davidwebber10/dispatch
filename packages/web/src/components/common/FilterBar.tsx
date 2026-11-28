@@ -65,6 +65,11 @@ export interface FilterBarProps {
    * Null while the host is not mounted: they show nowhere until it is.
    */
   buttonHost?: HTMLElement | null;
+  /**
+   * The Filters button shows the icon alone, a square of the row's height, with no change to the
+   * search (the desktop's Threads list: owner, 2026-11-27). The name stays for a screen reader and as a tooltip.
+   */
+  iconOnly?: boolean;
   /** The Filters button's height, when it must match other buttons (the phone header's 36 px). It also takes their round corners. */
   buttonHeight?: number;
 }
@@ -76,7 +81,7 @@ export interface FilterBarProps {
  * show as pills under the row, each with ×, and Clear. Derived from the Threads list's filters;
  * the Threads list (desktop and phone) and the Previews plugin (`d.ui.FilterBar`) use it.
  */
-export function FilterBar({ facets, query = '', onQueryChange, placeholder = 'Search', leading, trailing, onClear, doneLabel = 'Done', variant, size, style, rowStyle, pillsStyle, rowTestId, compact, autoFocus, buttonHost, buttonHeight }: FilterBarProps) {
+export function FilterBar({ facets, query = '', onQueryChange, placeholder = 'Search', leading, trailing, onClear, doneLabel = 'Done', variant, size, style, rowStyle, pillsStyle, rowTestId, compact, iconOnly, autoFocus, buttonHost, buttonHeight }: FilterBarProps) {
   const isMobile = useIsMobile();
   const sheet = (variant ?? (isMobile ? 'sheet' : 'popover')) === 'sheet';
   const lg = (size ?? (isMobile ? 'lg' : 'md')) === 'lg';
@@ -95,16 +100,18 @@ export function FilterBar({ facets, query = '', onQueryChange, placeholder = 'Se
 
   const h = compact ? 44 : lg ? 36 : 32;
   const bh = buttonHeight ?? h;
+  // Icon alone: the dense row (`compact`) or the caller's choice (`iconOnly`).
+  const bare = compact || iconOnly;
   const button = (
-    <button type="button" aria-expanded={open} aria-haspopup="dialog" aria-label={n ? `Filters, ${n} on` : 'Filters'} onClick={() => setOpen((v) => !v)}
+    <button type="button" aria-expanded={open} aria-haspopup="dialog" aria-label={n ? `Filters, ${n} on` : 'Filters'} title={iconOnly ? 'Filters' : undefined} onClick={() => setOpen((v) => !v)}
       style={{
-        height: bh, padding: compact ? 0 : '0 10px', width: compact && !n ? bh : undefined, minWidth: compact ? bh : undefined, justifyContent: 'center', flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: compact ? 3 : 6, cursor: 'pointer',
+        height: bh, padding: compact ? 0 : iconOnly ? (n ? '0 6px' : 0) : '0 10px', width: bare && !n ? bh : undefined, minWidth: bare ? bh : undefined, justifyContent: 'center', flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: bare ? 3 : 6, cursor: 'pointer',
         fontSize: fontVar(lg ? 14 : 13), borderRadius: lg || buttonHeight ? 'var(--radius-md)' : 'var(--radius-sm)',
         border: `1px solid ${n ? 'color-mix(in srgb, var(--color-accent) 55%, transparent)' : 'var(--color-border-strong)'}`,
         background: n || open ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-elevated))' : 'var(--color-elevated)',
         color: n ? 'var(--color-accent)' : 'var(--color-text-secondary)',
       }}>
-      <FunnelSimple size={compact ? 18 : lg ? 16 : 15} weight="bold" />{compact ? null : 'Filters'}
+      <FunnelSimple size={compact ? 18 : lg || iconOnly ? 16 : 15} weight="bold" />{bare ? null : 'Filters'}
       {n > 0 && <span aria-hidden style={{ minWidth: 18, height: 18, padding: '0 5px', borderRadius: 'var(--radius-pill)', background: 'var(--color-accent)', color: 'var(--color-on-accent)', font: `600 ${fontVar(11)} var(--font-sans)`, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{n}</span>}
     </button>
   );

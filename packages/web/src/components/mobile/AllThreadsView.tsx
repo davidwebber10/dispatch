@@ -359,7 +359,8 @@ export function AllThreadsView({ onOpenThread, query = '', onQueryChange, header
     </button>
   );
   const filterBar = desktop ? (
-    <FilterBar variant="popover" size="md" facets={filterFacets} doneLabel={doneLabel} query={query} onQueryChange={onQueryChange} placeholder="Search threads" rowTestId="sidebar-search-row" trailing={plus}
+    // The desktop's Filters button is the icon alone, a 32 px square like the + beside it (owner, 2026-11-27).
+    <FilterBar variant="popover" size="md" iconOnly facets={filterFacets} doneLabel={doneLabel} query={query} onQueryChange={onQueryChange} placeholder="Search threads" rowTestId="sidebar-search-row" trailing={plus}
       style={{ padding: '8px 8px 10px', gap: 8, background: 'color-mix(in srgb, var(--color-pane) 62%, transparent)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderBottom: '1px solid color-mix(in srgb, var(--color-text-emphasis) 6%, transparent)' }} />
   ) : (
     <FilterBar variant="sheet" size="md" facets={filterFacets} doneLabel={doneLabel} style={{ gap: 0 }} trailing={plus}

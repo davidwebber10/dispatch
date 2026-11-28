@@ -111,6 +111,28 @@ describe('FilterBar', () => {
     expect(onChange).toHaveBeenCalledWith('mine');
   });
 
+  it('`iconOnly` shows the icon alone in a square of the row height, keeps the name, and leaves the search as it was', () => {
+    const facet = (value: string | null): FilterFacet[] => [{ id: 'project', title: 'Project', allLabel: 'All projects', value, options: PROJECTS, onChange: () => {} }];
+    const { rerender } = render(<FilterBar variant="popover" size="md" iconOnly query="" onQueryChange={() => {}} facets={facet(null)} />);
+    const button = screen.getByRole('button', { name: 'Filters' });
+    expect(button.textContent).toBe('');
+    expect(button).toHaveAttribute('title', 'Filters');
+    expect(button.style.width).toBe('32px');
+    expect(button.style.height).toBe('32px');
+    expect(screen.getByRole('searchbox').style.height).toBe('32px');
+    // With a filter on, the count shows beside the icon and the button grows to hold it.
+    rerender(<FilterBar variant="popover" size="md" iconOnly query="" onQueryChange={() => {}} facets={facet('a')} />);
+    const on = screen.getByRole('button', { name: 'Filters, 1 on' });
+    expect(on.textContent).toBe('1');
+    expect(on.style.width).toBe('');
+    expect(on.style.minWidth).toBe('32px');
+  });
+
+  it('without `iconOnly` the button keeps the word', () => {
+    render(<Harness />);
+    expect(screen.getByRole('button', { name: 'Filters' }).textContent).toBe('Filters');
+  });
+
   it('`leading` takes the search\'s place in the row', () => {
     render(<FilterBar variant="popover" leading={<span>Tabs here</span>} facets={[]} />);
     expect(screen.getByText('Tabs here').closest('[data-filterbar-row]')).toBe(screen.getByRole('button', { name: 'Filters' }).closest('[data-filterbar-row]'));
