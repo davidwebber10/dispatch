@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, lazy, Suspense } from 'react';
-import { Gear, CaretLeft, CaretRight, Plus, ChartBar, ChatCircleDots, TerminalWindow, DotsSixVertical } from '@phosphor-icons/react';
+import { Gear, CaretLeft, CaretRight, ChartBar, ChatCircleDots, TerminalWindow, DotsSixVertical } from '@phosphor-icons/react';
 import { PROJECTS_ICON, THREADS_ICON } from '../common/viewIcons';
 import { ConnectionStatus } from '../layout/ConnectionStatus';
 import { BrandSwitcher } from '../layout/BrandSwitcher';
@@ -27,6 +27,7 @@ import { ProjectCard } from '../sidebar/ProjectCard';
 import { SortMenu } from '../sidebar/SortMenu';
 import { AllAgentsView } from '../agents/AllAgentsView';
 import { AllThreadsView } from './AllThreadsView';
+import { PHONE_HEADER_BTN, PHONE_HEADER_ICON_SIZE, PhoneHeaderPlus } from './PhoneHeaderButtons';
 import { useProjectsView } from '../../stores/projectsView';
 import { NewProjectModal } from '../sidebar/NewProjectModal';
 import { FilesPane } from '../inspector/FilesPane';
@@ -170,6 +171,7 @@ export function MobileApp() {
   // Chat's header row lives in this app header (one row at the top of Chat, 2026-11-27): ChatMode portals into it.
   const chatHeader = level === 0 && bottomTab === 'chat';
   const [chatHeaderSlot, setChatHeaderSlot] = useState<HTMLDivElement | null>(null);
+  const [threadsHeaderSlot, setThreadsHeaderSlot] = useState<HTMLDivElement | null>(null);
 
   const slot: React.CSSProperties = { flex: '0 0 100%', height: '100%', minWidth: 0 };
   const scrollSlot: React.CSSProperties = { ...slot, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y' };
@@ -218,12 +220,12 @@ export function MobileApp() {
                   options={PROJECT_SORTS}
                   onChange={(v) => setProjectSort(v as ProjectSort)}
                   isMobile
-                  iconSize={18}
-                  buttonStyle={{ width: 36, height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-secondary)', cursor: 'pointer' }}
+                  iconSize={PHONE_HEADER_ICON_SIZE}
+                  buttonStyle={PHONE_HEADER_BTN}
                 />}
-                {projectsView === 'projects' && <button onClick={() => setNewProject(true)} title="New project" style={{ width: 36, height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-on-accent)', cursor: 'pointer' }}>
-                  <Plus size={18} weight="bold" />
-                </button>}
+                {projectsView === 'projects' && <PhoneHeaderPlus label="New project" onClick={() => setNewProject(true)} />}
+                {/* The Threads list puts its Filters and + here, as Projects does (owner, 2026-11-27). */}
+                {projectsView === 'threads' && <div ref={setThreadsHeaderSlot} data-testid="threads-header-slot" style={{ display: 'contents' }} />}
               </>
             )}
           </>
@@ -315,7 +317,7 @@ export function MobileApp() {
               })}
             </div>
             {projectsView === 'threads' ? (
-              <AllThreadsView onOpenThread={openThreadFromList} query={query} />
+              <AllThreadsView onOpenThread={openThreadFromList} query={query} headerActionsHost={threadsHeaderSlot} />
             ) : (
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y', padding: '6px 4px 12px' }}>
               {/* The attention queue across all projects (W2-F): a list above the projects, hidden when empty.
