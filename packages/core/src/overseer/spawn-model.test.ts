@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { resolveSpawnModel } from './spawn-model.js';
 
 describe('resolveSpawnModel', () => {
-  it('claude-code coordinator gets the sonnet tier', () => {
-    expect(resolveSpawnModel({ harness: 'claude-code', config: { role: 'coordinator' } })).toBe('sonnet');
+  it('claude-code coordinator gets the opus tier', () => {
+    expect(resolveSpawnModel({ harness: 'claude-code', config: { role: 'coordinator' } })).toBe('opus');
   });
 
   it('claude-code agentType gets its tier', () => {
@@ -37,11 +37,11 @@ describe('resolveSpawnModel', () => {
     expect(resolveSpawnModel({ harness: 'codex', config: { model: 'opus' } })).toBeUndefined();
   });
 
-  // Task 7: MODEL_FOR_TYPE.coordinator = 'sonnet' must never leak to a codex coordinator —
+  // Task 7: MODEL_FOR_TYPE.coordinator = 'opus' must never leak to a codex coordinator —
   // resolveSpawnModel only consults MODEL_FOR_TYPE (via modelFor) on the claude-code branch,
   // so a codex coordinator with no explicit model falls through to undefined, letting the
   // codex CLI apply its own configured default rather than an alias meaningless to it.
-  it('a codex coordinator with no explicit model never gets the claude sonnet tier', () => {
+  it('a codex coordinator with no explicit model never gets the claude opus tier', () => {
     expect(resolveSpawnModel({ harness: 'codex', config: { role: 'coordinator' } })).toBeUndefined();
   });
 });

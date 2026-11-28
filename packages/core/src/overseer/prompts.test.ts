@@ -19,9 +19,9 @@ describe('fable review-gate agent types', () => {
     expect(systemPromptFor({ agentType: 'code-reviewer' })).toBe(AGENT_PROMPTS['code-reviewer']);
   });
 
-  it('existing tiers are unchanged', () => {
-    expect(MODEL_FOR_TYPE.coordinator).toBe('sonnet');
-    expect(MODEL_FOR_TYPE.implementer).toBe('sonnet');
+  it('the coordinator and the builder run on opus (2026-11-27); the research tier is unchanged', () => {
+    expect(MODEL_FOR_TYPE.coordinator).toBe('opus');
+    expect(MODEL_FOR_TYPE.implementer).toBe('opus');
     expect(MODEL_FOR_TYPE.researcher).toBe('opus');
   });
 });

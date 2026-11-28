@@ -144,9 +144,9 @@ export const TOOLS = [
             'Optional model override for this agent — pins it to a specific model for its harness instead of ' +
             'the automatic per-type default. Accepts short aliases ("sonnet", "opus", "haiku") or a full ' +
             'model id (e.g. "claude-opus-4-8") for claude-code workers; other harnesses expect their own model ids. Omit to use the default tier for the type: researcher, ' +
-            'planner, and reviewer run on opus; implementer runs sonnet; design-reviewer and code-reviewer run fable (the strongest tier — never point them at routine work). Override when a task is ' +
-            'unusually easy for its role (e.g. drop a researcher to sonnet for a quick lookup) or ' +
-            'unusually hard (e.g. bump an implementer to opus for a hard problem).',
+            'planner, reviewer, and implementer run on opus; design-reviewer and code-reviewer run fable (the strongest tier — never point them at routine work). Override when a task is ' +
+            'unusually easy for its role (e.g. drop a researcher or an implementer to sonnet for a quick lookup or a small edit) or ' +
+            'unusually hard (e.g. bump a reviewer to fable for a hard problem).',
         },
         harness: {
           type: 'string',
@@ -198,9 +198,9 @@ export const TOOLS = [
             'Optional model override for this agent — pins it to a specific model for its harness instead of ' +
             'the automatic per-type default. Accepts short aliases ("sonnet", "opus", "haiku") or a full ' +
             'model id (e.g. "claude-opus-4-8") for claude-code workers; other harnesses expect their own model ids. Omit to use the default tier for the type: researcher, ' +
-            'planner, and reviewer run on opus; implementer runs sonnet; design-reviewer and code-reviewer run fable (the strongest tier — never point them at routine work). Override when a task is ' +
-            'unusually easy for its role (e.g. drop a researcher to sonnet for a quick lookup) or ' +
-            'unusually hard (e.g. bump an implementer to opus for a hard problem).',
+            'planner, reviewer, and implementer run on opus; design-reviewer and code-reviewer run fable (the strongest tier — never point them at routine work). Override when a task is ' +
+            'unusually easy for its role (e.g. drop a researcher or an implementer to sonnet for a quick lookup or a small edit) or ' +
+            'unusually hard (e.g. bump a reviewer to fable for a hard problem).',
         },
         harness: {
           type: 'string',

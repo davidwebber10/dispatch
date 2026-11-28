@@ -191,9 +191,9 @@ describe('agency-mcp', () => {
       .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify({ id: 'a7', label: 'implementer agent' }) })
       .mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
     global.fetch = fetchMock as any;
-    await callTool('spawn_agent', { agentType: 'implementer', task: 'hard problem', model: 'opus' });
+    await callTool('spawn_agent', { agentType: 'implementer', task: 'small edit', model: 'sonnet' });
     const overriddenConfig = JSON.parse(fetchMock.mock.calls[1][1].body).config;
-    expect(modelFor(overriddenConfig)).toBe('opus'); // override wins over the implementer's sonnet default
+    expect(modelFor(overriddenConfig)).toBe('sonnet'); // override wins over the implementer's opus default
 
     fetchMock.mockReset();
     fetchMock
@@ -202,7 +202,7 @@ describe('agency-mcp', () => {
       .mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
     await callTool('spawn_agent', { agentType: 'implementer', task: 'do it' });
     const defaultConfig = JSON.parse(fetchMock.mock.calls[1][1].body).config;
-    expect(modelFor(defaultConfig)).toBe('sonnet'); // falls back to the implementer tier default (no regression)
+    expect(modelFor(defaultConfig)).toBe('opus'); // falls back to the implementer tier default (opus since 2026-11-27)
   });
 
   it('end-to-end: queue_agent config resolves via modelFor to the explicit override, or the researcher tier default when omitted', async () => {

@@ -34,7 +34,7 @@ export const COORDINATOR_PROMPT =
   'codex, grok, opencode); omit it for the configured default. The model never picks the harness: a non-Claude ' +
   'model needs its harness in the same call, e.g. { harness: "codex", model: "gpt-6-astra" } — a model alone ' +
   'runs on the default CLI (usually claude-code), which refuses a model it cannot run. Each type defaults to a sensible model tier ' +
-  '(researcher/planner/reviewer run opus, implementer runs sonnet, design-reviewer/code-reviewer run fable — ' +
+  '(researcher/planner/reviewer/implementer run opus, design-reviewer/code-reviewer run fable — ' +
   'the strongest tier) — pass `model` (e.g. "sonnet", "opus", "haiku", or a full model id) only to override ' +
   'that default when a task is unusually easy or hard for its role.\n' +
   '- queue_agent({ agentType, name?, task, mission?, dependsOn?, model?, harness?, ledgerIds? }) — like spawn_agent but QUEUED: ' +
@@ -565,14 +565,15 @@ export function systemPromptFor(
 }
 
 /**
- * The per-agent-type model tier (CLI `--model` alias). Cheap/fast work runs on
- * sonnet; the reasoning-heavy roles (research, planning, review) run on opus.
+ * The per-agent-type model tier (CLI `--model` alias). The coordinator and every
+ * working role (build, research, planning, review) run on opus (2026-11-27: the owner
+ * asked for opus builder threads; sonnet stays available as a per-spawn `model`).
  * Keyed by `role: 'coordinator'` and by `agentType` — the two are disjoint, so a
  * single flat map covers both.
  */
 export const MODEL_FOR_TYPE: Record<string, string> = {
-  coordinator: 'sonnet',
-  implementer: 'sonnet',
+  coordinator: 'opus',
+  implementer: 'opus',
   planner: 'opus',
   researcher: 'opus',
   reviewer: 'opus',

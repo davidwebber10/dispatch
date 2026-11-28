@@ -44,14 +44,15 @@ it('returns undefined for unknown / empty / missing config', () => {
   expect(systemPromptFor({ mission: 'ship auth' })).toBeUndefined();
 });
 
-it('modelFor resolves the per-type tier (sonnet for coordinator/implementer, opus for the rest)', () => {
-  expect(modelFor({ role: 'coordinator' })).toBe('sonnet');
-  expect(modelFor({ role: 'agent', agentType: 'implementer' })).toBe('sonnet');
+it('modelFor resolves the per-type tier (opus for coordinator, implementer, planner, researcher, reviewer)', () => {
+  expect(modelFor({ role: 'coordinator' })).toBe('opus');
+  expect(modelFor({ role: 'agent', agentType: 'implementer' })).toBe('opus');
   expect(modelFor({ role: 'agent', agentType: 'planner' })).toBe('opus');
   expect(modelFor({ role: 'agent', agentType: 'researcher' })).toBe('opus');
   expect(modelFor({ role: 'agent', agentType: 'reviewer' })).toBe('opus');
-  // role wins over agentType (a coordinator carrying a stray agentType still runs sonnet)
-  expect(modelFor({ role: 'coordinator', agentType: 'planner' })).toBe('sonnet');
+  // role wins over agentType (a coordinator carrying a stray agentType runs the coordinator tier)
+  expect(modelFor({ role: 'coordinator', agentType: 'design-reviewer' })).toBe(MODEL_FOR_TYPE.coordinator);
+  expect(MODEL_FOR_TYPE.coordinator).not.toBe(MODEL_FOR_TYPE['design-reviewer']);
   // matches the exported map
   expect(modelFor({ agentType: 'reviewer' })).toBe(MODEL_FOR_TYPE.reviewer);
 });
