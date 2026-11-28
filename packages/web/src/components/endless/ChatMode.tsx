@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Brain, Folders } from '@phosphor-icons/react';
+import { createPortal } from 'react-dom';
 import { useEndless } from '../../stores/endless';
 import { EndlessColumn } from './EndlessColumn';
+import { ChatHeader } from './ChatHeader';
+import { ChatThreadsList } from './ChatThreads';
 import { ProjectsPanel } from './ProjectsPanel';
-import { MemorySearch } from './MemorySearch';
 import { MemoryInspector } from './MemoryInspector';
 import { DocViewer } from './DocViewer';
 import { ThreadDocsContext, useThreadDocChips } from '../threadDocs';
@@ -15,11 +16,6 @@ import { useTabs, findTerminal } from '../../stores/tabs';
 import { useUI } from '../../stores/ui';
 import '../overseer/tokens.css';
 import { fontVar } from '../../lib/fontSize';
-
-const toolbarButton: React.CSSProperties = {
-  height: 32, padding: '0 10px', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, borderRadius: 'var(--radius-md)',
-  border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: fontVar(12.5),
-};
 
 /**
  * The lightbox's Open in Threads: close the lightbox and open the thread in the Threads view. A
@@ -35,11 +31,15 @@ export function openInThreads(id: string): void {
 }
 
 /** The Chat page (spec 2026-10-13, section 7). Loads the tail, the turn state and the projects once. */
-export function ChatMode({ mobile = false }: { mobile?: boolean }) {
+export function ChatMode({ mobile = false, toolbarHost }: {
+  mobile?: boolean;
+  /** Where the header row goes: a slot of the phone's app header. Undefined: at the top of this view. Null: that slot is not on screen. */
+  toolbarHost?: HTMLElement | null;
+}) {
   const [panel, setPanel] = useState(!mobile);
   const [inspector, setInspector] = useState(false);
+  const [projects, setProjects] = useState(false);
   const unavailable = useEndless((s) => s.unavailable);
-  const needs = useEndless((s) => s.projects.reduce((n, p) => n + p.needsYou, 0));
   useEffect(() => {
     const s = useEndless.getState();
     void s.loadTail().catch(() => {});
@@ -50,19 +50,15 @@ export function ChatMode({ mobile = false }: { mobile?: boolean }) {
   }, []);
   // Doc links in any Chat text (a live reply, a note card) open in Chat's own viewer below.
   const docs = useThreadDocChips(null, undefined);
+  const header = <ChatHeader threadsOpen={panel} onThreads={() => setPanel((p) => !p)} onMemory={() => setInspector(true)} onProjects={() => setProjects(true)} />;
   return (
     <ThreadDocsContext.Provider value={docs}>
     <div data-testid="chat-mode" data-mobile={mobile ? '1' : undefined}
       style={{ display: 'flex', flex: 1, minWidth: 0, minHeight: 0, height: '100%', background: 'var(--color-base)' }}>
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
-        <div data-testid="chat-toolbar" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: mobile ? '8px 16px' : '8px 12px', flexWrap: mobile ? 'wrap' : undefined, flexShrink: 0, borderBottom: '1px solid var(--color-border)', background: 'var(--color-pane)' }}>
-          <MemorySearch />
-          <button type="button" onClick={() => setInspector(true)} style={toolbarButton}><Brain size={15} /> Memory</button>
-          <button type="button" aria-pressed={panel} aria-label={needs > 0 ? `Projects, ${needs} need${needs === 1 ? 's' : ''} you` : undefined} onClick={() => setPanel((p) => !p)} style={toolbarButton}>
-            <Folders size={15} /> Projects
-            {needs > 0 && <span aria-hidden style={{ minWidth: 16, height: 16, padding: '0 4px', borderRadius: 'var(--radius-md)', background: 'var(--color-status-yellow)', color: 'var(--color-canvas)', font: `600 ${fontVar(10.5)}/16px var(--font-mono)`, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{needs}</span>}
-          </button>
-        </div>
+        {toolbarHost === undefined ? (
+          <div data-testid="chat-toolbar" style={{ display: 'flex', alignItems: 'center', minHeight: 52, padding: '0 12px', flexShrink: 0, borderBottom: '1px solid var(--color-border)', background: 'var(--color-pane)' }}>{header}</div>
+        ) : toolbarHost && createPortal(header, toolbarHost)}
         {unavailable && (
           <div role="status" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: mobile ? '8px 16px' : '8px 12px', color: 'var(--color-text-secondary)', fontSize: fontVar(13), borderBottom: '1px solid var(--color-border)' }}>
             <span style={{ flex: 1 }}>Chat is unavailable. It may still be starting.</span>
@@ -70,14 +66,17 @@ export function ChatMode({ mobile = false }: { mobile?: boolean }) {
               style={{ padding: '5px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', cursor: 'pointer' }}>Try again</button>
           </div>
         )}
-        <EndlessColumn mobile={mobile} />
+        <EndlessColumn mobile={mobile} onShowThreads={() => setPanel(true)} threadsShown={!mobile && panel} />
       </div>
       {panel && !mobile && (
-        <aside style={{ width: 280, flexShrink: 0, overflowY: 'auto', borderLeft: '1px solid var(--color-border)', background: 'var(--color-pane)' }}>
-          <ProjectsPanel />
+        <aside aria-label="Threads" style={{ width: 280, flexShrink: 0, overflowY: 'auto', boxSizing: 'border-box', padding: 12, borderLeft: '1px solid var(--color-border)', background: 'var(--color-pane)' }}>
+          <h2 style={{ margin: '0 0 8px', fontSize: fontVar(15), fontWeight: 600, color: 'var(--color-text-primary)' }}>Threads</h2>
+          <ChatThreadsList />
         </aside>
       )}
-      {mobile && <Modal open={panel} onClose={() => setPanel(false)} title="Projects" sheet><ProjectsPanel onNavigate={() => setPanel(false)} /></Modal>}
+      {mobile && <Modal open={panel} onClose={() => setPanel(false)} title="Threads" sheet><ChatThreadsList onNavigate={() => setPanel(false)} /></Modal>}
+      {/* Projects left the header; its panel (counts, documents, threads that need you) opens from the ⋯ menu. */}
+      <Modal open={projects} onClose={() => setProjects(false)} title="Projects" sheet maxWidth={460}><ProjectsPanel hideTitle onNavigate={() => setProjects(false)} /></Modal>
       <MemoryInspector open={inspector} onClose={() => setInspector(false)} sheet={mobile} />
       <div className="overseer-root">
         <WorkerLightbox onOpenFull={openInThreads} />

@@ -2,7 +2,7 @@ import { render, screen, fireEvent, act } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { IconRail } from './IconRail';
 import { PROJECTS_ICON, THREADS_ICON } from '../common/viewIcons';
-import { Folders, TerminalWindow } from '@phosphor-icons/react';
+import { Folders, Rows } from '@phosphor-icons/react';
 import { useUI } from '../../stores/ui';
 import { usePluginRegistry } from '../../plugins/registry';
 import { useProjectsView } from '../../stores/projectsView';
@@ -48,12 +48,12 @@ describe('IconRail plugin views (2026-11-07)', () => {
     expect(screen.queryByTitle('Projects')).toBeNull();
   });
 
-  it('Projects and Threads draw the same icons as the phone tab bar (Folders, TerminalWindow)', () => {
+  it('Projects and Threads draw the same icons as the phone tab bar (Folders, Rows)', () => {
     expect(PROJECTS_ICON).toBe(Folders);
-    expect(THREADS_ICON).toBe(TerminalWindow);
+    expect(THREADS_ICON).toBe(Rows);
     // The rail fills the active item and outlines the rest; either weight of the same icon matches.
     const drawn = (C: typeof Folders) => (['regular', 'fill'] as const).map((w) => render(<C size={18} weight={w} />).container.querySelector('svg')!.innerHTML);
-    for (const [view, title, icon] of [['projects', 'Projects', Folders], ['threads', 'Threads', TerminalWindow]] as const) {
+    for (const [view, title, icon] of [['projects', 'Projects', Folders], ['threads', 'Threads', Rows]] as const) {
       act(() => { useProjectsView.getState().setView(view); });
       const { unmount } = render(<IconRail />);
       expect(drawn(icon)).toContain(screen.getByTitle(title).querySelector('svg')!.innerHTML);

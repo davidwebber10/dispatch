@@ -339,7 +339,7 @@ export const api = {
   codexModelEfforts: () => req<{ live: Record<string, string[]> | null; defaults?: Record<string, string> | null }>('/api/codex/model-efforts'),
   // Chat-wide model and effort (slash menu). null = the default. A change applies from the next turn.
   endlessSettings: () => req<ChatSettings>('/api/endless/settings'),
-  setEndlessSettings: (change: { model?: string | null; effort?: string | null }) =>
+  setEndlessSettings: (change: { model?: string | null; effort?: string | null; accountId?: string | null }) =>
     req<ChatSettings>('/api/endless/settings', { method: 'PUT', body: body(change) }),
   // Move a Claude Code / Codex thread to another signed-in account (multi-account): pins
   // config.accountId server-side and restarts a running thread. 404 unknown account, 409 when the

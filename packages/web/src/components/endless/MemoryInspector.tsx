@@ -47,6 +47,10 @@ export function MemoryInspector({ open, onClose, sheet = false }: { open: boolea
             : view ? `${view.lines.length} lines · ${(view.bytes / 1000).toFixed(1)} KB — the view exactly as the model sees it`
             : 'Loading…'}
         </div>
+        <button type="button" onClick={() => { const el = document.getElementById('endless-instructions'); el?.scrollIntoView?.({ block: 'center' }); el?.focus({ preventScroll: true }); }}
+          style={{ alignSelf: 'flex-start', padding: '6px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', cursor: 'pointer', font: 'inherit', fontSize: fontVar(13) }}>
+          Edit Chat instructions
+        </button>
         {view && (
           <pre data-testid="memory-view"
             style={{ margin: 0, maxHeight: '45vh', overflow: 'auto', padding: 10, borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', font: `400 ${fontVar(11.5)} var(--font-mono)`, color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>

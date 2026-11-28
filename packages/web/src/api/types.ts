@@ -485,14 +485,15 @@ export interface EndlessMessage { i: number; kind: EndlessKind; text: string; si
 export interface EndlessPage { messages: EndlessMessage[]; hasMore: boolean; hasMoreAfter: boolean }
 export type EndlessTurnStatus = 'idle' | 'waiting' | 'running' | 'failed' | 'interrupted';
 /** Chat's one model and effort. null = the default; `defaultModel` is what null runs. */
-export interface ChatSettings { model: string | null; effort: string | null; defaultModel: string }
+/** `accountId`: the Claude account that Chat is pinned to; null follows the default account. Absent on an older daemon. */
+export interface ChatSettings { model: string | null; effort: string | null; defaultModel: string; accountId?: string | null }
 export interface EndlessState { turn: { status: EndlessTurnStatus; error: string | null }; total: number; compactor: { unbuilt: number; merges: number; running: number } }
 export interface EndlessSearchHit { i: number; kind: EndlessKind; project: string | null; projectName: string | null; createdAt: number; snippet: string }
 export interface EndlessViewLine { name: string; l: number; i: number; text: string | null }
 export interface EndlessView { lines: EndlessViewLine[]; bytes: number; rendered: string }
 export interface EndlessProject { id: string; name: string; folder: string; live: number; needsYou: number; openItems: number; lastReport: string | null; messages: number }
 export type EndlessPaneState = 'working' | 'needs_you' | 'queued' | 'error' | 'done' | 'idle';
-export interface EndlessPaneThread { id: string; project: string; label: string; harness: string; state: EndlessPaneState; startedBy: 'chat' | 'overseer' | 'thread' | 'role' | 'user'; via: string | null; startedAt: string; lastActivityAt: string | null; question: string | null }
+export interface EndlessPaneThread { id: string; project: string; label: string; harness: string; state: EndlessPaneState; startedBy: 'chat' | 'overseer' | 'thread' | 'role' | 'user'; via: string | null; startedAt: string; lastActivityAt: string | null; question: string | null; /** A chat thread, not a terminal one. Absent on an older daemon. */ structured?: boolean }
 export interface EndlessProjectsResponse { projects: EndlessProject[]; threads: EndlessPaneThread[]; truncated: boolean }
 export interface EndlessImage { media_type: string; data: string }
 /** A document attached to a Chat message (PDF, TXT, MD, CSV, JSON): saved by the daemon, named by path for the model. */

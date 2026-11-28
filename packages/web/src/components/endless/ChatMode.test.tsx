@@ -43,14 +43,16 @@ describe('ChatMode', () => {
     expect(useDocViewer.getState().open).toBeNull();
   });
 
-  it('the Projects button shows the need-you count', () => {
-    const projects = [{ id: 's1', name: 'rollup', folder: '/w', live: 0, needsYou: 2, openItems: 0, lastReport: null, messages: 0 }];
-    vi.spyOn(api, 'endlessProjects').mockResolvedValue({ projects, threads: [], truncated: false } as any);
+  it('the Threads button counts the threads of Chat that need you, and no other thread', () => {
+    const row = (id: string, startedBy: string, state: string) => ({ id, project: 's1', label: id, harness: 'claude-code', state, startedBy, via: null, startedAt: '2026-11-27T10:00:00Z', lastActivityAt: null, question: null });
+    const threads = [row('a', 'chat', 'needs_you'), row('b', 'user', 'needs_you'), row('c', 'chat', 'working')];
+    vi.spyOn(api, 'endlessProjects').mockResolvedValue({ projects: [], threads, truncated: false } as any);
     vi.spyOn(api, 'endlessMessages').mockResolvedValue({ messages: [], hasMore: false, hasMoreAfter: false } as any);
     vi.spyOn(api, 'endlessState').mockResolvedValue({ turn: { status: 'idle', error: null } } as any);
-    useEndless.setState({ projects });
+    useEndless.setState({ threads } as any);
     render(<ChatMode />);
-    expect(screen.getByRole('button', { name: /Projects/ })).toHaveTextContent('2');
+    expect(screen.getByRole('button', { name: 'Threads, 1 needs you' })).toHaveTextContent('1');
+    expect(screen.queryByRole('button', { name: /Projects/ })).toBeNull();
   });
 });
 

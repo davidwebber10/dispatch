@@ -45,7 +45,13 @@ type Open = (t: EndlessPaneThread) => void;
 
 /** One thread: line 1 state mark, name, start time; line 2 (mono) [project ·] origin · harness · step.
  * The Needs you card adds the question (3 lines) and the yellow left border. A row has no buttons inside. */
-function ThreadRow({ t, onOpen, mobile, needCard = false, project }: { t: EndlessPaneThread; onOpen: Open; mobile: boolean; needCard?: boolean; project?: string }) {
+export function ThreadRow({ t, onOpen, mobile, needCard = false, project, meta, glyph }: {
+  t: EndlessPaneThread; onOpen: Open; mobile: boolean; needCard?: boolean; project?: string;
+  /** Chat's list (owner, 2026-11-27): this short second line in place of origin, harness and step; no start time; both lines wrap, so nothing is cut off. */
+  meta?: { text: string; color?: string };
+  /** Drawn in place of the state mark. */
+  glyph?: React.ReactNode;
+}) {
   const view = useThreadView(t.id);
   const state = view.state ?? t.state;
   const step: { text: string; color?: string } | null =
@@ -64,14 +70,17 @@ function ThreadRow({ t, onOpen, mobile, needCard = false, project }: { t: Endles
           ? { ...card, padding: '10px 12px', minHeight: mobile ? 44 : undefined }
           : { background: 'transparent', border: 0, padding: '6px 0', minHeight: mobile ? 48 : undefined, opacity: finished ? 0.6 : 1 }),
       }}>
-      <span style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', fontSize: fontVar(mobile ? 13.5 : 13) }}>
-        <StateMark state={state} />
-        <span style={{ flex: 1, minWidth: 0, fontWeight: needCard ? 600 : undefined, ...ellipsis }}>{t.label}</span>
-        <span style={{ ...mono(11.5), whiteSpace: 'nowrap' }}>{formatStart(t.startedAt)}</span>
+      {/* A glyph's corner badge hangs past it: more room before the name then. */}
+      <span style={{ display: 'flex', alignItems: 'center', gap: glyph ? 10 : 6, width: '100%', fontSize: fontVar(mobile ? 13.5 : 13) }}>
+        {glyph ?? <StateMark state={state} />}
+        <span style={{ flex: 1, minWidth: 0, fontWeight: needCard ? 600 : undefined, ...(meta ? { overflowWrap: 'anywhere' as const } : ellipsis) }}>{t.label}</span>
+        {!meta && <span style={{ ...mono(11.5), whiteSpace: 'nowrap' }}>{formatStart(t.startedAt)}</span>}
       </span>
-      <span style={{ display: 'block', width: '100%', ...mono(11.5), lineHeight: 1.6, paddingLeft: 16, ...ellipsis }}>
-        {parts.join(' · ')}
-        {step && <>{parts.length > 0 && ' · '}<span style={step.color ? { color: step.color } : undefined}>{step.text}</span></>}
+      <span style={{ display: 'block', width: '100%', boxSizing: 'border-box', ...mono(11.5), lineHeight: 1.6, paddingLeft: glyph ? (mobile ? 28 : 25) : 16, ...(meta ? { overflowWrap: 'anywhere' as const } : ellipsis) }}>
+        {meta ? <span style={meta.color ? { color: meta.color } : undefined}>{meta.text}</span> : <>
+          {parts.join(' · ')}
+          {step && <>{parts.length > 0 && ' · '}<span style={step.color ? { color: step.color } : undefined}>{step.text}</span></>}
+        </>}
       </span>
       {needCard && t.question && (
         <span style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: fontVar(mobile ? 13 : 12.5), lineHeight: 1.5, marginTop: 6, paddingLeft: 16 }}>{t.question}</span>
@@ -80,7 +89,7 @@ function ThreadRow({ t, onOpen, mobile, needCard = false, project }: { t: Endles
   );
 }
 
-export function ProjectsPanel({ onNavigate }: { onNavigate?: () => void } = {}) {
+export function ProjectsPanel({ onNavigate, hideTitle = false }: { onNavigate?: () => void; /** A dialog with its own title around it. */ hideTitle?: boolean } = {}) {
   const [refreshing, setRefreshing] = useState(false);
   const [doneOpen, setDoneOpen] = useState<Record<string, boolean>>({});
   const [allOpen, setAllOpen] = useState<Record<string, boolean>>({});
@@ -119,7 +128,7 @@ export function ProjectsPanel({ onNavigate }: { onNavigate?: () => void } = {}) 
   return (
     <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={label}>Projects</span>
+        <span style={label}>{hideTitle ? '' : 'Projects'}</span>
         <button type="button" aria-label="Refresh projects" aria-busy={refreshing} disabled={refreshing} onClick={() => void refresh()}
           style={{ opacity: refreshing ? 0.7 : 1, width: 28, height: 28, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-secondary)', cursor: refreshing ? 'default' : 'pointer' }}>
           <ArrowClockwise size={14} className={refreshing ? 'endless-spin' : undefined} />
