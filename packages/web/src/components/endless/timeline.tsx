@@ -15,6 +15,7 @@
 import { useMemo, useRef, type ReactNode } from 'react';
 import { MessageScroller } from '@shadcn/react/message-scroller';
 import { renderTimeline, usePageBoundaries, type TimelineExtensions } from '../tabs/chat/ChatView';
+import { useEndless } from '../../stores/endless';
 import { endlessMediaUrl } from '../../api/client';
 import type { ConvItem, EndlessMessage } from '../../api/types';
 import { toConvItems, chatIndexOf, pairEchoes, isImageMedia, ZOOM_TOOL, REPORT_TOOL, NOTE_TOOL } from './convItems';
@@ -80,6 +81,8 @@ export function chatTimeline(messages: EndlessMessage[], focus: number | null): 
       const user = first.kind === 'user' ? msgOf(first) ?? null : null;
       return <ChatFrame keys={keys} focused={focused} user={user}>{node}</ChatFrame>;
     },
+    // A search jump to a call inside a folded strip opens the strip, so the call's anchor exists.
+    foldOpen: (items) => focus !== null && items.some((it) => chatIndexOf(it)?.i === focus),
   };
 }
 
@@ -90,7 +93,9 @@ export function ChatTimeline({ messages, focus }: { messages: EndlessMessage[]; 
   const items = useMemo(() => toConvItems(messages), [messages]);
   // loadOlder() page starts, as group boundaries (see usePageBoundaries).
   const pageBoundaries = usePageBoundaries(items);
-  const ext = useMemo(() => chatTimeline(messages, focus), [messages, focus]);
+  // Chat's turn still runs: the strip at the end stays live between two calls (activityFold.tsx).
+  const turnRunning = useEndless((s) => s.turn.status === 'running');
+  const ext = useMemo(() => ({ ...chatTimeline(messages, focus), turnRunning }), [messages, focus, turnRunning]);
   const cardOpen = useRef(new Map<string, boolean>()).current;
   // The provider draws no element: the rows stay direct children of MessageScroller.Content.
   return <CardOpenContext.Provider value={cardOpen}>{renderTimeline(items, noFile, pageBoundaries, undefined, null, undefined, ext)}</CardOpenContext.Provider>;

@@ -60,7 +60,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   const shown = useCallback((list: ConvItem[]) => (authHidden.size ? list.filter((it) => !authHidden.has(it)) : list), [authHidden]);
   // `retrySend` (W2-I): the Retry button of a bubble whose POST failed.
   const signedOutExt = useMemo(() => (authRequired && tab ? { authCard: <SignedOutCard tab={tab} auth={authRequired} onRetry={retryLast} /> } : undefined), [authRequired, tab, retryLast]);
-  const authExt = useMemo(() => ({ retrySend, ...signedOutExt }), [retrySend, signedOutExt]);
+  const authExt = useMemo(() => ({ retrySend, turnRunning: busy, ...signedOutExt }), [retrySend, busy, signedOutExt]);
 
   // Advice is about THIS resume, so "not now" lives in component state rather than
   // storage: a later resume of the same thread (older and larger still) should ask again.

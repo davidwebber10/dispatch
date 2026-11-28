@@ -7,6 +7,7 @@ import { useUI } from '../../stores/ui';
 import { api } from '../../api/client';
 import * as open from './openThread';
 import type { EndlessMessage } from '../../api/types';
+import { setFoldsOpenForTest } from '../tabs/chat/timeline/activityFold';
 
 // Wrap the real scroller hook so a test sees the calls EndlessColumn makes.
 const scroller = vi.hoisted(() => ({ toMessage: vi.fn(), toEnd: vi.fn() }));
@@ -37,6 +38,8 @@ const msg = (i: number, kind: EndlessMessage['kind'], text: string, over: Partia
 afterEach(() => { useUI.setState({ view: 'chat' }); });
 
 beforeEach(() => {
+  // A tool strip folds under one row (activityFold.tsx); these tests read the rows inside it.
+  setFoldsOpenForTest(true);
   localStorage.clear(); // drafts persist in local storage; each case starts with none
   vi.restoreAllMocks();
   scroller.toMessage.mockClear();

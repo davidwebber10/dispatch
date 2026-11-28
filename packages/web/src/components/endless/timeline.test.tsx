@@ -8,6 +8,7 @@ import { useEndless } from '../../stores/endless';
 import { useThreadStatus } from '../../stores/threadStatus';
 import * as open from './openThread';
 import type { EndlessMessage } from '../../api/types';
+import { setFoldsOpenForTest } from '../tabs/chat/timeline/activityFold';
 
 const m = (i: number, kind: EndlessMessage['kind'], text: string, over: Partial<EndlessMessage> = {}): EndlessMessage => ({ i, kind, text, size: text.length, project: null, projectName: null, ref: null, media: [], createdAt: 0, ...over });
 
@@ -21,7 +22,17 @@ beforeEach(() => {
   vi.restoreAllMocks();
   useEndless.setState({ threads: [], projects: [] });
   useThreadStatus.setState({ byTerminal: {} });
+  // A tool strip folds under one row (activityFold.tsx). These tests are about the rows and ids
+  // inside it, so each untouched fold starts open, except where a test says otherwise.
+  setFoldsOpenForTest(true);
 });
+
+/** Tap open every closed activity fold, as the reader does before opening a call inside one. */
+function openFolds() {
+  for (const row of screen.queryAllByTestId('activity-fold-row')) {
+    if (row.getAttribute('aria-expanded') === 'false') fireEvent.click(row);
+  }
+}
 
 const draw = (messages: EndlessMessage[], focus: number | null = null) => render(
   <MessageScroller.Provider><MessageScroller.Root><MessageScroller.Viewport><MessageScroller.Content>
@@ -51,6 +62,18 @@ describe('ChatTimeline scroll ids (search jumps, MemorySearch)', () => {
     draw(msgs, 2);
     expect(outlined()).toEqual(['1']);
   });
+  it('a call inside a closed fold has no id until the fold opens, and a search focus on it opens the fold', () => {
+    setFoldsOpenForTest(false);
+    const msgs = [m(700, 'unii', 'one'), m(701, 'tool', 'Bash {"command":"ls"}'), m(702, 'echo', 'out'), m(703, 'unii', 'two')];
+    const { unmount } = draw(msgs);
+    expect(screen.getByTestId('activity-fold')).toBeInTheDocument();
+    expect(anchor(700)).not.toBeNull();
+    expect(anchor(701)).toBeNull();
+    unmount();
+    draw(msgs, 702);
+    expect(screen.getByTestId('activity-fold').dataset.open).toBe('true');
+    expect(anchor(701)).not.toBeNull();
+  });
 });
 
 describe('ChatTimeline: an open tool call keeps its scroll position when the next call arrives', () => {
@@ -61,12 +84,15 @@ describe('ChatTimeline: an open tool call keeps its scroll position when the nex
   );
   const long = Array.from({ length: 80 }, (_, n) => `line ${n}`).join('\n');
   const openBox = (container: HTMLElement) => container.querySelector('pre.hljs') as HTMLElement;
+  // With the fold in place: the strip starts folded, and the reader taps it open first.
+  beforeEach(() => setFoldsOpenForTest(false));
   // The open state lives in a store keyed by tool id (chat:t<i>): these i values are used by no other test.
   for (const name of ['Bash', 'Read']) {
     const base = name === 'Bash' ? 900 : 950;
     it(`${name} then ${name}: the open box is the same node, with the same scrollTop, and both ids stay reachable`, () => {
       const first = [m(base, 'user', 'go'), m(base + 1, 'tool', `${name} {"command":"one","file_path":"/one"}`), m(base + 2, 'echo', long)];
       const { container, rerender } = render(wrap(first));
+      openFolds();
       const row = container.querySelector(`[data-message-id="m${base + 1}"]`) as HTMLElement;
       fireEvent.click(row.querySelector('button') as HTMLElement);
       const box = openBox(container);

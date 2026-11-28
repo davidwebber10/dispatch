@@ -6,6 +6,7 @@ import { UserBubble, renderTimeline, LoadEarlierButton, ChatView, relayNameFor, 
 import { api } from '../../../api/client';
 import * as sock from '../../../api/structured-socket';
 import { useTabs } from '../../../stores/tabs';
+import { setFoldsOpenForTest } from './timeline/activityFold';
 
 // Counts every walk of the timeline (W1-F); the real walk still runs. A plain counter, not
 // vi.fn, so the vi.restoreAllMocks() below cannot strip the pass-through.
@@ -66,7 +67,17 @@ beforeAll(() => {
 beforeEach(() => {
   vi.restoreAllMocks();
   vi.spyOn(sock, 'openStructuredSocket').mockImplementation(() => ({ close: () => {} }) as any);
+  // A tool strip folds under one row (activityFold.tsx). These tests are about the rows inside it,
+  // so each untouched fold starts open; the scroll block below opens its folds with a real tap.
+  setFoldsOpenForTest(true);
 });
+
+/** Tap open every closed activity fold, as the reader does before opening a call inside one. */
+function openFolds() {
+  for (const row of screen.queryAllByTestId('activity-fold-row')) {
+    if (row.getAttribute('aria-expanded') === 'false') fireEvent.click(row);
+  }
+}
 
 function renderTimelineItems(items: ConvItem[], pageBoundaries: Set<ConvItem> = new Set()) {
   return render(
@@ -210,10 +221,13 @@ describe('renderTimeline: an open tool call keeps its scroll position when new l
   ];
   // The open state lives in a store keyed by tool id for the whole file: these ids are used by no other test.
   const openBox = (container: HTMLElement) => container.querySelector('pre.hljs') as HTMLElement;
+  // With the fold in place: each strip starts folded, and the reader taps it open first.
+  beforeEach(() => setFoldsOpenForTest(false));
 
   it('the same output box stays through a new tool call, new prose and a new result', () => {
     const base: ConvItem[] = [{ kind: 'user', text: 'go', uuid: 'u1' }, { kind: 'assistant', text: 'Looking.', uuid: 'a1' }, ...bash('keep-a', 'ls')];
     const { container, rerender } = render(wrap(base));
+    openFolds();
     fireEvent.click(screen.getByText('Bash keep-a'));
     const box = openBox(container);
     expect(box).not.toBeNull();
@@ -239,6 +253,7 @@ describe('renderTimeline: an open tool call keeps its scroll position when new l
   it('the same output box stays when a same-tool group grows by one call', () => {
     const base: ConvItem[] = [{ kind: 'user', text: 'go', uuid: 'u1' }, ...bash('keep-1', 'one'), ...bash('keep-2', 'two')];
     const { container, rerender } = render(wrap(base));
+    openFolds();
     // Open the group, then the first call inside it. (A group is open by itself only while a call runs.)
     if (!screen.queryByText('Bash keep-1')) fireEvent.click(screen.getByRole('button', { name: /×2/ }));
     fireEvent.click(screen.getByText('Bash keep-1'));
@@ -257,6 +272,7 @@ describe('renderTimeline: an open tool call keeps its scroll position when new l
   it('the same output box stays when a second call of the same tool makes a lone call a group', () => {
     const base: ConvItem[] = [{ kind: 'user', text: 'go', uuid: 'u1' }, ...bash('keep-g1', 'one')];
     const { container, rerender } = render(wrap(base));
+    openFolds();
     // One call has no group header.
     expect(screen.queryByRole('button', { name: /×1/ })).toBeNull();
     fireEvent.click(screen.getByText('Bash keep-g1'));
@@ -286,6 +302,7 @@ describe('renderTimeline: an open tool call keeps its scroll position when new l
     const first: ConvItem = { kind: 'tool', toolId: 'keep-h1', toolName: 'Read', toolTitle: 'Read keep-h1', toolInput: 'a.txt' };
     const base: ConvItem[] = [{ kind: 'user', text: 'go', uuid: 'u1' }, first];
     const { rerender } = render(wrap(base));
+    openFolds();
     fireEvent.click(screen.getByText('Read keep-h1'));
     const row = screen.getByText('Read keep-h1').closest('button');
     expect(row).not.toBeNull();
@@ -304,6 +321,7 @@ describe('renderTimeline: an open tool call keeps its scroll position when new l
     const second: ConvItem = { kind: 'tool', toolId: 'keep-i2', toolName: 'Read', toolTitle: 'Read keep-i2', toolInput: 'b.txt' };
     const base: ConvItem[] = [{ kind: 'user', text: 'go', uuid: 'u1' }, first, second];
     const { rerender } = render(wrap(base));
+    openFolds();
     expect(screen.getByRole('button', { name: /×2/ })).toHaveAttribute('aria-expanded', 'true');
     rerender(wrap([...base, { kind: 'tool-result', toolId: 'keep-i1', text: 'A' }, { kind: 'tool-result', toolId: 'keep-i2', text: 'B' }]));
     expect(screen.getByRole('button', { name: /×2/ })).toHaveAttribute('aria-expanded', 'false');
@@ -319,6 +337,7 @@ describe('renderTimeline: an open tool call keeps its scroll position when new l
       { kind: 'tool', toolId: 'keep-d', toolName: 'Read', toolTitle: 'Read keep-d', toolInput: 'a.txt', uuid: 's-1-1' },
     ];
     const { container, rerender } = render(wrap(streaming));
+    openFolds();
     fireEvent.click(screen.getByText('Bash keep-c'));
     const box = openBox(container);
     expect(box).not.toBeNull();

@@ -58,3 +58,9 @@ export const useToolTab = createPersistedState<'input' | 'output'>();
  * reusing that one.
  */
 export const useToolGroupExpanded = createPersistedState<boolean | undefined>();
+/**
+ * Whether a folded activity strip (timeline/activityFold.tsx) is open, keyed by the strip's FIRST
+ * item. `undefined` = untouched: closed, unless the reader opened a call inside it. A separate map,
+ * so the strip's own choice never changes a ToolGroup inside it.
+ */
+export const useActivityFoldOpen = createPersistedState<boolean | undefined>();
