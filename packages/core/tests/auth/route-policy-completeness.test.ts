@@ -77,6 +77,9 @@ const EXPECTED_KEY_ROUTES: string[] = [
   'POST /api/terminals/:terminalId/report-status',
   'POST /api/terminals/:terminalId/start',
   'DELETE /api/terminals/:terminalId',
+  // 4.15.0: Chat switches the model of a thread it started, and sets the overseer worker matrix.
+  'POST /api/terminals/:terminalId/model',
+  'PUT /api/settings/harnesses/overseer-workers',
   // Task 9: watches, ledger, events, auth requests
   'POST /api/watches',
   'GET /api/watches',

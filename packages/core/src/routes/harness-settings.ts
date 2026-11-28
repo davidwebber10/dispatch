@@ -1,5 +1,6 @@
 import type { Router } from 'express';
-import { policyRouter } from '../auth/route-policy.js';
+import { keyRoute, policyRouter } from '../auth/route-policy.js';
+import { allowRule } from '../auth/key-rules.js';
 import type Database from 'better-sqlite3';
 import { readHarnessSettings, updateHarnessSettings, opencodeKeySecretName, opencodeModels, withHostedDefaults } from '../settings/harness-settings.js';
 import { readOverseerWorkers, updateOverseerWorkers } from '../settings/overseer-workers.js';
@@ -63,7 +64,8 @@ export function createHarnessSettingsRouter(db: Database.Database, secrets?: Sec
 
   // The Control Plane worker matrix (per-agent-type harness/model). Plumbing only —
   // no picker UI edits this yet; spawn-time resolution reads it (overseer/worker-matrix).
-  router.put('/overseer-workers', (req, res) => {
+  // Owner only, except a Chat key, which may set it (not the summarizer). Thread, shell and plugin keys stay refused.
+  router.put('/overseer-workers', keyRoute({ chat: allowRule }), (req, res) => {
     res.json(updateOverseerWorkers(db, req.body));
   });
 

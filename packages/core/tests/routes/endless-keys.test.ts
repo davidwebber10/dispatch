@@ -12,6 +12,7 @@ import { createApp } from '../../src/server.js';
 import { configureRefusalLog } from '../../src/auth/route-policy.js';
 import { configurePairLimiter, SENDER_LINE_MARKER } from '../../src/auth/key-rules.js';
 import type { EndlessService } from '../../src/endless/service.js';
+import { SessionService } from '../../src/sessions/service.js';
 import { KeysManager } from './keys-manager.js';
 
 describe('Chat key rules', () => {
@@ -198,6 +199,38 @@ describe('Chat key rules', () => {
       expect(res.body.error).toBe('out_of_scope');
     }
     await request(app).delete('/api/terminals/eB').set(key).expect(204);
+  });
+
+  it('switches the model of the threads that Chat started only; other keys stay refused', async () => {
+    const spy = vi.spyOn(SessionService.prototype, 'setThreadModel').mockImplementation(async (id: string, model: string) =>
+      ({ model, terminal: terminalsDb.rowToTerminal(terminalsDb.getById(db, id)!) }));
+    const key = chatKey();
+    const ok = await request(app).post('/api/terminals/eB/model').set(key).send({ model: 'opus' });
+    expect(ok.status).toBe(200);
+    expect(spy).toHaveBeenCalledWith('eB', 'opus');
+    for (const id of ['pA', 'wB', 'coordA']) {
+      const res = await request(app).post(`/api/terminals/${id}/model`).set(key).send({ model: 'opus' });
+      expect(res.status, id).toBe(403);
+      expect(res.body.error, id).toBe('out_of_scope');
+    }
+    const thread = { Authorization: `Bearer ${app.locals.keys.mint({ kind: 'thread', terminalId: 'eA' }).key}` };
+    for (const who of [thread, chatKey('summarizer')]) {
+      const res = await request(app).post('/api/terminals/eA/model').set(who).send({ model: 'opus' });
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('owner_only');
+    }
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('sets the overseer worker matrix; a summarizer key and a thread key stay refused', async () => {
+    const ok = await request(app).put('/api/settings/harnesses/overseer-workers').set(chatKey()).send({});
+    expect(ok.status).toBe(200);
+    const thread = { Authorization: `Bearer ${app.locals.keys.mint({ kind: 'thread', terminalId: 'eA' }).key}` };
+    for (const who of [thread, chatKey('summarizer')]) {
+      const res = await request(app).put('/api/settings/harnesses/overseer-workers').set(who).send({});
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('owner_only');
+    }
   });
 
   it('a Chat key is not an overseer: no project list, no thread list, no start, no answer, no report', async () => {
