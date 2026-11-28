@@ -53,12 +53,13 @@ export function AssistantTurn({ children }: { children: React.ReactNode }) {
  * prose paragraphs. Inner rows separate with a fainter hairline; the strip has no side
  * borders or background, so it stays quieter than a card.
  */
-export function MachineryBlock({ nodes }: { nodes: React.ReactNode[] }) {
+export function MachineryBlock({ nodes, bare = false }: { nodes: React.ReactNode[]; bare?: boolean }) {
   return (
     // Full-bleed (David's call): the -20px margins cancel MessageScroller.Content's side
     // padding so row hover backgrounds run edge to edge; each row re-adds the 20px as its
     // OWN padding, which keeps the caret exactly on the text rail.
-    <div style={{ display: 'flex', flexDirection: 'column', margin: '0 -20px', borderTop: '1px solid var(--color-hover)', borderBottom: '1px solid var(--color-hover)' }}>
+    // `bare`: drawn inside an ActivityFold (activityFold.tsx), which draws the frame itself.
+    <div style={bare ? { display: 'flex', flexDirection: 'column' } : { display: 'flex', flexDirection: 'column', margin: '0 -20px', borderTop: '1px solid var(--color-hover)', borderBottom: '1px solid var(--color-hover)' }}>
       {nodes.map((n, i) => (
         <div key={i} style={{ minWidth: 0, borderTop: i > 0 ? '1px solid color-mix(in srgb, var(--color-hover) 55%, transparent)' : 'none' }}>{n}</div>
       ))}

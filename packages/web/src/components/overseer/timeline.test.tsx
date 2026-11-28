@@ -8,6 +8,7 @@ import type { ConvItem } from '../../api/types';
 import { useOverseer } from './store';
 import { useProjects } from '../../stores/projects';
 import { ConversationStream } from './components/Stream';
+import { setFoldsOpenForTest } from '../tabs/chat/timeline/activityFold';
 
 beforeAll(() => {
   class Noop { observe() {} unobserve() {} disconnect() {} }
@@ -18,6 +19,8 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
+  // A tool strip folds under one row (activityFold.tsx); these tests read the rows inside it.
+  setFoldsOpenForTest(true);
   useProjects.setState({ activeId: 'proj-1' });
   useOverseer.setState({
     coordinatorId: 'coord-1',
@@ -160,6 +163,21 @@ describe('render parity (machinery, thinking, status, footer, notice)', () => {
     expect(screen.getByText(/weighing options/)).toBeInTheDocument();
     expect(screen.getByText(/150 tok/)).toBeInTheDocument();
     expect(screen.getByText('Background task finished')).toBeInTheDocument();
+  });
+});
+
+describe('the activity fold in the Control Plane', () => {
+  it('a plain tool strip folds under one row; an agent card stays outside the fold', () => {
+    setFoldsOpenForTest(false);
+    show([
+      call('cp-r1', 'Read', { file_path: '/a.ts' }), res('cp-r1'),
+      call('cp-b1', 'Bash', { command: 'ls' }), res('cp-b1'),
+      call('cp-s1', 'mcp__dispatch__spawn_agent', { agentType: 'researcher' }), res('cp-s1', { agentId: 'cp-a1', label: 'Digger', mission: 'Delta' }),
+    ]);
+    expect(screen.getByTestId('activity-fold-row')).toHaveTextContent('2 steps · 1 read');
+    expect(screen.queryByText('command: ls')).toBeNull();
+    expect(screen.getByText('Digger')).toBeInTheDocument();
+    expect(screen.getByTestId('activity-fold').contains(screen.getByText('Digger'))).toBe(false);
   });
 });
 

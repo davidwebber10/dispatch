@@ -106,7 +106,7 @@ export function ConversationStream() {
   // The shown project's ledger index for the chips — never another project's (see useLedgerChips).
   const ledger = useLedgerChips();
   // The Control Plane's hooks into renderTimeline (agent cards, notices, ledger chips).
-  const ext = useMemo(() => controlPlaneTimeline(items, ledger), [items, ledger]);
+  const ext = useMemo(() => ({ ...controlPlaneTimeline(items, ledger), turnRunning: busy }), [items, ledger, busy]);
   // loadOlder() page starts, as group boundaries — see usePageBoundaries.
   const pageBoundaries = usePageBoundaries(items);
   // "View file" from a machinery row: open (or reuse) the file tab in the project and

@@ -10,7 +10,8 @@ import { ChatImage } from '../../../ChatImage';
 import { ToolResult } from '../../ToolCall';
 import { uiKeyOf } from '../../../../hooks/useToolUIState';
 import { rowKey } from './stableId';
-import { AssistantTurn, MachineryBlock, ToolGroup, UserBubble, AssistantText, Thinking, ResultFooter, TaskNotice } from './leaves';
+import { AssistantTurn, MachineryBlock, ToolGroup, UserBubble, AssistantText, Thinking, ResultFooter, TaskNotice, type ToolPair } from './leaves';
+import { ActivityFold, foldsActivity } from './activityFold';
 
 /**
  * Surface-specific hooks into renderTimeline, so one renderer serves every transcript view.
@@ -46,6 +47,12 @@ export interface TimelineExtensions {
   frame?(items: ConvItem[], node: ReactNode): ReactNode;
   /** Send again the message of a failed local bubble (W2-I). Absent: the bubble shows "Not sent" with no button. */
   retrySend?(localId: string): void;
+  /** True to hold a folded activity strip open, given the calls and results it folds. Chat: the strip
+   *  holds the search focus, so its message anchors must be in the page for the scroll to reach. */
+  foldOpen?(items: ConvItem[]): boolean;
+  /** The surface's turn still runs. The strip at the very end of the timeline then stays live (the
+   *  spinner and the clock) in the pause between two calls, when none of its calls is open. */
+  turnRunning?: boolean;
 }
 
 /**
@@ -84,15 +91,23 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
   // Consecutive machinery nodes (tool calls/groups/orphan results) coalesce into ONE
   // hairline-bordered block per the redesign — a run of calls reads as a single strip of
   // terminal output between prose paragraphs, not a stack of standalone cards.
-  let mach: { key: string; nodes: React.ReactNode[] } | null = null;
-  const flushMach = () => {
+  let mach: { key: string; nodes: React.ReactNode[]; pairs: ToolPair[] } | null = null;
+  // A strip of tool calls folds under one row (ActivityFold, owner 2026-11-27), except where the
+  // fold is switched off (foldsActivity: the OS look, for now). A strip of only orphan results has
+  // no calls to sum up and stays the plain strip.
+  const fold = foldsActivity();
+  // `tail`: the strip is the last thing in the timeline (only the final flush passes it).
+  const flushMach = (tail = false) => {
     if (mach && mach.nodes.length > 0 && group) {
-      group.nodes.push(<MachineryBlock key={`m-${mach.key}`} nodes={mach.nodes} />);
+      const pairs = mach.pairs;
+      group.nodes.push(fold && pairs.length > 0
+        ? <ActivityFold key={`m-${mach.key}`} foldKey={mach.key} nodes={mach.nodes} pairs={pairs} onViewFile={onViewFile} live={tail && !!ext?.turnRunning} forceOpen={!!ext?.foldOpen?.(pairs.flatMap((p) => (p.result ? [p.tool, p.result] : [p.tool])))} />
+        : <MachineryBlock key={`m-${mach.key}`} nodes={mach.nodes} />);
     }
     mach = null;
   };
-  const flushGroup = () => {
-    flushMach();
+  const flushGroup = (tail = false) => {
+    flushMach(tail);
     if (group && group.nodes.length > 0) {
       rows.push(
         <MessageScroller.Item key={group.key} messageId={group.key} style={{ display: 'flex' }}>
@@ -105,10 +120,11 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
   };
   // The group and the strip take the key of their FIRST item and keep it (see the note at the
   // end of the walk): a later call in the same strip must not build the strip again.
-  const pushMach = (id: string, node: React.ReactNode) => {
+  const pushMach = (id: string, node: React.ReactNode, pairs: ToolPair[] = []) => {
     if (!group) group = { key: id, nodes: [] };
-    if (!mach) mach = { key: id, nodes: [] };
+    if (!mach) mach = { key: id, nodes: [], pairs: [] };
     mach.nodes.push(<div key={id}>{node}</div>);
+    mach.pairs.push(...pairs);
   };
 
   for (let i = 0; i < items.length; i++) {
@@ -240,7 +256,7 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
         const runItems = pairs.flatMap((p) => (p.result ? [p.tool, p.result] : [p.tool]));
         // Keyed by the run's FIRST call (`id`), which stays while the run grows: the key of its
         // last call changed with each new call, and an open call inside lost its scroll position.
-        pushMach(id, frame(runItems, <ToolGroup pairs={pairs} onViewFile={onViewFile} />));
+        pushMach(id, frame(runItems, <ToolGroup pairs={pairs} onViewFile={onViewFile} />), pairs);
         // Skip past the run's members; their paired results are skipped by the
         // existing `toolIds.has(...)` guard on the 'tool-result' branch.
         i = lastIdx;
@@ -288,10 +304,10 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
         node = <DismissableStatusNotice scope={notices?.scope} input={it.toolInput} renderText={ext?.plainText} />;
       } else {
         // Generic machinery — routes through pushMach so consecutive calls share one
-        // bordered block, and so the header's Hide-tool-calls toggle can drop it.
+        // strip, which folds under one row (ActivityFold).
         // A group of one, not a bare <ToolCall>: a second call of the same tool then grows this
         // same component, and an open call keeps its DOM node and scroll (see ToolGroup).
-        pushMach(id, frame(covered, <ToolGroup pairs={[{ tool: it, result }]} onViewFile={onViewFile} />));
+        pushMach(id, frame(covered, <ToolGroup pairs={[{ tool: it, result }]} onViewFile={onViewFile} />), [{ tool: it, result }]);
         continue;
       }
     } else if (it.kind === 'tool-result') {
@@ -324,6 +340,6 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
     // preserveScrollOnPrepend, which follows DOM node identity) through a page and a new line.
     group.nodes.push(<div key={id}>{frame(covered, node)}</div>);
   }
-  flushGroup();
+  flushGroup(true);
   return rows;
 }

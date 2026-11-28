@@ -9,6 +9,7 @@ import type { ConvItem, PendingPermission } from '../../../api/types';
 import { useOverseer } from '../store';
 import { useProjects } from '../../../stores/projects';
 import { ConversationStream } from './Stream';
+import { setFoldsOpenForTest } from '../../tabs/chat/timeline/activityFold';
 
 // jsdom lacks the observers + scroll APIs the MessageScroller primitive touches.
 beforeAll(() => {
@@ -20,6 +21,8 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
+  // A tool strip folds under one row (activityFold.tsx); these tests read the rows inside it.
+  setFoldsOpenForTest(true);
   // ConversationStream now gates coordinator fields on activeId === coordinatorProject
   // (the cross-tab bleed fix) — tests must set the viewed project to match, or the
   // gating (correctly) blanks the stream as belonging to another project.
