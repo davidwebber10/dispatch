@@ -29,8 +29,11 @@ export const BUDGETS = {
    * JS and CSS of a first-paint path, brotli. Set a little over the sizes at W2-E; lower them when the path gets smaller.
    * Phone: 285_000 until 2026-11-12, then 286_000 for the text scale (the --fs-N variables and the
    * fontVar() calls on the phone's first screen took the path to 285_052; owner decision).
+   * 2026-11-27, release 4.15.0: phone 295_000 and desktop 353_000 (286_000 and 340_000 before). The
+   * Chat header, the Inbox rows and cards, the Working pill and the Threads header took the paths
+   * to 293_825 and 352_008; the owner chose to raise the budget and not to trim.
    */
-  firstPaintBrotli: { phone: 286_000, desktop: 340_000 },
+  firstPaintBrotli: { phone: 295_000, desktop: 353_000 },
   /**
    * JS files of a first-paint path. The daemon serves HTTP/1.1: a browser has six connections, and
    * theme-boot.js and the stylesheet use two. A fifth JS file waits one round trip for a free connection.
