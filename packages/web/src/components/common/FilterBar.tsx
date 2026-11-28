@@ -54,6 +54,10 @@ export interface FilterBarProps {
   rowStyle?: React.CSSProperties;
   pillsStyle?: React.CSSProperties;
   rowTestId?: string;
+  /** One dense row: a 44px search and an icon-only Filters button (the Inbox). */
+  compact?: boolean;
+  /** The search field takes the focus as it appears (a search opened by a button). */
+  autoFocus?: boolean;
 }
 
 /**
@@ -63,7 +67,7 @@ export interface FilterBarProps {
  * show as pills under the row, each with ×, and Clear. Derived from the Threads list's filters;
  * the Threads list (desktop and phone) and the Previews plugin (`d.ui.FilterBar`) use it.
  */
-export function FilterBar({ facets, query = '', onQueryChange, placeholder = 'Search', leading, trailing, onClear, doneLabel = 'Done', variant, size, style, rowStyle, pillsStyle, rowTestId }: FilterBarProps) {
+export function FilterBar({ facets, query = '', onQueryChange, placeholder = 'Search', leading, trailing, onClear, doneLabel = 'Done', variant, size, style, rowStyle, pillsStyle, rowTestId, compact, autoFocus }: FilterBarProps) {
   const isMobile = useIsMobile();
   const sheet = (variant ?? (isMobile ? 'sheet' : 'popover')) === 'sheet';
   const lg = (size ?? (isMobile ? 'lg' : 'md')) === 'lg';
@@ -80,17 +84,17 @@ export function FilterBar({ facets, query = '', onQueryChange, placeholder = 'Se
     return () => document.removeEventListener('keydown', onKey);
   }, [open, sheet]);
 
-  const h = lg ? 36 : 32;
+  const h = compact ? 44 : lg ? 36 : 32;
   const button = (
     <button type="button" aria-expanded={open} aria-haspopup="dialog" aria-label={n ? `Filters, ${n} on` : 'Filters'} onClick={() => setOpen((v) => !v)}
       style={{
-        height: h, padding: '0 10px', flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer',
+        height: h, padding: compact ? 0 : '0 10px', width: compact && !n ? h : undefined, minWidth: compact ? h : undefined, justifyContent: 'center', flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: compact ? 3 : 6, cursor: 'pointer',
         fontSize: fontVar(lg ? 14 : 13), borderRadius: lg ? 'var(--radius-md)' : 'var(--radius-sm)',
         border: `1px solid ${n ? 'color-mix(in srgb, var(--color-accent) 55%, transparent)' : 'var(--color-border-strong)'}`,
         background: n || open ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-elevated))' : 'var(--color-elevated)',
         color: n ? 'var(--color-accent)' : 'var(--color-text-secondary)',
       }}>
-      <FunnelSimple size={lg ? 16 : 15} weight="bold" />Filters
+      <FunnelSimple size={compact ? 18 : lg ? 16 : 15} weight="bold" />{compact ? null : 'Filters'}
       {n > 0 && <span aria-hidden style={{ minWidth: 18, height: 18, padding: '0 5px', borderRadius: 'var(--radius-pill)', background: 'var(--color-accent)', color: 'var(--color-on-accent)', font: `600 ${fontVar(11)} var(--font-sans)`, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{n}</span>}
     </button>
   );
@@ -117,7 +121,7 @@ export function FilterBar({ facets, query = '', onQueryChange, placeholder = 'Se
         {onQueryChange && (
           <span style={{ position: 'relative', flex: 1, minWidth: 0, display: 'flex' }}>
             <MagnifyingGlass aria-hidden size={lg ? 16 : 14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-tertiary)', pointerEvents: 'none' }} />
-            <input type="search" role="searchbox" aria-label={placeholder} placeholder={placeholder} value={query} onChange={(e) => onQueryChange(e.target.value)}
+            <input type="search" role="searchbox" autoFocus={autoFocus} aria-label={placeholder} placeholder={placeholder} value={query} onChange={(e) => onQueryChange(e.target.value)}
               style={{ flex: 1, minWidth: 0, height: h, padding: `0 10px 0 ${lg ? 32 : 30}px`, background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: lg ? 'var(--radius-md)' : 'var(--radius-sm)', color: 'var(--color-text-primary)', fontSize: lg ? fontVarInput(16) : fontVar(13), boxSizing: 'border-box' }} />
           </span>
         )}

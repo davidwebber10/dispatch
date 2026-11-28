@@ -33,7 +33,12 @@ function setup(docs: Record<string, unknown>[], fetchText?: (url: string) => str
   activate(d as never);
   return { History: reg.views[0].Component, Tab: reg.inspectorTabs[0].Component, Sheet: reg.slots.find((s: { id: string }) => s.id === 'sheet').Component, copy, set, reg };
 }
-const card = (title: string) => screen.getByText(title).closest('[data-testid="preview-item"]') as HTMLElement;
+/** The item of a title, opened: its content is in the page only while it is open. */
+const card = (title: string) => {
+  const el = screen.getByText(title).closest('[data-testid="preview-item"]') as HTMLElement;
+  if (!el.dataset.open) fireEvent.click(screen.getByText(title));
+  return el;
+};
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe('Drops: the name is one constant', () => {
@@ -90,7 +95,7 @@ describe('Drops: kind inference (old drops have no kind)', () => {
     expect(inferKind({ files: [], text: 'x', kind: 'not-a-kind' })).toBe('text');
   });
 
-  it('each card carries a chip with the kind label, and the card its kind', async () => {
+  it('each open item names its kind, and the item carries it', async () => {
     const { History } = setup([
       base('a', { title: 'Shots', files: [f('a.png', 'image/png')] }),
       base('b', { title: 'Report', files: [f('r.pdf', 'application/pdf')] }),
@@ -207,6 +212,7 @@ describe('Drops: secret', () => {
     const { History, copy } = setup([base('x', { kind: 'secret', title: 'API token', text: SECRET })]);
     const { container } = render(<History />);
     await screen.findByText('API token');
+    expect(container.innerHTML).not.toContain(SECRET); // closed: only the copy action, never the value in the page
     const c = card('API token');
     expect(within(c).getByTestId('drop-secret')).toHaveTextContent('••••1234');
     expect(container.textContent).not.toContain(SECRET);
@@ -295,6 +301,7 @@ describe('Drops: the thread tab renders the kinds too', () => {
     const { Tab } = setup([base('c', { kind: 'command', title: 'Run it', commands: ['make', 'make test'], text: 'make\nmake test' })]);
     render(<Tab terminalId="t1" sessionId="s1" />);
     await screen.findByText('Run it');
+    card('Run it');
     expect(screen.getAllByRole('button', { name: /^Copy command \d$/ })).toHaveLength(2);
   });
 });
@@ -310,6 +317,7 @@ describe('Drops: no left-edge stripes', () => {
     ]);
     const { container } = render(<History />);
     await screen.findByText('C');
+    card('S'); // one open item among the closed ones
     for (const el of container.querySelectorAll<HTMLElement>('*')) {
       expect(el.style.borderLeft, el.outerHTML.slice(0, 80)).toBe('');
       expect(el.style.borderLeftWidth).toBe('');

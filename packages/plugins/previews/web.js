@@ -1,7 +1,8 @@
 // Previews, named "Drops" in the app (2026-11-11) — a bundled Dispatch plugin
 // (docs/superpowers/specs/2026-10-28-previews-design.md). Everything a thread handed the user to look at
 // or copy, newest first: a badge on the project and thread headers (phone) and on the rail item
-// (desktop), a sheet per project, a history across projects, and the viewer for the files. The
+// (desktop), a sheet per project, a history across projects, and the viewer for the files. A list has two
+// views, Rows (default) and Cards (1.3.0); the toggle is in the history's top row. The
 // documents live in this plugin's storage (`preview:<id>`); the files are references the daemon checks
 // and serves. The plugin id, the storage keys and the tool name (`preview`) keep the old name, so the
 // stored drops and the running threads keep working.
@@ -156,7 +157,7 @@ const PAGE = 20;
 
 export default function activate(d) {
   // SDK version 2 (plugin.json "sdk": 2): `d` is bound to this plugin, so no call names the plugin id.
-  const { h, Fragment, hooks: { useState, useEffect, useMemo, useProjects, useThreads }, ui, docs, files, events, icons, actions } = d;
+  const { h, Fragment, hooks: { useState, useEffect, useMemo, useRef, useProjects, useThreads }, ui, docs, settings, files, events, icons, actions } = d;
   const ID = d.id || 'previews';
   const VIEW = `plugin:${ID}:history`;
   const KEEP = 1000; // previews kept; the oldest seen ones are removed past this
@@ -231,6 +232,24 @@ export default function activate(d) {
       const seen = items.filter((x) => x.seenAt).sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
       for (const x of seen.slice(0, Math.max(0, items.length - KEEP))) await get().remove(x.id);
     },
+    // The list view (1.3.0): 'rows' (default) or 'cards', kept in the plugin's settings so it stays across
+    // reloads, restarts and devices. A pick made before the load answers wins. A save keeps the other keys:
+    // the daemon's `migrated` flag is in the same value, and without it old previews are copied in again.
+    view: 'rows', picks: 0,
+    loadView: async () => {
+      const before = get().picks;
+      try {
+        const saved = await settings.get({});
+        if (get().picks === before) set({ view: saved && saved.view === 'cards' ? 'cards' : 'rows' });
+      } catch { /* the next event or reload tries again */ }
+    },
+    setView: async (view) => {
+      set({ view, picks: get().picks + 1 });
+      try {
+        const saved = await settings.get({});
+        await settings.set({ ...(saved && typeof saved === 'object' ? saved : {}), view: get().view });
+      } catch { /* the view still changes for this visit */ }
+    },
     openSheet: (sessionId) => set({ sheet: sessionId }),
     closeSheet: () => set({ sheet: null }),
   }));
@@ -244,7 +263,9 @@ export default function activate(d) {
   });
   // A thread used a secret, or the owner sent or deleted one (on another device): the list again. No value in the event.
   events.on('inbox:secrets', () => { void usePv.getState().loadSecrets(); });
+  events.on('plugin:settings', (e) => { if (e.id === ID) void usePv.getState().loadView(); });
   void usePv.getState().load();
+  void usePv.getState().loadView();
 
   // A secret as an item of the lists, so the filters, the days and the pages treat it like the rest. Seen: the owner made it.
   const SECRET_PREFIX = 'inbox-secret:';
@@ -278,7 +299,7 @@ export default function activate(d) {
   const row = { display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' };
   const I = (name) => icons[name] || icons.file;
 
-  // The kinds (2026-11-11): a chip with an icon and a label, and a color, so a card tells its kind at a glance.
+  // The kinds (2026-11-11): an icon, a label and a color, so an item tells its kind at a glance.
   const KIND = {
     command: { label: 'Command', icon: 'terminal', color: 'var(--color-green)' },
     link: { label: 'Link', icon: 'link', color: 'var(--color-blue)' },
@@ -292,13 +313,6 @@ export default function activate(d) {
     images: { label: 'Images', icon: 'image', color: 'var(--color-status-coral)' },
     files: { label: 'Files', icon: 'paperclip', color: 'var(--color-text-tertiary)' },
   };
-  function KindChip({ kind }) {
-    const k = KIND[kind];
-    const Icon = I(k.icon);
-    return h('span', { 'data-testid': 'drop-kind', style: { display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0, height: 20, padding: '0 7px 0 6px', borderRadius: 'var(--radius-pill)', background: `color-mix(in srgb, ${k.color} 15%, transparent)`, color: k.color, font: `600 ${rem(10.5)} var(--font-sans)`, letterSpacing: '0.2px', whiteSpace: 'nowrap' } },
-      h(Icon, { size: 12, weight: 'bold', 'aria-hidden': true }), k.label);
-  }
-
   // Copy: `label` is the text on the button, `aria` its name (default the label); `compact` is the icon alone.
   // The empty view (owner, 2026-11-13: "higher quality empty view: icon and center aligned with a bit
   // of top padding"). One look for the thread tab, the project sheet and the Inbox screen.
@@ -438,37 +452,23 @@ export default function activate(d) {
         preview.text && h(CopyButton, { text: preview.text, label: 'Copy CSV', aria: 'Copy table' })));
   }
 
-  // One drop, the same on the phone's sheet and the desktop history: a kind chip, the title, a context
-  // line, the note, the kind's own block, pictures as thumbnails, other files as chips; any file opens the viewer.
-  function Item({ preview, onDelete, showProject }) {
+  // What an open item shows, the same in both views and all three lists: the note, the kind's own block,
+  // pictures as thumbnails, other files as chips; any file opens the viewer.
+  function ItemBody({ preview }) {
     const [viewing, setViewing] = useState(null);
     const [reading, setReading] = useState(false);
     const kind = inferKind(preview);
     const isDoc = kind === 'doc';
     const docName = /\.(md|markdown)$/i.test(preview.title) ? preview.title : `${preview.title}`;
-    const unseen = !preview.seenAt;
-    const project = useProjects().find((x) => x.id === preview.sessionId);
-    const projectName = project ? project.name : preview.sessionName;
     // The viewer fetches `src` itself for markdown and text (one app-root path; no second base prefix).
     // A picture opens on the card's cached small copy, then the 1600 copy; Original opens the file (2026-11-11).
     const viewerFiles = preview.files.map((f) => (kindOf(f) === 'image' && f.mime !== 'image/svg+xml'
       ? { src: fileUrl(f), name: f.name, mime: f.mime, size: f.size, placeholderSrc: `${fileUrl(f)}?thumb=480`, displaySrc: `${fileUrl(f)}?thumb=1600` }
       : { src: fileUrl(f), name: f.name, mime: f.mime, size: f.size }));
-    const context = [showProject !== false ? projectName : null, preview.terminalLabel].filter(Boolean).join(' · ');
-    const when = timeOf(preview.createdAt);
     const hasImage = preview.files.some((f) => kindOf(f) === 'image');
     const hasOther = preview.files.some((f) => kindOf(f) !== 'image');
     const text = typeof preview.text === 'string' && preview.text ? preview.text : null;
-    return h('div', { 'data-testid': 'preview-item', 'data-kind': kind, 'data-unseen': unseen ? 'true' : undefined, style: { display: 'flex', flexDirection: 'column', gap: 9, padding: '11px 13px 12px', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', position: 'relative' } },
-      h('div', { style: { display: 'flex', alignItems: 'flex-start', gap: 8 } },
-        unseen && h('span', { 'aria-label': 'New', title: 'Not viewed yet', style: { width: 8, height: 8, borderRadius: '50%', background: 'var(--color-accent)', marginTop: 6, flexShrink: 0 } }),
-        h('div', { style: { flex: 1, minWidth: 0 } },
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
-            h(KindChip, { kind }),
-            h('span', { style: { flex: 1, minWidth: 0, fontSize: rem(14.5), fontWeight: 600, color: 'var(--color-text-primary)', overflowWrap: 'anywhere' } }, preview.title),
-            when && h('span', { 'data-testid': 'preview-when', style: { flexShrink: 0, font: `400 ${rem(11)} var(--font-mono)`, color: unseen ? 'var(--color-accent)' : 'var(--color-text-tertiary)', whiteSpace: 'nowrap' } }, when)),
-          context && h('div', { title: context, style: { font: `400 ${rem(11)} var(--font-mono)`, color: 'var(--color-text-tertiary)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, context)),
-        onDelete && h('button', { type: 'button', 'aria-label': `Delete ${ONE}`, title: 'Delete', onClick: () => onDelete(preview.id), style: { width: 28, height: 28, padding: 0, border: 'none', borderRadius: 'var(--radius-sm)', background: 'transparent', color: 'var(--color-text-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 } }, h(icons.trash, { size: 15 }))),
+    return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 9 } },
       preview.note && h('div', { style: { fontSize: rem(13), lineHeight: 1.5, color: 'var(--color-text-secondary)', overflowWrap: 'anywhere' } }, preview.note),
       kind === 'command' && h(CommandBlock, { preview }),
       kind === 'link' && h(LinkBlock, { preview }),
@@ -565,13 +565,13 @@ export default function activate(d) {
             error && h('div', { role: 'alert', style: { fontSize: rem(12.5), color: 'var(--color-status-red)' } }, error),
             h('div', { style: row },
               h('button', { type: 'button', disabled: !ready, onClick: () => void send(), style: { ...solid, opacity: ready ? 1 : 0.5, cursor: ready ? 'pointer' : 'default' } },
-                h(icons.key, { size: 14, weight: 'bold' }), busy ? 'Sending…' : 'Send'),
+                h(I('paper-plane'), { size: 14, weight: 'bold' }), busy ? 'Sending…' : 'Send'),
               h('span', { style: { fontSize: rem(11.5), color: 'var(--color-text-tertiary)' } }, 'One use. Gone after 24 hours.')))));
   }
 
-  function SendSecretButton({ onClick }) {
-    return h('button', { type: 'button', onClick, style: { ...chip, height: 30, padding: '0 11px', fontWeight: 600, fontSize: rem(12.5), flexShrink: 0 } },
-      h(icons.key, { size: 14 }), 'Send a secret');
+  function SendSecretButton({ onClick, style }) {
+    return h('button', { type: 'button', title: 'Send Secret', onClick, style: { ...chip, height: 44, padding: '0 10px', borderColor: 'var(--color-border-strong)', fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0, ...style } },
+      h(I('paper-plane'), { size: 16, 'aria-hidden': true }), 'Send Secret');
   }
 
   // A secret the owner sent: its name, its ID, its scope and its state. The value is never in the page.
@@ -587,7 +587,7 @@ export default function activate(d) {
     if (to.kind === 'reveal') return 'read by the thread';
     return null;
   };
-  function SecretCard({ item, showProject, onDelete }) {
+  function SecretBody({ item, showProject }) {
     const r = item.secret;
     const project = useProjects().find((x) => x.id === r.sessionId);
     const projectName = project ? project.name : null;
@@ -597,13 +597,7 @@ export default function activate(d) {
       : r.state === 'waiting' ? `Usable until ${timeOf(r.expiresAt)}`
         : 'The value was deleted after 24 hours';
     const to = r.state === 'used' ? whereTo(r.usedTo) : null;
-    const when = timeOf(r.createdAt);
-    return h('div', { 'data-testid': 'sent-secret', 'data-state': r.state, style: { display: 'flex', flexDirection: 'column', gap: 8, padding: '11px 13px 12px', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)' } },
-      h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
-        h(KindChip, { kind: 'secret' }),
-        h('span', { style: { flex: 1, minWidth: 0, fontSize: rem(14.5), fontWeight: 600, color: 'var(--color-text-primary)', overflowWrap: 'anywhere' } }, r.name),
-        when && h('span', { style: { flexShrink: 0, font: `400 ${rem(11)} var(--font-mono)`, color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap' } }, when),
-        onDelete && h('button', { type: 'button', 'aria-label': 'Delete secret', title: 'Delete', onClick: () => onDelete(r.id), style: { width: 28, height: 28, padding: 0, border: 'none', borderRadius: 'var(--radius-sm)', background: 'transparent', color: 'var(--color-text-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 } }, h(icons.trash, { size: 15 }))),
+    return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
       h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
         h('span', { 'data-testid': 'sent-secret-id', style: { font: `700 ${rem(15)} var(--font-mono)`, letterSpacing: '2px', color: r.state === 'waiting' ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)', userSelect: 'all', WebkitUserSelect: 'all' } }, r.id),
         r.state === 'waiting' && h(CopyButton, { text: r.id, aria: 'Copy ID', compact: true }),
@@ -615,10 +609,214 @@ export default function activate(d) {
         to && h('span', { style: { color: 'var(--color-text-secondary)' } }, `→ ${to}`)));
   }
 
-  /** One card of a list: a sent secret, or a thread's item. */
-  const cardOf = (p, showProject) => (p.secret
-    ? h(SecretCard, { key: p.id, item: p, showProject, onDelete: (id) => void usePv.getState().removeSecret(id) })
-    : h(Item, { key: p.id, preview: p, showProject, onDelete: (id) => void usePv.getState().remove(id) }));
+  // ── the lists (1.3.0): Rows or Cards; a tap opens an item in place, one at a time ────────────
+  const dayOf = (iso) => { const t = new Date(iso); return Number.isNaN(t.getTime()) ? '' : t.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }); };
+  const clockOf = (iso) => { const t = new Date(iso); return Number.isNaN(t.getTime()) ? '' : t.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };
+  const kindFor = (p) => (p.secret ? 'secret' : inferKind(p));
+  const clamp = (lines) => ({ display: '-webkit-box', WebkitLineClamp: lines, WebkitBoxOrient: 'vertical', overflow: 'hidden', overflowWrap: 'anywhere' });
+  const oneLine = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 };
+  const tapIcon = { width: 44, height: 44, padding: 0, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: 'none', borderRadius: 'var(--radius-md)', background: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer', textDecoration: 'none' };
+  const metaFont = { font: `400 ${rem(11)} var(--font-mono)`, color: 'var(--color-text-tertiary)' };
+  const frame = { borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)' };
+  const removeItem = (p) => (p.secret ? void usePv.getState().removeSecret(p.secret.id) : void usePv.getState().remove(p.id));
+  const seen = (p) => { if (!p.secret && !p.seenAt) void usePv.getState().markSeen(p.id); };
+  const imagesOf = (p) => (p.files || []).map((f, k) => ({ f, k })).filter((x) => kindOf(x.f) === 'image');
+  const viewerOf = (list) => list.map((f) => (kindOf(f) === 'image' && f.mime !== 'image/svg+xml'
+    ? { src: fileUrl(f), name: f.name, mime: f.mime, size: f.size, placeholderSrc: `${fileUrl(f)}?thumb=480`, displaySrc: `${fileUrl(f)}?thumb=1600` }
+    : { src: fileUrl(f), name: f.name, mime: f.mime, size: f.size }));
+  // No lazy loading: Safari never starts a lazy image inside the sheet. The page of 20 bounds the count.
+  const thumb = (f, size) => h('img', { src: `${fileUrl(f)}?thumb=480`, alt: '', decoding: 'async', style: { width: size, height: size, objectFit: 'cover', objectPosition: 'top', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-pane)' } });
+  const secretExpired = (p) => !!p.expired || !p.text || !!expireSecret(p);
+  /** What one tap copies for an item, or null. */
+  const copyOf = (p, kind) => {
+    if (p.secret) return p.secret.state === 'waiting' ? { text: p.secret.id, aria: 'Copy ID' } : null;
+    if (kind === 'command') {
+      const text = Array.isArray(p.commands) && p.commands.length ? p.commands.join('\n') : p.text || '';
+      return text ? { text, aria: 'Copy command' } : null;
+    }
+    if (kind === 'secret') return secretExpired(p) ? null : { text: p.text, aria: 'Copy secret' };
+    if (!p.text) return null;
+    if (kind === 'link') return { text: p.url || p.text, aria: 'Copy link' };
+    return { text: p.text, aria: kind === 'code' ? 'Copy code' : kind === 'diff' ? 'Copy diff' : kind === 'table' ? 'Copy table' : 'Copy text' };
+  };
+
+  function TapCopy({ copy, onDone }) {
+    const [state, setState] = useState('idle');
+    useEffect(() => { if (state === 'idle') return; const t = setTimeout(() => setState('idle'), 1600); return () => clearTimeout(t); }, [state]);
+    const Icon = state === 'copied' ? icons.check : state === 'error' ? icons.x : icons.copy;
+    const name = state === 'copied' ? 'Copied' : state === 'error' ? 'Could not copy' : copy.aria;
+    return h('button', { type: 'button', 'aria-label': name, title: name, onClick: () => ui.copyText(copy.text).then(() => { setState('copied'); if (onDone) onDone(); }, () => setState('error')),
+      style: { ...tapIcon, color: state === 'copied' ? 'var(--color-accent)' : 'var(--color-text-secondary)' } }, h(Icon, { size: 18, weight: state === 'copied' ? 'bold' : 'regular' }));
+  }
+
+  /** The one-tap action at the right of a closed row: a thumbnail, Open, or Copy. */
+  function QuickAction({ p, kind }) {
+    const [viewing, setViewing] = useState(false);
+    const images = imagesOf(p);
+    if (images.length) {
+      return h(Fragment, null,
+        h('button', { type: 'button', 'aria-label': images.length > 1 ? `Open ${images.length} images` : `Open ${images[0].f.name}`, onClick: () => { setViewing(true); seen(p); }, style: { ...tapIcon, position: 'relative' } },
+          thumb(images[0].f, 40),
+          images.length > 1 && h('span', { 'aria-hidden': true, style: { position: 'absolute', right: 0, bottom: 0, minWidth: 18, height: 18, padding: '0 4px', boxSizing: 'border-box', borderRadius: 'var(--radius-pill)', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', color: 'var(--color-text-primary)', font: `600 ${rem(10.5)}/16px var(--font-sans)` } }, images.length)),
+        viewing && h(ui.FileViewer, { files: viewerOf(p.files), index: images[0].k, onClose: () => setViewing(false) }));
+    }
+    if (kind === 'link') {
+      const u = httpUrl(p.url || p.text);
+      if (u) return h('a', { href: u.href, target: '_blank', rel: 'noopener noreferrer', 'aria-label': 'Open link', onClick: () => seen(p), style: tapIcon }, h(I('arrow-square-out'), { size: 18 }));
+    }
+    const copy = copyOf(p, kind);
+    return copy ? h(TapCopy, { copy, onDone: () => seen(p) }) : null;
+  }
+
+  function KindTile({ kind, unseen }) {
+    const k = KIND[kind];
+    return h('span', { title: k.label, style: { position: 'relative', width: 32, height: 32, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 'var(--radius-md)', background: `color-mix(in srgb, ${k.color} 15%, transparent)`, color: k.color } },
+      h(I(k.icon), { size: 17, weight: 'bold', 'aria-label': k.label }),
+      unseen && h('span', { 'aria-label': 'New', title: 'Not viewed yet', style: { position: 'absolute', top: -3, right: -3, width: 9, height: 9, borderRadius: '50%', background: 'var(--color-accent)', border: '2px solid var(--color-elevated)' } }));
+  }
+
+  /** The open item: all of its content, then the kind, the time and Delete. */
+  function FullItem({ p, showProject }) {
+    const kind = kindFor(p);
+    return h('div', { 'data-inbox-body': '', style: { display: 'flex', flexDirection: 'column', gap: 9 } },
+      p.secret ? h(SecretBody, { item: p, showProject }) : h(ItemBody, { preview: p }),
+      h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 } },
+        h('span', { style: metaFont }, h('span', { 'data-testid': 'drop-kind' }, KIND[kind].label), ' · ', h('span', { 'data-testid': 'preview-when' }, timeOf(p.createdAt))),
+        h('button', { type: 'button', 'aria-label': p.secret ? 'Delete secret' : `Delete ${ONE}`, onClick: () => removeItem(p), style: { ...chip, height: 44, border: 'none', background: 'transparent', color: 'var(--color-text-tertiary)' } }, h(icons.trash, { size: 16 }), 'Delete')));
+  }
+
+  /** The head of an item: the tile, the title, a context line. In a closed one the title is one line. */
+  function Head({ p, open, meta, onToggle }) {
+    const unseen = !p.seenAt;
+    return h('button', { type: 'button', 'aria-expanded': open, onClick: onToggle, style: { flex: 1, minWidth: 0, minHeight: 56, display: 'flex', alignItems: open ? 'flex-start' : 'center', gap: 10, padding: open ? '10px 0 6px 10px' : '4px 0 4px 10px', border: 'none', background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer' } },
+      h(KindTile, { kind: kindFor(p), unseen }),
+      h('span', { style: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 } },
+        h('span', { 'data-inbox-title': '', style: { fontSize: rem(14), lineHeight: 1.35, fontWeight: unseen ? 700 : 500, color: 'var(--color-text-primary)', ...(open ? { overflowWrap: 'anywhere' } : oneLine) } }, p.title),
+        h('span', { style: { display: 'flex', gap: 8, ...metaFont } },
+          h('span', { style: { flex: 1, ...oneLine } }, meta),
+          !open && h('span', { style: { flexShrink: 0, color: unseen ? 'var(--color-accent)' : 'var(--color-text-tertiary)' } }, clockOf(p.createdAt)))));
+  }
+
+  /** A card's short look at its content: pictures in a strip, the first command, the link, 3 lines. */
+  function Peek({ p, onOpen }) {
+    const kind = kindFor(p);
+    const [viewing, setViewing] = useState(null);
+    const images = imagesOf(p);
+    const copy = copyOf(p, kind);
+    const box = { display: 'flex', alignItems: 'center', gap: 4, paddingLeft: 10, minHeight: 44, borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-pane)' };
+    const code = { font: `400 ${rem(12)}/1.45 var(--font-mono)`, color: 'var(--color-text-primary)' };
+    const tapOpen = { display: 'block', width: '100%', padding: 0, border: 'none', background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer' };
+    const more = (text) => h('div', { style: { fontSize: rem(12), color: 'var(--color-link)', paddingTop: 2 } }, text);
+    const action = copy && h(TapCopy, { copy, onDone: () => seen(p) });
+    if (images.length) {
+      const some = images.slice(0, images.length > 5 ? 4 : 5);
+      return h(Fragment, null,
+        h('div', { style: { display: 'flex', gap: 6 } },
+          ...some.map(({ f, k }) => h('button', { key: k, type: 'button', 'aria-label': `Open ${f.name}`, onClick: () => { setViewing(k); seen(p); }, style: { ...tapIcon, width: 52, height: 52 } }, thumb(f, 52))),
+          images.length > some.length && h('button', { type: 'button', 'aria-label': `${images.length - some.length} more images`, onClick: onOpen, style: { ...tapIcon, width: 52, height: 52, border: '1px solid var(--color-border)', fontSize: rem(13), fontWeight: 600 } }, `+${images.length - some.length}`)),
+        viewing !== null && h(ui.FileViewer, { files: viewerOf(p.files), index: viewing, onClose: () => setViewing(null) }));
+    }
+    if (p.secret || kind === 'secret') {
+      const text = p.secret ? p.secret.id : secretExpired(p) ? 'This secret expired' : maskSecret(p.text);
+      return h('div', { style: box }, h('span', { style: { ...code, flex: 1, ...oneLine } }, text), action);
+    }
+    if (kind === 'command') {
+      const lines = String(copy ? copy.text : '').split('\n').filter(Boolean);
+      return h('div', { style: { ...box, background: 'var(--color-terminal)' } },
+        h('span', { style: { ...code, flex: 1, ...oneLine } }, lines[0]),
+        lines.length > 1 && h('span', { style: metaFont }, `+${lines.length - 1}`), action);
+    }
+    const url = kind === 'link' ? httpUrl(p.url || p.text) : null;
+    if (url) {
+      return h('div', { style: box },
+        h('span', { style: { ...code, flex: 1, color: 'var(--color-link)', ...oneLine } }, url.href),
+        h('a', { href: url.href, target: '_blank', rel: 'noopener noreferrer', 'aria-label': 'Open link', onClick: () => seen(p), style: tapIcon }, h(I('arrow-square-out'), { size: 18 })));
+    }
+    if (kind === 'steps') {
+      const steps = p.steps || [];
+      return h('button', { type: 'button', onClick: onOpen, style: tapOpen },
+        ...steps.slice(0, 2).map((s, i) => h('div', { key: i, style: { fontSize: rem(12.5), lineHeight: 1.45, color: 'var(--color-text-primary)', ...oneLine } }, `${i + 1}. ${s.text}`)),
+        steps.length > 2 && more(`Show more (${steps.length - 2})`));
+    }
+    if (p.text) {
+      return h('div', { style: { ...box, alignItems: 'flex-start', padding: '6px 0 6px 10px' } },
+        h('button', { type: 'button', onClick: onOpen, style: { ...tapOpen, flex: 1, minWidth: 0 } },
+          h('div', { style: { ...code, whiteSpace: 'pre-wrap', ...clamp(3) } }, p.text.replace(/\n{2,}/g, '\n')),
+          more('Show more')),
+        action);
+    }
+    const names = (p.files || []).map((f) => f.name);
+    return names.length ? h('div', { style: { ...metaFont, ...oneLine } }, names.length > 1 ? `${names[0]} +${names.length - 1}` : names[0]) : null;
+  }
+
+  /**
+   * One item of a list. Closed it is a 56px row, or a short card; open it is the same in both views:
+   * the head, all of the content, Delete. `data-*` tells the kind and the state in both.
+   */
+  function Entry({ p, view, open, onToggle, meta, first, showProject }) {
+    const ref = useRef(null);
+    // Keeps the tapped item on screen when an item above it closes.
+    useEffect(() => {
+      const el = ref.current;
+      if (!open || !el || !el.scrollIntoView) return;
+      const r = el.getBoundingClientRect();
+      if (r.top < 110 || r.top > window.innerHeight * 0.55) el.scrollIntoView({ block: 'start' });
+    }, [open]);
+    const card = view === 'cards';
+    const marks = { ref, 'data-testid': p.secret ? 'sent-secret' : 'preview-item', 'data-kind': kindFor(p), 'data-state': p.secret ? p.secret.state : undefined, 'data-unseen': !p.seenAt ? 'true' : undefined, 'data-open': open ? 'true' : undefined };
+    const outer = card
+      ? { ...frame, background: open ? 'var(--color-pane)' : 'var(--color-elevated)', scrollMarginTop: 40 }
+      : { borderTop: first ? 'none' : '1px solid var(--color-border)', background: open ? 'var(--color-pane)' : 'transparent', scrollMarginTop: 40 };
+    return h('div', { ...marks, style: outer },
+      h('div', { style: { display: 'flex', alignItems: open ? 'flex-start' : 'center', gap: 4, paddingRight: 4 } },
+        h(Head, { p, open, meta, onToggle }),
+        open ? h('button', { type: 'button', 'aria-label': 'Close', onClick: onToggle, style: tapIcon }, h(icons.x, { size: 16 }))
+          : !card && h(QuickAction, { p, kind: kindFor(p) })),
+      !open && card && h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, padding: '0 10px 10px' } },
+        p.note && h('div', { onClick: onToggle, style: { fontSize: rem(12.5), lineHeight: 1.4, color: 'var(--color-text-secondary)', cursor: 'pointer', ...clamp(2) } }, p.note),
+        h(Peek, { p, onOpen: onToggle })),
+      open && h('div', { style: { padding: '2px 10px 6px' } }, h(FullItem, { p, showProject })));
+  }
+
+  /** A list by day. `sticky`: the day stays at the top while its items scroll (the history). */
+  function ItemList({ items, showProject, inThread, sticky }) {
+    const view = usePv((s) => s.view);
+    const projects = useProjects();
+    const [openId, setOpenId] = useState(null);
+    const toggle = (p) => { setOpenId((cur) => (cur === p.id ? null : p.id)); seen(p); };
+    const metaOf = (p) => {
+      const project = projects.find((x) => x.id === p.sessionId);
+      const name = project ? project.name : p.sessionName;
+      const place = inThread ? [KIND[kindFor(p)].label] : [showProject ? name : null, p.terminalLabel];
+      // A sent secret says its state on the closed item too.
+      const state = p.secret ? (SECRET_STATE[p.secret.state] || SECRET_STATE.expired).label : null;
+      return [state, ...place].filter(Boolean).join(' · ') || name || '';
+    };
+    const groups = [];
+    for (const p of items) { const day = dayOf(p.createdAt); const g = groups[groups.length - 1]; if (g && g.day === day) g.items.push(p); else groups.push({ day, items: [p] }); }
+    const entry = (p, i) => h(Entry, { key: p.id, p, view, first: i === 0, open: openId === p.id, onToggle: () => toggle(p), meta: metaOf(p), showProject });
+    return h('div', { 'data-testid': 'inbox-list', 'data-view': view },
+      // Touch screens: every button and link in an open item is at least 44px.
+      h('style', null, '@media (pointer: coarse) { [data-inbox-body] button, [data-inbox-body] a[aria-label] { min-height: 44px !important; min-width: 44px; } }'),
+      ...groups.map((g) => h('section', { key: g.day },
+        h('h2', { style: { margin: 0, padding: '8px 2px 4px', font: `600 ${rem(10.5)} var(--font-mono)`, letterSpacing: '1px', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', ...(sticky ? { position: 'sticky', top: 0, zIndex: 3, background: 'var(--color-base)' } : {}) } }, g.day),
+        // No overflow clip on the frame: it would stop the sticky day and scrollIntoView.
+        h('div', { style: view === 'cards' ? { display: 'flex', flexDirection: 'column', gap: 8 } : frame }, ...g.items.map(entry)))));
+  }
+
+  /** Rows or Cards: two 44px buttons that act as one choice. */
+  function ViewToggle() {
+    const view = usePv((s) => s.view);
+    const option = (value, label, icon, edge) => {
+      const on = view === value;
+      return h('button', { type: 'button', role: 'radio', 'aria-checked': on, 'aria-label': label, title: label, onClick: () => { if (!on) void usePv.getState().setView(value); },
+        style: { ...tapIcon, borderRadius: edge, background: on ? 'var(--color-hover)' : 'transparent', color: on ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)' } },
+        h(I(icon), { size: 18, weight: on ? 'bold' : 'regular' }));
+    };
+    return h('div', { role: 'radiogroup', 'aria-label': 'View', style: { display: 'flex', flexShrink: 0, outline: '1px solid var(--color-border-strong)', outlineOffset: -1, borderRadius: 'var(--radius-md)', background: 'var(--color-elevated)' } },
+      option('rows', 'Rows', 'rows', 'var(--radius-md) 0 0 var(--radius-md)'),
+      option('cards', 'Cards', 'cards', '0 var(--radius-md) var(--radius-md) 0'));
+  }
 
   // ── the project's previews in a bottom sheet (phone and desktop) ─────────────────────────
   // Load on open; mark seen on CLOSE, not open, so the unviewed dots show while you look.
@@ -645,7 +843,7 @@ export default function activate(d) {
         h('div', { style: row }, h(SendSecretButton, { onClick: () => setSending(true) })),
         sending && h(SendSecret, { sessionId, onClose: () => setSending(false) }),
         mine.length === 0 && h(EmptyState, { loading: !loaded, title: 'Nothing here yet', body: 'Threads in this project put commands, links, files and text here for you.' }),
-        ...mine.slice(0, shown).map((p) => cardOf(p, false)),
+        mine.length > 0 && h(ItemList, { items: mine.slice(0, shown), showProject: false }),
         mine.length > shown && h('button', { type: 'button', onClick: () => setShown((n) => n + PAGE),
           style: { alignSelf: 'center', height: 34, padding: '0 16px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: rem(13), fontWeight: 500, cursor: 'pointer' } },
           `Show older (${mine.length - shown} more)`)));
@@ -667,8 +865,17 @@ export default function activate(d) {
     // A thread from another project stops applying when the project changes.
     useEffect(() => { if (thread && !threads.some((t) => t.id === thread)) setThread(''); }, [threads, thread]);
     const items = useMemo(() => filterPreviews(all, { project: project || null, thread: thread || null, query }, nameOf), [all, project, thread, query, sessions]);
-    // The filters are the app's FilterBar (2026-11-07): the search with a Filters button to its
-    // right, Project and Thread in its panel, the picks as pills under the row.
+    // The filters are the app's FilterBar (2026-11-07): Project and Thread in its panel, the picks as
+    // pills under the row. The search (1.3.0) is behind a magnifying glass: open, it has the row with
+    // Cancel and Filters. Cancel and Escape clear it, so a closed search never hides an item.
+    const [searching, setSearching] = useState(false);
+    const magnifier = useRef(null);
+    const wasSearching = useRef(false);
+    useEffect(() => {
+      if (!searching && wasSearching.current && magnifier.current) magnifier.current.focus();
+      wasSearching.current = searching;
+    }, [searching]);
+    const closeSearch = () => { setSearching(false); setQuery(''); };
     const facets = [
       { id: 'project', title: 'Project', allLabel: 'All projects', value: project || null, onChange: (v) => setProject(v || ''),
         options: projects.map((p) => ({ value: p.id, label: p.name, count: p.count })) },
@@ -679,34 +886,25 @@ export default function activate(d) {
     const [shown, setShown] = useState(PAGE);
     useEffect(() => { setShown(PAGE); }, [project, thread, query]);
     const visible = useMemo(() => items.slice(0, shown), [items, shown]);
-    const groups = useMemo(() => {
-      const out = [];
-      for (const p of visible) {
-        const t = new Date(p.createdAt);
-        const day = Number.isNaN(t.getTime()) ? '' : t.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
-        const g = out[out.length - 1];
-        if (g && g.day === day) g.items.push(p); else out.push({ day, items: [p] });
-      }
-      return out;
-    }, [visible]);
-    return h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px clamp(16px, 4vw, 26px) 40px' } },
-      h('div', { style: { maxWidth: 820, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 18 } },
-        h('div', { style: { display: 'flex', alignItems: 'flex-start', gap: 12 } },
-          h('div', { style: { flex: 1, minWidth: 0 } },
-            h('h1', { style: { margin: 0, fontSize: rem(18), fontWeight: 700 } }, NAME),
-            h('div', { style: { fontSize: rem(13), color: 'var(--color-text-secondary)', marginTop: 4 } }, 'Commands, links, files and text that threads handed you to look at or copy, newest first.')),
-          h(SendSecretButton, { onClick: () => setSending(true) })),
+    // One row on a 390px phone: the magnifying glass, Filters, the view toggle, Send Secret. No title and
+    // no description: the app's own header names the screen.
+    const bar = { compact: true, facets, doneLabel: `Show ${items.length} ${items.length === 1 ? ONE : MANY}` };
+    return h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '0 clamp(12px, 4vw, 26px) 24px' } },
+      h('div', { style: { maxWidth: 820, margin: '0 auto', display: 'flex', flexDirection: 'column' } },
+        h('div', { role: 'search', style: { padding: '8px 0 2px' },
+          // Escape in the field only: the Filters panel and the viewer have their own Escape.
+          onKeyDown: (e) => { if (e.key === 'Escape' && e.target.getAttribute('aria-label') === `Search ${MANY}`) { e.preventDefault(); closeSearch(); } } },
+          h(ui.FilterBar, searching
+            ? { ...bar, autoFocus: true, query, onQueryChange: setQuery, placeholder: `Search ${MANY}`,
+              trailing: h('button', { type: 'button', 'aria-label': 'Cancel search', title: 'Cancel search', onClick: closeSearch, style: { ...chip, height: 44, border: 'none', background: 'transparent', padding: '0 4px', color: 'var(--color-link)', fontWeight: 600, flexShrink: 0 } }, 'Cancel') }
+            : { ...bar,
+              leading: h('button', { ref: magnifier, type: 'button', 'aria-label': `Search ${MANY}`, title: `Search ${MANY}`, onClick: () => setSearching(true), style: { ...tapIcon, border: '1px solid var(--color-border-strong)', background: 'var(--color-elevated)' } }, h(I('search'), { size: 18 })),
+              trailing: h(Fragment, null, h(ViewToggle), h(SendSecretButton, { onClick: () => setSending(true), style: { marginLeft: 'auto' } })) })),
         sending && h(SendSecret, { sessionId: project || null, onClose: () => setSending(false) }),
-        all.length > 0 && h('div', { role: 'search' },
-          h(ui.FilterBar, { query, onQueryChange: setQuery, placeholder: `Search ${MANY}`, facets,
-            doneLabel: `Show ${items.length} ${items.length === 1 ? ONE : MANY}` })),
         all.length === 0 && h(EmptyState, { loading: !loaded, title: `Your ${NAME} is empty`, body: 'Ask a thread to send you a command, a link, a screenshot or a page. It lands here.' }),
         all.length > 0 && items.length === 0 && h('div', { style: { fontSize: rem(13.5), color: 'var(--color-text-tertiary)', padding: '12px 0' } }, `No ${ONE} matches.`),
-        ...groups.map((g) => h('section', { key: g.day, style: { display: 'flex', flexDirection: 'column', gap: 10 } },
-          h('h2', { style: { margin: 0, font: `500 ${rem(10.5)} var(--font-mono)`, letterSpacing: '1.2px', textTransform: 'uppercase', color: 'var(--color-text-tertiary)' } }, g.day),
-          ...g.items.map((p) => cardOf(p, true)))),
-        items.length > shown && h('button', { type: 'button', onClick: () => setShown((n) => n + PAGE),
-          style: { alignSelf: 'center', height: 34, padding: '0 16px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: rem(13), fontWeight: 500, cursor: 'pointer' } },
+        items.length > 0 && h(ItemList, { items: visible, showProject: true, sticky: true }),
+        items.length > shown && h('button', { type: 'button', onClick: () => setShown((n) => n + PAGE), style: { ...chip, alignSelf: 'center', height: 44, marginTop: 10 } },
           `Show older (${items.length - shown} more)`)));
   }
 
@@ -738,7 +936,7 @@ export default function activate(d) {
       project && h('div', { style: row }, h(SendSecretButton, { onClick: () => setSending(true) })),
       sending && project && h(SendSecret, { sessionId: project, terminalId, terminalLabel: thread ? thread.label : null, onClose: () => setSending(false) }),
       mine.length === 0 && h(EmptyState, { loading: !loaded, title: `No ${MANY} from this thread yet`, body: 'When this thread sends you a command, a link, a file or a screenshot, it shows here.' }),
-      ...visible.map((p) => cardOf(p, false)),
+      mine.length > 0 && h(ItemList, { items: visible, showProject: false, inThread: true }),
       mine.length > shown && h('button', { type: 'button', onClick: () => setPage({ id: terminalId, shown: shown + PAGE }),
         style: { alignSelf: 'center', height: 34, padding: '0 16px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: rem(13), fontWeight: 500, cursor: 'pointer' } },
         `Show older (${mine.length - shown} more)`));

@@ -21,6 +21,8 @@ describe('looksLikeMarkdown (2026-11-08)', () => {
 const doc = (id: string, title: string, text: string) =>
   ({ id, sessionId: 's1', sessionName: 'Alpha', terminalId: 't1', terminalLabel: 'Perf', title, note: null, text, files: [], createdAt: '2026-11-08T10:00:00Z', seenAt: 'seen' });
 
+const open = async (title: string) => fireEvent.click(await screen.findByText(title));
+
 describe('a markdown text preview reads as a document (2026-11-08)', () => {
   let History: React.ComponentType;
   beforeEach(() => {
@@ -40,6 +42,7 @@ describe('a markdown text preview reads as a document (2026-11-08)', () => {
 
   it('renders the markdown (a heading, bold, a list), not raw code, with Read and Copy text', async () => {
     render(<History />);
+    await open('LOCAL-IMPROVEMENTS.md');
     const body = await screen.findByTestId('preview-doc');
     expect(body.querySelector('h1')).toHaveTextContent('POLYWOOD — local performance improvements');
     expect(body.querySelector('strong')).toHaveTextContent('27 retained improvement groups');
@@ -51,6 +54,7 @@ describe('a markdown text preview reads as a document (2026-11-08)', () => {
 
   it('Read opens the full-screen reader with the whole document', async () => {
     render(<History />);
+    await open('LOCAL-IMPROVEMENTS.md');
     fireEvent.click(await screen.findByRole('button', { name: 'Read LOCAL-IMPROVEMENTS.md' }));
     const dialog = await screen.findByRole('dialog');
     expect(await screen.findAllByText('CLS unchanged')).not.toHaveLength(0);
@@ -59,6 +63,7 @@ describe('a markdown text preview reads as a document (2026-11-08)', () => {
 
   it('a command keeps the monospace box you can select at once', async () => {
     render(<History />);
+    await open('Update command');
     const pre = await screen.findByTestId('preview-text');
     expect(pre.tagName).toBe('PRE');
     expect(pre).toHaveTextContent('./bin/dispatch update');
