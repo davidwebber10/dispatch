@@ -268,7 +268,7 @@ export function AccountsSection() {
   const addTitle = adding ? `Add a ${PROVIDER_TITLE[adding]} account` : undefined;
   return (
     <div ref={nav.top}>
-      <SettingsPage intro="New threads, scheduled jobs, Chat and thread titles use the default account. You can pick another account for a thread. Usage limits show every account.">
+      <SettingsPage intro="New threads, scheduled jobs, Chat and thread titles use the default account. You can pick another account for a thread or for Chat. Usage limits show every account.">
         {error && <div role="alert" style={errText}>{error}</div>}
         {/* Hosted box only (renders nothing on a local daemon). */}
         <CompanyConnections />

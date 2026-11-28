@@ -160,8 +160,8 @@ describe('every place that starts claude takes its login from the account', () =
   const KNOWN: Record<string, { sites: number; login: string }> = {
     'providers/claude-code.ts': { sites: 5, login: 'the command line of a thread; the thread spawner adds the overlay of the thread (sessions/thread-spawner.ts)' },
     'providers/claude-prompt-file.ts': { sites: 1, login: '`claude --version` only: no login is used' },
-    'endless/turn-runner.ts': { sites: 1, login: 'a Chat turn: the `loginEnv` of the default account' },
-    'endless/summarizer-claude.ts': { sites: 1, login: 'a Chat compaction: the `loginEnv` of the default account' },
+    'endless/turn-runner.ts': { sites: 1, login: 'a Chat turn: the `loginEnv` of Chat\'s account (its own, else the default)' },
+    'endless/summarizer-claude.ts': { sites: 1, login: 'a Chat compaction: the `loginEnv` of Chat\'s account (its own, else the default)' },
     'sessions/cli-namer.ts': { sites: 1, login: 'a thread title: `env(accountId)` of the thread that is named' },
     'assist/run.ts': { sites: 2, login: 'a plugin assist call: `accountEnv` of the request, else of the default (the second place only asks "usable?")' },
     'limits/claude-probe.ts': { sites: 1, login: 'the usage probe turn: `env(accountId)` of the account that is probed' },

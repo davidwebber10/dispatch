@@ -176,6 +176,9 @@ code lists it and can use it.
 ## 9. Owner decisions (2026-11-23)
 
 1. **Chat's account** is the default account. Chat has no account setting of its own.
+   **Changed 2026-11-27 (owner):** Chat has an account setting. Its first choice, and its start value, is
+   "Default account", which behaves as above. A named Claude account applies to Chat turns and memory
+   compactions from the next message. Thread titles, probes and new threads still use the default.
 2. **A thread's title** is made on the account of that thread.
 3. **The generic card when the default is the CLI login** offers both ways, and asks before the
    default changes.

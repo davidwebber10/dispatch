@@ -15,6 +15,9 @@ import { rowKeyOf } from './convItems';
 import { ProjectMenuSection } from './ProjectPicker';
 
 import { ClaudeLogin, isClaudeAuthError } from './ClaudeLogin';
+import { api } from '../../api/client';
+import { useChatAccount } from './ChatAccount';
+import { RunningPill } from './ChatThreads';
 import { PillComposer } from '../composer/PillComposer';
 import { useSlashMenu, runModelEffortCommand } from '../composer/slash/useSlashMenu';
 import { usePickerRequest } from '../../stores/pickerRequest';
@@ -93,6 +96,18 @@ const clearImagesLost = () => { imagesLostCount = 0; imagesLostHadText = false; 
 
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
+/**
+ * The sign-in of the account that runs Chat. Chat on the default account: the generic card. Chat switched
+ * to an account of its own: that account is signed in again (the generic card would repair the default).
+ * The computer's CLI login cannot be repaired from here.
+ */
+function ChatSignIn({ onDone }: { onDone: () => void }) {
+  const { pinned, label } = useChatAccount();
+  if (pinned === 'cli') return <div style={{ fontSize: fontVar(12.5), color: 'var(--color-text-secondary)' }}>Chat runs on the CLI login of the daemon's computer. Run claude there and sign in, or pick another account with the usage ring.</div>;
+  if (pinned) return <ClaudeLogin buttonLabel={`Sign in again to ${label ?? 'this account'}`} start={() => api.accountsClaudeLogin(label ?? '', pinned)} onDone={onDone} />;
+  return <ClaudeLogin offerSaved onDone={onDone} />;
+}
+
 function TurnError({ text, mobile = false }: { text: string; mobile?: boolean }) {
   const [retryError, setRetryError] = useState<string | null>(null);
   const retry = () => {
@@ -104,7 +119,7 @@ function TurnError({ text, mobile = false }: { text: string; mobile?: boolean })
       <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-word' }}>{text}{retryError && <><br />{retryError}</>}</span>
       <button type="button" onClick={retry} style={{ flexShrink: 0, padding: '5px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', cursor: 'pointer' }}>Retry</button>
       {/* A login problem: log the daemon in from here, then send the message again. */}
-      {isClaudeAuthError(text) && <div style={{ flexBasis: '100%' }}><ClaudeLogin offerSaved onDone={retry} /></div>}
+      {isClaudeAuthError(text) && <div style={{ flexBasis: '100%' }}><ChatSignIn onDone={retry} /></div>}
     </div>
   );
 }
@@ -360,18 +375,20 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
           textareaProps={{ 'aria-label': 'Message', onPaste, onKeyDown: slash.onKeyDown }}
           mobile={mobile}
         />
-        {/* The model and effort of all of Chat: the chip opens the card. */}
-        {chat.settings && (
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <ChatModelSwitcher settings={chat.settings} apply={applyChat} reload={chat.reload} />
-          </div>
-        )}
+        {/* The model and effort card of all of Chat. It draws nothing until the header or the "/" menu asks. */}
+        {chat.settings && <ChatModelSwitcher settings={chat.settings} apply={applyChat} reload={chat.reload} />}
       </div>
     </div>
   );
 }
 
-export function EndlessColumn({ mobile = false }: { mobile?: boolean } = {}) {
+export function EndlessColumn({ mobile = false, onShowThreads, threadsShown = false }: {
+  mobile?: boolean;
+  /** The running pill's tap: show the one list of Chat's threads. */
+  onShowThreads?: () => void;
+  /** That list is already beside the messages (the desktop's right column), so the pill would repeat it. */
+  threadsShown?: boolean;
+} = {}) {
   const messages = useEndless((s) => s.messages);
   const hasMore = useEndless((s) => s.hasMore);
   const loadingOlder = useEndless((s) => s.loadingOlder);
@@ -417,6 +434,7 @@ export function EndlessColumn({ mobile = false }: { mobile?: boolean } = {}) {
               {turn.status === 'interrupted' && <TurnError mobile={mobile} text={hostCopy('thread.interrupted', 'The daemon restarted during the last turn, so the turn stopped.')} />}
             </MessageScroller.Content>
           </MessageScroller.Viewport>
+          {!threadsShown && <RunningPill onOpen={onShowThreads} />}
           <BootstrapOlder />
           <FocusScroll />
         </MessageScroller.Root>

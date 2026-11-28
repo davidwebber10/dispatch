@@ -14,7 +14,7 @@ function Snippet({ text }: { text: string }) {
 const when = (ms: number) => new Date(ms).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 /** Full-text memory search for the human only (spec section 7); the model has no search tool. */
-export function MemorySearch() {
+export function MemorySearch({ autoFocus = false, onPicked }: { autoFocus?: boolean; /** A result was opened: the header closes the field. */ onPicked?: () => void } = {}) {
   const [q, setQ] = useState('');
   const [results, setResults] = useState<EndlessSearchHit[] | null>(null);
   const [failed, setFailed] = useState(false);
@@ -37,13 +37,14 @@ export function MemorySearch() {
   const open = (i: number) => {
     setQ('');
     setResults(null);
+    onPicked?.();
     void useEndless.getState().openAt(i).catch(() => {});
   };
 
   return (
     <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
       <MagnifyingGlass size={15} style={{ position: 'absolute', left: 10, top: 9, color: 'var(--color-text-tertiary)' }} />
-      <input aria-label="Search memory" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search memory"
+      <input aria-label="Search memory" autoFocus={autoFocus} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search memory"
         style={{ width: '100%', height: 32, padding: '0 10px 0 30px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: fontVarInput(16) }} />
       {results && (
         <div role="listbox" aria-label="Memory search results"

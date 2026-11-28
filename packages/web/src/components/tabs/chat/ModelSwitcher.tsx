@@ -35,11 +35,15 @@ export interface ModelChipProps {
   onOpen?: () => void;
   /** Send a pick even when it looks like the current one: a chip that may be stale (Chat, shared by several devices) must not decide that. */
   alwaysSend?: boolean;
+  /** No chip on screen, only its card: something else opens it (Chat's header and ⋯ menu, the "/" menu). */
+  cardOnly?: boolean;
+  /** The heading over the effort levels. */
+  effortTitle?: string;
   /** The effort section: absent for a harness without an effort control yet (Grok, OpenCode). */
   effort?: EffortInfo & { pick: (level: string) => Promise<string | undefined | void> };
 }
 
-export function ModelChip({ owner, label, active, options, busy, emptyText = 'This harness has no models to pick.', pickModel, effort, onOpen, alwaysSend }: ModelChipProps) {
+export function ModelChip({ owner, label, active, options, busy, emptyText = 'This harness has no models to pick.', pickModel, effort, onOpen, alwaysSend, cardOnly, effortTitle = 'Effort for this thread' }: ModelChipProps) {
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState<string | null>(null);
@@ -85,7 +89,7 @@ export function ModelChip({ owner, label, active, options, busy, emptyText = 'Th
 
   return (
     <>
-      <button
+      {!cardOnly && <button
         type="button"
         disabled={busy}
         aria-label={`Model: ${label}${effort?.current ? `, effort ${effort.current}` : ''}`}
@@ -102,7 +106,7 @@ export function ModelChip({ owner, label, active, options, busy, emptyText = 'Th
         <Cpu size={isMobile ? 13 : 12} weight="bold" style={{ flexShrink: 0 }} />
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}{effort?.current ? ` · ${effort.current}` : ''}</span>
         <CaretDown size={10} weight="bold" style={{ flexShrink: 0, color: 'var(--color-text-tertiary)' }} />
-      </button>
+      </button>}
       {open && (
         <Modal open sheet={isMobile} title={effort ? 'Model and effort' : 'Switch model'} onClose={() => setOpen(false)} maxWidth={400}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -137,7 +141,7 @@ export function ModelChip({ owner, label, active, options, busy, emptyText = 'Th
             )}
             {effort && (
               <>
-                <span style={{ fontSize: fontVar(13), color: 'var(--color-text-secondary)', marginTop: 4 }}>Effort for this thread</span>
+                <span style={{ fontSize: fontVar(13), color: 'var(--color-text-secondary)', marginTop: 4 }}>{effortTitle}</span>
                 <div role="radiogroup" aria-label="Effort" style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {effort.levels.map((l) => {
                     const on = shownEffort === l;

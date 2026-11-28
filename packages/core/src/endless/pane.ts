@@ -13,6 +13,8 @@ export type StartedBy = 'chat' | 'overseer' | 'thread' | 'role' | 'user';
 export interface PaneThread {
   id: string; project: string; label: string; harness: string; state: PaneState;
   startedBy: StartedBy; via: string | null; startedAt: string; lastActivityAt: string | null; question: string | null;
+  /** A chat (stream-json) thread, not a terminal one: the page draws a bubble or a terminal glyph from it. */
+  structured: boolean;
 }
 
 export const PANE_MAX_THREADS = 60;
@@ -74,7 +76,7 @@ export function collectPaneThreads(db: Database.Database, opts: { now: number; t
       if (state === 'needs_you') {
         try { question = opts.question(t.id).trim().slice(0, QUESTION_MAX_CHARS) || null; } catch { question = null; }
       }
-      rows.push({ id: t.id, project: s.id, label: t.label, harness: t.type, state, ...startedByOf(cfg, parent), startedAt: t.created_at, lastActivityAt: t.last_activity_at, question });
+      rows.push({ id: t.id, project: s.id, label: t.label, harness: t.type, state, ...startedByOf(cfg, parent), startedAt: t.created_at, lastActivityAt: t.last_activity_at, question, structured: cfg.transport === 'structured' });
     }
   }
   const at = (r: PaneThread) => (r.lastActivityAt ? Date.parse(r.lastActivityAt) : 0);

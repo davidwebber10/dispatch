@@ -99,7 +99,9 @@ export function wireLimits(i: LimitInputs): LimitServices {
   for (const m of [i.claudeManager, endlessManager] as EventEmitter[]) {
     m.on('rate-limit', (id: string, info: unknown) => {
       // A thread with no account of its own runs on the daemon's default env, so its figures belong to the Claude default account.
-      const acc = threadAccountId(terminalsDb.getById(db, id)?.config) ?? accounts.defaultId('claude');
+      // A Chat process is no thread: Chat knows which account it started on (Chat can have its own).
+      const own = m === endlessManager ? endless.accountOfProcess(id) : threadAccountId(terminalsDb.getById(db, id)?.config);
+      const acc = own ?? accounts.defaultId('claude');
       limitSnapshots.record('claude-code', limitAccount('claude-code', acc), parseClaudeRateLimit(info), now(), undefined, false, undefined, acc);
     });
   }

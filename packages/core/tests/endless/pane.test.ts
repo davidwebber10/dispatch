@@ -26,6 +26,12 @@ beforeEach(() => {
 });
 
 describe('collectPaneThreads', () => {
+  it('says whether a thread is a chat thread or a terminal one', () => {
+    thread('chat', { status: 'working', config: { transport: 'structured' } });
+    thread('term', { status: 'working' });
+    expect(Object.fromEntries(run().threads.map((t) => [t.id, t.structured]))).toEqual({ chat: true, term: false });
+  });
+
   it('local midnight in the daemon time zone', () => {
     expect(startOfLocalDay(NOW, 'UTC')).toBe(Date.UTC(2026, 9, 19, 0, 0, 0));
   });

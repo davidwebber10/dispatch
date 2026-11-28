@@ -167,6 +167,10 @@ export function MobileApp() {
   const phoneHeaderUsage = useSettings((s) => s.phoneHeaderUsage);
   const menuBadge = useThreadMenuBadge(leafTab ?? null);
 
+  // Chat's header row lives in this app header (one row at the top of Chat, 2026-11-27): ChatMode portals into it.
+  const chatHeader = level === 0 && bottomTab === 'chat';
+  const [chatHeaderSlot, setChatHeaderSlot] = useState<HTMLDivElement | null>(null);
+
   const slot: React.CSSProperties = { flex: '0 0 100%', height: '100%', minWidth: 0 };
   const scrollSlot: React.CSSProperties = { ...slot, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y' };
 
@@ -201,6 +205,7 @@ export function MobileApp() {
         {level === 0 ? (
           <>
             <BrandSwitcher variant="header" />
+            {chatHeader && <div ref={setChatHeaderSlot} data-testid="chat-header-slot" style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center' }} />}
             {/* One-line top bar: the project search lives IN the header beside the app icon
                 (it used to be a second full-width row below it). Sized down to the header's
                 50px; fontSize stays 16 — anything smaller makes iOS zoom the page on focus. */}
@@ -246,7 +251,8 @@ export function MobileApp() {
             gap of its own while it is empty: the box then ends on the 10 px edge (owner, 2026-11-27). */}
         <div style={level === 0 && bottomTab === 'projects' ? { display: 'contents' } : { marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: leafTab ? 0 : 8 }}>
           {/* Account usage (#127): always shown once a provider has reported, on every screen. */}
-          <UsageChip variant="phone" hideAll={!phoneHeaderUsage} only={leafTab ? { provider: leafTab.type, accountId: leafAccount?.id ?? 'cli', model: typeof leafTab.config?.model === 'string' ? leafTab.config.model : null } : null} />
+          {/* On Chat the ring of Chat's own account is part of its header row. */}
+          {!chatHeader && <UsageChip variant="phone" hideAll={!phoneHeaderUsage} only={leafTab ? { provider: leafTab.type, accountId: leafAccount?.id ?? 'cli', model: typeof leafTab.config?.model === 'string' ? leafTab.config.model : null } : null} />}
           {/* Inside a project (its threads list): the same shape as a thread's header, usage then ⋯.
               Previews (spec 2026-10-28) and the project's own actions live in that menu. */}
           {level === 1 && !inSettings && !inPlugins && project && !leafTab && <Slot name="project.header.actions" session={project} />}
@@ -283,7 +289,7 @@ export function MobileApp() {
           {/* Level 0 — projects / agents, switched by the bottom tab bar */}
           <div ref={level0Ref} style={{ ...slot, display: 'flex', flexDirection: 'column' }}>
             {bottomTab === 'chat' ? (
-              <ChatMode mobile />
+              <ChatMode mobile toolbarHost={chatHeaderSlot} />
             ) : bottomTab === 'analytics' && can('analytics') ? (
               <Suspense fallback={analyticsFallback}><AnalyticsView /></Suspense>
             ) : bottomTab === 'settings' ? (

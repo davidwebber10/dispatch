@@ -47,7 +47,7 @@ interface EndlessStoreState {
   refreshState: () => Promise<void>;
   loadSettings: () => Promise<void>;
   /** Save Chat's model/effort (PUT). Resolves with what the daemon holds; the store takes it unless something newer arrived meanwhile. */
-  saveSettings: (change: { model?: string | null; effort?: string | null }) => Promise<ChatSettings>;
+  saveSettings: (change: { model?: string | null; effort?: string | null; accountId?: string | null }) => Promise<ChatSettings>;
   loadProjects: () => Promise<void>;
   /** Errors are ignored: the old counts stay. */
   loadDocCounts: (ids: string[]) => Promise<void>;
@@ -302,7 +302,7 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
       }
       if (e.type === 'endless:settings') {
         broadcastGen++; writeGen++; // anything sent before this broadcast is older than it
-        set({ settings: { model: typeof e.model === 'string' ? e.model : null, effort: typeof e.effort === 'string' ? e.effort : null, defaultModel: String(e.defaultModel ?? 'opus') } });
+        set({ settings: { model: typeof e.model === 'string' ? e.model : null, effort: typeof e.effort === 'string' ? e.effort : null, defaultModel: String(e.defaultModel ?? 'opus'), ...(e.accountId === undefined ? {} : { accountId: typeof e.accountId === 'string' ? e.accountId : null }) } });
         return;
       }
       if (e.type === 'endless:turn') {
