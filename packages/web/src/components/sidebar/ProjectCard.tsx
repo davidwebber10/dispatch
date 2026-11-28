@@ -3,7 +3,8 @@ import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { SortableList } from '../common/SortableList';
 import { SwipeRow } from '../common/SwipeRow';
-import { FolderOpen, CaretRight, Network, TerminalWindow, ChatCircle, Timer, Bell, Plus } from '@phosphor-icons/react';
+import { FolderOpen, CaretRight, Network, TerminalWindow, ChatCircle, TreeStructure, Timer, Bell, Plus } from '@phosphor-icons/react';
+import { isAgentStarted } from '../../lib/startedBy';
 import type { Session, Terminal, AgentSchedule } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
 import { useProjectTabs, useProjectIndicator } from '../../stores/tabsSelectors';
@@ -93,6 +94,11 @@ export function ThreadRow({ tab, active, fadeKey, subtitle, onClick, onMiddle, o
   const structuredClaude = tab.type === 'claude-code' && (tab.config as { transport?: string })?.transport === 'structured';
   const isTerminalThread = !structuredClaude && THREAD_TYPES.includes(tab.type);
   const iconSlot = isMobile ? 18 : 15;
+  // A thread that Chat, an overseer, another thread or a role started keeps its bubble or terminal
+  // glyph and gets a small tree badge on the glyph's bottom-right corner, so the owner's own threads
+  // stand out and the thread type still shows (owner, 2026-11-27: "Option D"). Stacked rows is the
+  // Threads tab icon, so it is not used here.
+  const agentStarted = tab.type !== 'file' && isAgentStarted(tab.config);
   // Auto-archive threads trade their timeAgo for a countdown: both derive from
   // lastActivityAt, and "how long until this disappears" is the more useful read.
   // Only rows with a policy subscribe to the shared ticker — the vast majority of
@@ -135,7 +141,8 @@ export function ThreadRow({ tab, active, fadeKey, subtitle, onClick, onMiddle, o
         WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none', WebkitTapHighlightColor: 'transparent',
       }}
     >
-      <span style={{ width: iconSlot, height: iconSlot, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+      <span data-agent-started={agentStarted || undefined} title={agentStarted ? 'Started by an agent, not by you' : undefined}
+        style={{ position: 'relative', width: iconSlot, height: iconSlot, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
         {tab.type === 'file'
           ? (() => { const fv = fileVisual(tab.label); return <fv.Icon size={iconSlot} weight="fill" color={fv.color} />; })()
           : structuredClaude
@@ -143,6 +150,10 @@ export function ThreadRow({ tab, active, fadeKey, subtitle, onClick, onMiddle, o
             : isTerminalThread
               ? <TerminalWindow size={isMobile ? 17 : 14} weight="fill" color={color} />
               : <span style={{ width: dot, height: dot, borderRadius: '50%', background: color }} />}
+        {agentStarted && (
+          <TreeStructure data-agent-badge size={isMobile ? 11 : 9} weight="fill" aria-label="Started by an agent"
+            style={{ position: 'absolute', right: isMobile ? -6 : -5, bottom: isMobile ? -5 : -4, color: 'var(--color-text-emphasis)', pointerEvents: 'none' }} />
+        )}
       </span>
       {subtitle ? (
         <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>

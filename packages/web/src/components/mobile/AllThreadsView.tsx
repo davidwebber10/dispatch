@@ -300,7 +300,9 @@ export function AllThreadsView({ onOpenThread, query = '', onQueryChange }: { on
 
   // Active ⇄ Archived (2026-11-05): archived threads were only reachable inside each project.
   const tabBtn = (on: boolean): React.CSSProperties => ({
-    padding: '8px 2px 7px', background: 'transparent', border: 'none', cursor: 'pointer', marginBottom: -1,
+    // 14 px under the word puts it on the centre line of the Filters and + buttons, which now have 8 px
+    // of air below them (owner, 2026-11-27).
+    padding: '8px 2px 14px', background: 'transparent', border: 'none', cursor: 'pointer', marginBottom: -1,
     borderBottom: on ? '2px solid var(--color-accent)' : '2px solid transparent',
     color: on ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)', font: `700 ${fontVar(12.5)} var(--font-mono)`, letterSpacing: '1px',
   });
@@ -354,9 +356,12 @@ export function AllThreadsView({ onOpenThread, query = '', onQueryChange }: { on
       style={{ padding: '8px 8px 10px', gap: 8, background: 'color-mix(in srgb, var(--color-pane) 62%, transparent)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderBottom: '1px solid color-mix(in srgb, var(--color-text-emphasis) 6%, transparent)' }} />
   ) : (
     <FilterBar variant="sheet" size="md" facets={filterFacets} doneLabel={doneLabel} style={{ gap: 0 }} trailing={plus}
-      rowStyle={{ padding: '2px 14px 0', borderBottom: '1px solid var(--color-border)' }} pillsStyle={{ padding: '8px 12px 2px' }}
+      // Spacing (owner, 2026-11-27): 8 px above the buttons (6 here + 2 under the switch) and 8 px below,
+      // where they sat 4 px under the switch and on the line. The 10 px sides are the header's, so the
+      // search box, the switch and the + end on one edge.
+      rowStyle={{ padding: '6px 10px 8px', borderBottom: '1px solid var(--color-border)' }} pillsStyle={{ padding: '8px 10px 2px' }}
       leading={(
-        <div role="tablist" aria-label="Thread list" style={{ flex: 1, display: 'flex', gap: 18, alignSelf: 'stretch', alignItems: 'flex-end' }}>
+        <div role="tablist" aria-label="Thread list" style={{ flex: 1, display: 'flex', gap: 18, alignSelf: 'stretch', alignItems: 'flex-end', marginBottom: -8 }}>
           <button type="button" role="tab" aria-selected={tab === 'active'} onClick={() => setTab('active')} style={tabBtn(tab === 'active')}>ACTIVE</button>
           <button type="button" role="tab" aria-selected={tab === 'archived'} onClick={() => setTab('archived')} style={tabBtn(tab === 'archived')}>ARCHIVED</button>
         </div>

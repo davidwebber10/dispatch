@@ -252,6 +252,47 @@ describe('MobileApp — an old saved Board view preference', () => {
   });
 });
 
+// Owner 2026-11-27: on a phone a press and hold never lifted a project row, because the finger
+// scrolled the list and the browser cancelled the pointer. Each row now has a grip that keeps
+// the pointer, and the rest of the row stays a plain tap target.
+describe('MobileApp projects list: the drag grip', () => {
+  function seedTwo() {
+    useProjects.setState({ sessions: [{ id: 's1', name: 'dispatch' }, { id: 's2', name: 'explorer' }] as any });
+    seedThreadAt('/', { type: 'shell', config: {} });
+  }
+
+  it('gives each project row a grip that keeps the pointer, outside the row button', () => {
+    seedTwo();
+    render(<MobileApp />);
+    const grips = screen.getAllByTestId('phone-project-grip');
+    expect(grips).toHaveLength(2);
+    for (const grip of grips) {
+      expect(grip.style.touchAction).toBe('none');
+      expect(grip.getAttribute('role')).toBe('button');
+      expect(grip.closest('button')).toBeNull();
+    }
+    expect(grips[0].getAttribute('aria-label')).toBe('Move dispatch');
+    // The row itself carries no drag wiring: a finger on it scrolls the list.
+    const row = screen.getAllByTestId('phone-project-row')[0];
+    expect(row.parentElement?.parentElement?.getAttribute('role')).toBeNull();
+  });
+
+  it('a tap on the row still opens the project', () => {
+    seedTwo();
+    render(<MobileApp />);
+    fireEvent.click(screen.getByText('explorer'));
+    expect(history.state).toMatchObject({ nav: 1, projectId: 's2' });
+  });
+
+  it('a search hides the grip, because the order is fixed then', () => {
+    seedTwo();
+    render(<MobileApp />);
+    fireEvent.change(screen.getByPlaceholderText('Search projects'), { target: { value: 'disp' } });
+    expect(screen.queryByTestId('phone-project-grip')).toBeNull();
+    expect(screen.getByText('dispatch')).toBeInTheDocument();
+  });
+});
+
 describe('MobileApp bottom tab — follows the Projects ⇄ Threads switch', () => {
   it('reads "Projects" on the projects view and "Threads" once switched', () => {
     localStorage.removeItem('dispatch:mobileProjectsView');

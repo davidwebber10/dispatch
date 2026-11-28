@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, lazy, Suspense } from 'react';
-import { Gear, CaretLeft, CaretRight, Plus, ChartBar, ChatCircleDots, TerminalWindow } from '@phosphor-icons/react';
+import { Gear, CaretLeft, CaretRight, Plus, ChartBar, ChatCircleDots, TerminalWindow, DotsSixVertical } from '@phosphor-icons/react';
 import { PROJECTS_ICON, THREADS_ICON } from '../common/viewIcons';
 import { ConnectionStatus } from '../layout/ConnectionStatus';
 import { BrandSwitcher } from '../layout/BrandSwitcher';
@@ -242,7 +242,9 @@ export function MobileApp() {
           </button>
           )
         )}
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: leafTab ? 0 : 8 }}>
+        {/* On the Projects/Threads tab the search box fills the row, so this group must not hold a
+            gap of its own while it is empty: the box then ends on the 10 px edge (owner, 2026-11-27). */}
+        <div style={level === 0 && bottomTab === 'projects' ? { display: 'contents' } : { marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: leafTab ? 0 : 8 }}>
           {/* Account usage (#127): always shown once a provider has reported, on every screen. */}
           <UsageChip variant="phone" hideAll={!phoneHeaderUsage} only={leafTab ? { provider: leafTab.type, accountId: leafAccount?.id ?? 'cli', model: typeof leafTab.config?.model === 'string' ? leafTab.config.model : null } : null} />
           {/* Inside a project (its threads list): the same shape as a thread's header, usage then ⋯.
@@ -295,7 +297,7 @@ export function MobileApp() {
             ) : (
             <>
             {/* Projects ⇄ Threads: a segmented switch at the top of the tab. */}
-            <div role="tablist" aria-label="Projects view" style={{ display: 'flex', margin: '8px 12px 2px', padding: 3, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', flexShrink: 0 }}>
+            <div role="tablist" aria-label="Projects view" style={{ display: 'flex', margin: '8px 10px 2px', padding: 3, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', flexShrink: 0 }}>
               {([['projects', 'Projects'], ['threads', 'Threads']] as const).map(([key, label]) => {
                 const on = projectsView === key;
                 return (
@@ -315,13 +317,26 @@ export function MobileApp() {
               <SortableList
                 items={sortedProjects}
                 disabled={!!query}
+                handle
                 onReorder={(orderedIds) => { if (projectSort !== 'custom') setProjectSort('custom'); void useProjects.getState().reorder(orderedIds); }}
-                renderItem={(p) => {
+                renderItem={(p, { dragging, handle }) => {
                   const tabs = byProject[p.id] ?? [];
                   const working = p.status === 'working' || tabs.some((t) => t.status === 'working');
+                  // The grip (owner 2026-11-27): a press and hold on the row never lifted it on a phone,
+                  // because the finger scrolled the list and the browser cancelled the pointer. The row
+                  // now moves from this grip, which keeps the pointer. A search hides it: the order is fixed then.
+                  const { ref: gripRef, style: gripStyle, ...gripProps } = handle ?? { ref: undefined, style: undefined };
+                  const showGrip = !!handle || dragging;
                   return (
+                    <div data-testid="phone-project-row" style={{ display: 'flex', alignItems: 'stretch', borderBottom: '1px solid var(--color-border)' }}>
+                    {showGrip && (
+                      <span ref={gripRef} {...gripProps} data-testid="phone-project-grip" aria-label={`Move ${p.name}`} title="Drag to change the order"
+                        style={{ ...gripStyle, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36, flexShrink: 0, color: 'var(--color-text-tertiary)', borderRadius: 'var(--radius-sm)' }}>
+                        <DotsSixVertical size={18} weight="bold" />
+                      </span>
+                    )}
                     <button onClick={() => openProject(p.id)}
-                      style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', textAlign: 'left', padding: '15px 12px', background: 'transparent', border: 'none', borderBottom: '1px solid var(--color-border)', cursor: 'pointer' }}>
+                      style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0, textAlign: 'left', padding: showGrip ? '15px 12px 15px 0' : '15px 12px', background: 'transparent', border: 'none', cursor: 'pointer' }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <span style={{ fontSize: fontVar(16), fontWeight: 600, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{p.name}</span>
                         {can('projects.path') && <div style={{ font: `400 ${fontVar(12)} var(--font-mono)`, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>{homePath(p.workingDir)}</div>}
@@ -331,6 +346,7 @@ export function MobileApp() {
                         : <span style={{ flexShrink: 0, font: `400 ${fontVar(12)} var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>{timeAgo(p.lastActivityAt)}</span>}
                       <CaretRight size={18} color="var(--color-text-tertiary)" />
                     </button>
+                    </div>
                   );
                 }}
               />
